@@ -1,0 +1,38 @@
+﻿namespace Khela.Common.Blackjack
+{
+    public class CreateBlackjackTableRequest
+    {
+        public int MaxPlayers { get; set; } = 5;
+        public int MaxSeatsPerUser { get; set; } = 1;
+    }
+
+    public class JoinTableRequest
+    {
+        public string PlayerId { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public decimal Balance { get; set; }
+
+        public string Image { get; set; } = string.Empty;
+    }
+
+    public class PlaceBetRequest
+    {
+        public string PlayerId { get; set; } = string.Empty;
+        public decimal Amount { get; set; }
+        public int SeatNumber { get; set; }
+        public int HandIndex { get; set; } = 0;
+    }
+
+    public class DoubleDownRequest
+    {
+        public int SeatNumber { get; set; }
+        public int HandIndex { get; set; } = 0;
+    }
+
+    public class InsuranceRequest
+    {
+        public int SeatNumber { get; set; }
+        public decimal Amount { get; set; }
+        public int HandIndex { get; set; } = 0;
+    }
+}

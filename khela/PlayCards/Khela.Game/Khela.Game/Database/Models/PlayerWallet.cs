@@ -1,0 +1,46 @@
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.EntityFrameworkCore;
+
+namespace Khela.Game.Database.Models
+{
+    public enum CurrencyType
+    {
+        Chips,
+        Coins,
+        Gems,
+        Tokens
+    }
+
+    [Table("PlayerWallets")]
+    [Index(nameof(UserId), nameof(Currency), IsUnique = true)]
+    public class PlayerWallet
+    {
+        [Key]
+        public Guid WalletId { get; set; } = Guid.NewGuid();
+
+        [Required]
+        public Guid UserId { get; set; }  // FK to Users table
+
+        [Required]
+        public CurrencyType Currency { get; set; }
+
+        [Precision(18, 4)]
+        [Required]
+        public decimal Balance { get; set; } = 0m;
+
+        [Precision(18, 4)]
+        public decimal PendingBalance { get; set; } = 0m;  // Optional for in-progress bets
+
+        [Required]
+        public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+
+        [Required]
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        [Timestamp]
+        public byte[] RowVersion { get; set; }
+
+        public bool IsLocked { get; set; } = false;
+    }
+}
