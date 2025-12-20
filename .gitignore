@@ -1,0 +1,102 @@
+# Unity .gitignore (safe for Unity 2019+ through Unity 6)
+# Keep: Assets/**, ProjectSettings/**, Packages/**, and all *.meta files
+
+# =========================
+# Unity generated folders
+# =========================
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Unity Package Manager cache inside Library (big, regenerates)
+[Ll]ibrary/[Pp]ackage[Cc]ache/
+
+# =========================
+# Visual Studio / Rider / IDE
+# =========================
+.vs/
+.idea/
+*.DotSettings.user
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.opendb
+*.VC.db
+
+# Auto-generated solution/project files (Unity can regenerate)
+*.csproj
+*.sln
+*.unityproj
+
+# Debug / symbol files (often huge)
+*.pdb
+*.mdb
+
+# Exported/IDE caches
+ExportedObj/
+.consulo/
+
+# =========================
+# OS junk
+# =========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =========================
+# Build artifacts
+# =========================
+*.apk
+*.aab
+*.app
+*.unitypackage
+
+# Crash reports
+sysinfo.txt
+mono_crash.*
+
+# =========================
+# Addressables (default)
+# =========================
+/ServerData
+/[Aa]ssets/StreamingAssets/aa*
+/[Aa]ssets/AddressableAssetsData/link.xml*
+/[Aa]ssets/Addressables_Temp*
+/[Aa]ssets/AddressableAssetsData/*/*.bin*
+
+# =========================
+# Visual Scripting generated
+# =========================
+/[Aa]ssets/Unity.VisualScripting.Generated/
+
+# =========================
+# Gradle (Android)
+# =========================
+.gradle/
+
+# =========================
+# Blender backup files (Unity can import .blend; don't commit backups)
+# =========================
+*.blend1
+*.blend1.meta
+
+# =========================
+# OPTIONAL: Uncomment if you want to ignore AssetStoreTools plugin
+# =========================
+# /Assets/AssetStoreTools*
+
+# =========================
+# OPTIONAL (recommended): Burst/IL2CPP caches
+# =========================
+**/Il2CppBuildCache/
+**/BurstDebugInformation*
