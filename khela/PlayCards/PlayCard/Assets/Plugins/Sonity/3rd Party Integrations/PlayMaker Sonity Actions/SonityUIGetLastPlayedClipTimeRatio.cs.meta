@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 34351da5d88ba0142b927ac493e9e60e
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityUIGetLastPlayedClipTimeRatio.cs
+  uploadId: 791150

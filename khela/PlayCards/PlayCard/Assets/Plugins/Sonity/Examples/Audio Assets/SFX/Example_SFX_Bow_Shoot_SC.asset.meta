@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: d172e4a3441b99c47aff521767dd8cf1
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Example_SFX_Bow_Shoot_SC.asset
+  uploadId: 791150

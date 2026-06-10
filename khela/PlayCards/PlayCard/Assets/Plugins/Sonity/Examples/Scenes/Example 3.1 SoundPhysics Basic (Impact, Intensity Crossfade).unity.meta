@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 9a8cc35d7651c0b419d7e3c89eba1044
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 3.1 SoundPhysics Basic
+    (Impact, Intensity Crossfade).unity
+  uploadId: 791150

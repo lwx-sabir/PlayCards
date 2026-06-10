@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: afb3e0f85b661e64f80dc589df231b91
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Guns/SoundTags/Example_TAG_Outdoor.asset
+  uploadId: 791150

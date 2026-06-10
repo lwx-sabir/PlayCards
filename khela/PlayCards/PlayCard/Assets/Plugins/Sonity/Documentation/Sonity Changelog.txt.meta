@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 5d59df52ee549964eabc52f457b64e99
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Documentation/Sonity Changelog.txt
+  uploadId: 791150

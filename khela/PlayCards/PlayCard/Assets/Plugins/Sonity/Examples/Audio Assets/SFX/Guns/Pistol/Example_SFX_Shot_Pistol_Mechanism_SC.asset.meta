@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: fa48f5ac9084f3b47bb7dd1c89e9ece7
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Guns/Pistol/Example_SFX_Shot_Pistol_Mechanism_SC.asset
+  uploadId: 791150

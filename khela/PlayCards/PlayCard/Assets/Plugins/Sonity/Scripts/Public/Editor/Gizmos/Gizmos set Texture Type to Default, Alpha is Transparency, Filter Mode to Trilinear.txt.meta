@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 1dcbfbbe88d5c7641b607cdb583952fc
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Public/Editor/Gizmos/Gizmos set Texture
+    Type to Default, Alpha is Transparency, Filter Mode to Trilinear.txt
+  uploadId: 791150

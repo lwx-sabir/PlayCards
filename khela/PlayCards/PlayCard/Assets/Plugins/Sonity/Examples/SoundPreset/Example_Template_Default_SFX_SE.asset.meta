@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 4d226b57804f5b34fbf1d0d5305902ee
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/SoundPreset/Example_Template_Default_SFX_SE.asset
+  uploadId: 791150

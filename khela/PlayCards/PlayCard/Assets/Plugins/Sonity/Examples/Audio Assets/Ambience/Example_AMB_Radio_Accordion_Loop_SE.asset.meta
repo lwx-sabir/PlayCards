@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: dd9d850181d78d2498a8d4bdef821281
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/Ambience/Example_AMB_Radio_Accordion_Loop_SE.asset
+  uploadId: 791150

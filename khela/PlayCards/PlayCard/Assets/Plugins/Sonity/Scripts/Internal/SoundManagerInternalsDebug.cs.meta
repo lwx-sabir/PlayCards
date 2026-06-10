@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 0bb77b67c485c1645bb09fbc95334503
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Internal/SoundManagerInternalsDebug.cs
+  uploadId: 791150

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b9d731b660d0e8d4f980aeae0b08ad3f
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 9 AudioListenerDistance
+    Override.unity
+  uploadId: 791150

@@ -1,0 +1,20 @@
+fileFormatVersion: 2
+guid: ec1368092b6e14e46aefde1f6fd6e022
+timeCreated: 1522939311
+licenseType: Store
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Internal/SoundEventInstanceNextVoice.cs
+  uploadId: 791150

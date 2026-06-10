@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: d6e7d3db285f34c40a6186e9ce370e41
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Templates/TemplateSoundMusicManager.cs
+  uploadId: 791150

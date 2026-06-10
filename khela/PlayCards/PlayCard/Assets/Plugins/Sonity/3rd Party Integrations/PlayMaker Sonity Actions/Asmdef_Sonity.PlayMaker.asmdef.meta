@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: f7636cdf1c6d7ca449581108db8c4845
+AssemblyDefinitionImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/Asmdef_Sonity.PlayMaker.asmdef
+  uploadId: 791150

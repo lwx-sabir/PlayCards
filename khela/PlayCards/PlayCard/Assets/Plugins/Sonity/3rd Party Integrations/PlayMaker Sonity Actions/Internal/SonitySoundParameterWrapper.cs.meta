@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: d248ed31cefa1194f96a7a0cf0b01565
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/Internal/SonitySoundParameterWrapper.cs
+  uploadId: 791150

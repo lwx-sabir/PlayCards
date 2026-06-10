@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 381f2801a1d374f4fb2bff0c1208e77c
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 8574412962073106934
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/Terrain/ExampleTerrainLayer00Grass.terrainlayer
+  uploadId: 791150

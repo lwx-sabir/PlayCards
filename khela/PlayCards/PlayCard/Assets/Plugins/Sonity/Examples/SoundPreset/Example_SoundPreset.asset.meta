@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f197bea4fcd669f4da592a9d1633cdf1
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/SoundPreset/Example_SoundPreset.asset
+  uploadId: 791150

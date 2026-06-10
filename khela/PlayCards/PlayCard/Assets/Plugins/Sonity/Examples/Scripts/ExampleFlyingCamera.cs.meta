@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 604fc595d3ccd404996fa0c1bdf227bd
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/ExampleFlyingCamera.cs
+  uploadId: 791150

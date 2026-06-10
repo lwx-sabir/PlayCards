@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: c0e1c788a016e2643bdaca2d36ef6a0c
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityUIPauseAll.cs
+  uploadId: 791150

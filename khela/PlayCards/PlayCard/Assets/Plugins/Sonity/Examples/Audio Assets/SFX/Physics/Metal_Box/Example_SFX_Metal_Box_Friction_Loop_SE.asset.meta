@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b4dda722e1874a04d9c73176dd512c5f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Physics/Metal_Box/Example_SFX_Metal_Box_Friction_Loop_SE.asset
+  uploadId: 791150

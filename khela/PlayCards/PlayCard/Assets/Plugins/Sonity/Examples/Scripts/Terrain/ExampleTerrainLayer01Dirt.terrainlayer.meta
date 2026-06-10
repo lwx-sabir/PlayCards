@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 6e127a0f34e2f9045ada48169ab1bdd9
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 8574412962073106934
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/Terrain/ExampleTerrainLayer01Dirt.terrainlayer
+  uploadId: 791150

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: b83ff98699af2fa4fa6d0e5c80294c0b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Public/Editor/SoundManagerEditor.cs
+  uploadId: 791150

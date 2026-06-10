@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: d62418000b83f214ca7b7a7b836e2faf
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityUIGetTransform.cs
+  uploadId: 791150

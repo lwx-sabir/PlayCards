@@ -1,0 +1,20 @@
+fileFormatVersion: 2
+guid: 304a4c69ee6117546ac4b5992c72ef82
+timeCreated: 1518219192
+licenseType: Store
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Internal/SoundPickerPart.cs
+  uploadId: 791150

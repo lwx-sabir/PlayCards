@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 4a0ee0f45cd787142945e3f9c9ff861c
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Internal/Editor/EditorTextSteamAudio.cs
+  uploadId: 791150

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: d209b866e8c6b2a4eb2021d009271a8c
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 2 Play With Code.unity
+  uploadId: 791150

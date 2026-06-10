@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 2cbeca0348bbc3f47ac798381cab2cac
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityGetMaxLength.cs
+  uploadId: 791150

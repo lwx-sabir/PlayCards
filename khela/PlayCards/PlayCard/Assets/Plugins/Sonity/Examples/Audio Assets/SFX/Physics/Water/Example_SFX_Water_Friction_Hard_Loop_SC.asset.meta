@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 976899022dc4ebf4da24fb7b8b6db4ab
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Physics/Water/Example_SFX_Water_Friction_Hard_Loop_SC.asset
+  uploadId: 791150

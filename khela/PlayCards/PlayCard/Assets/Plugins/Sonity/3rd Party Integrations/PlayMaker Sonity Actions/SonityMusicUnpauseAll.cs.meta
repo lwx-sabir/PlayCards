@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 77a4c0b7fa2039440b9fa7cec7bd561f
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityMusicUnpauseAll.cs
+  uploadId: 791150

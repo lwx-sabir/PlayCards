@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: bbe333e4b0811c94bb7a04088927ab7a
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityUIPlaySound.cs
+  uploadId: 791150

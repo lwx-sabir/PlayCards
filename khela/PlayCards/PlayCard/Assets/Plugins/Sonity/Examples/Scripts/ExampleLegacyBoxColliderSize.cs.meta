@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 7dfabc9ac6b815a44888265c3c04c885
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/ExampleLegacyBoxColliderSize.cs
+  uploadId: 791150

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 677bc2334bf2df3498d4a122478bdaf6
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 8 SoundPicker.unity
+  uploadId: 791150

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 6ce2d577696225348a9aaa262366b606
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/Internal/SonitySoundParameterVariableTypeDefinitionAsset.asset
+  uploadId: 791150

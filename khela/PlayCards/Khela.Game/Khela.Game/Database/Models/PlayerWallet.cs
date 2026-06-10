@@ -38,8 +38,11 @@ namespace Khela.Game.Database.Models
         [Required]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        // Concurrency token. On MySQL/Pomelo this maps to a `timestamp(6)` rowversion
+        // column (as created by the 'audit' migration). It must stay DateTime? to match
+        // the migrated schema and snapshot — a byte[] rowversion is not supported on MySQL.
         [Timestamp]
-        public byte[] RowVersion { get; set; }
+        public DateTime? RowVersion { get; set; }
 
         public bool IsLocked { get; set; } = false;
     }

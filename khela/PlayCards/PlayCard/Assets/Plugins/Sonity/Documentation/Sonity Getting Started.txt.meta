@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: d479a15df29216441bf1ef2b9c6d4609
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Documentation/Sonity Getting Started.txt
+  uploadId: 791150

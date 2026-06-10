@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 541a77b03020b054989885eecbb9c1c6
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityGetContainsLoop.cs
+  uploadId: 791150

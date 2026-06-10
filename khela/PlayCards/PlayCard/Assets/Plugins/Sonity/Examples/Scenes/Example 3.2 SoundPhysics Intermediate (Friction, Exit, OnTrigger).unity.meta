@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 29a6f9e72a2e8c34abd3b8012decbbcb
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 3.2 SoundPhysics Intermediate
+    (Friction, Exit, OnTrigger).unity
+  uploadId: 791150

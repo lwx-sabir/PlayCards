@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 001165352def8c7418e7511ca3a33c73
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scenes/Example 4 SoundParameter.unity
+  uploadId: 791150

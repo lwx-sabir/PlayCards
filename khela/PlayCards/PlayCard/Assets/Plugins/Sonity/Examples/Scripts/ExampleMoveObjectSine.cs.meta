@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: ed77d476e387b29469a1f05340cc7670
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/ExampleMoveObjectSine.cs
+  uploadId: 791150

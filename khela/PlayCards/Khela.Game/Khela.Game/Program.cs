@@ -3,7 +3,8 @@ using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
 using Khela.Game.Managers;
 using Khela.Game.Managers.SRHubs;
-using Khela.Game.Services.Redis; 
+using Khela.Game.Services.Redis;
+using Khela.Game.Services.Wallet;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore; 
@@ -82,7 +83,8 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddSingleton<IRedisService , RedisService>(); 
-builder.Services.AddScoped<ITokenService, JwtTokenService>(); 
+builder.Services.AddScoped<ITokenService, JwtTokenService>();
+builder.Services.AddScoped<IWalletService, WalletService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

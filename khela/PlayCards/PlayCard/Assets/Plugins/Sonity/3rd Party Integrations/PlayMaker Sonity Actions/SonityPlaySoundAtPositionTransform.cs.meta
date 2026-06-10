@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: ed06e7237d4a6224da69cb94936b09a4
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityPlaySoundAtPositionTransform.cs
+  uploadId: 791150

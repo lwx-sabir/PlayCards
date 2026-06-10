@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 636b2d7cf25de2048bee7f59a1ef68cb
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityMusicGetLastPlayedClipLength.cs
+  uploadId: 791150

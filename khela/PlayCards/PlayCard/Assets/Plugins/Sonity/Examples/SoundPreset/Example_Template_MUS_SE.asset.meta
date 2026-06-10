@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: adf9b68033cdd444aa3a1fa941d7a287
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/SoundPreset/Example_Template_MUS_SE.asset
+  uploadId: 791150

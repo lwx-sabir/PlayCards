@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 7c29bbbc0718134408a5f5f97ed95e3d
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Example_SFX_Drill_Stop_SC.asset
+  uploadId: 791150

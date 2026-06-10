@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 6b96e005332f43646854c8c9b9c99b6b
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityMusicGetTimePlayed.cs
+  uploadId: 791150

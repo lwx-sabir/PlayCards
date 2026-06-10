@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 7042f9323470dbe45aac002220afbee3
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/Music/Example_MUS_Playlist_B_Tail_SC.asset
+  uploadId: 791150

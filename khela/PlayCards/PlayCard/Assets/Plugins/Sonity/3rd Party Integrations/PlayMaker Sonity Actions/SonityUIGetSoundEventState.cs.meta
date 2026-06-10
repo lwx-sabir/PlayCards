@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: c42819fc050855149929c5e4cb2b12ec
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityUIGetSoundEventState.cs
+  uploadId: 791150

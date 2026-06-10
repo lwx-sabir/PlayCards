@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 211f964e254438f48bdb1b78501ded6c
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/Materials/ExampleMaterialWater.mat
+  uploadId: 791150

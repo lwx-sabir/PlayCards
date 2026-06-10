@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e6276923aad862645950c8231e482cdb
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 13400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Scripts/Materials/ExamplePhysicMaterial_Roll.physicMaterial
+  uploadId: 791150

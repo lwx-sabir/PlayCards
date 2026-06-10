@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: a94c613512e6a3b449d613d8a11aefbe
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/Music/Example_MUS_Stem_A_Intensity_Low_SC.asset
+  uploadId: 791150

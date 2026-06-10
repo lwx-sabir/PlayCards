@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: a1f5cc0aacb0d2c4f91929f28ea3004c
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Scripts/Internal/Editor/SoundMixEditorBase.cs
+  uploadId: 791150

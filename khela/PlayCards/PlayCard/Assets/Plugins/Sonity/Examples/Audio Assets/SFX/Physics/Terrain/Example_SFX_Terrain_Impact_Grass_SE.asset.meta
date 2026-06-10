@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 5f586e7a3b4b8354887b414201ecb738
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/Examples/Audio Assets/SFX/Physics/Terrain/Example_SFX_Terrain_Impact_Grass_SE.asset
+  uploadId: 791150

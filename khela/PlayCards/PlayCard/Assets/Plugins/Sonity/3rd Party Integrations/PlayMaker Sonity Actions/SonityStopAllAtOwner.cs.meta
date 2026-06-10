@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 77dfbbe6d371e774aa4212c67e7dbd18
+AssetOrigin:
+  serializedVersion: 1
+  productId: 229857
+  packageName: Sonity - Audio Middleware
+  packageVersion: 1.1.1
+  assetPath: Assets/Plugins/Sonity/3rd Party Integrations/PlayMaker Sonity Actions/SonityStopAllAtOwner.cs
+  uploadId: 791150
