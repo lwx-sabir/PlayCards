@@ -41,7 +41,10 @@ namespace Khela.Game.Database.Models
         // Concurrency token. On MySQL/Pomelo this maps to a `timestamp(6)` rowversion
         // column (as created by the 'audit' migration). It must stay DateTime? to match
         // the migrated schema and snapshot — a byte[] rowversion is not supported on MySQL.
+        // Pin the column type: newer Pomelo defaults [Timestamp] DateTime to datetime(6),
+        // which silently drifts the model off the migrated timestamp(6) schema.
         [Timestamp]
+        [Column(TypeName = "timestamp(6)")]
         public DateTime? RowVersion { get; set; }
 
         public bool IsLocked { get; set; } = false;

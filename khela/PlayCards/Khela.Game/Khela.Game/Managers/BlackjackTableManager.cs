@@ -7,23 +7,136 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using CardGames.Blackjack;
+using CardGames.Provable;
+using Khela.Common.Blackjack;
+using Khela.Game.Database;
+using Khela.Game.Database.Models;
+using Khela.Game.Managers.SRHubs;
+using Khela.Game.Services.Wallet;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Khela.Game.Managers
 {
     public class BlackjackTableManager
     {
         private readonly IRedisService redisService;
+        private readonly IServiceScopeFactory scopeFactory;
+        private readonly IHubContext<BlackjackHub> hubContext;
+        private readonly ILogger<BlackjackTableManager> logger;
+        private readonly int turnDurationSeconds;
         private const int DefaultMaxPlayers = 5;
 
-        public BlackjackTableManager(IRedisService redisService)
+        public BlackjackTableManager(IRedisService redisService, IServiceScopeFactory scopeFactory,
+            IHubContext<BlackjackHub> hubContext, ILogger<BlackjackTableManager> logger, IConfiguration config)
         {
             this.redisService = redisService;
+            this.scopeFactory = scopeFactory;
+            this.hubContext = hubContext;
+            this.logger = logger;
+            this.turnDurationSeconds = config.GetValue("Blackjack:TurnSeconds", 30);
+        }
+
+        // ---- Wallet integration (this manager is a singleton; resolve the scoped wallet per op) ----
+
+        private async Task<decimal> GetWalletChipsAsync(string userId)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+            return await wallet.GetBalanceAsync(userId, CurrencyType.Chips);
+        }
+
+        /// <summary>
+        /// Applies a round's net chip delta to the authoritative wallet and returns the new balance.
+        /// Idempotent on the round+seat correlation id, so a retried settle never double-pays.
+        /// </summary>
+        private async Task<(string TxId, decimal Balance)> ApplyRoundNetAsync(string userId, decimal net, string tableId, string roundId, int seat)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+            var ctx = new WalletContext { TableId = tableId, RoundId = roundId, Description = $"Blackjack round {roundId} seat {seat}" };
+            // roundId is itself a GUID, so it alone makes the key unique — keep it short to fit
+            // WalletTransaction.CorrelationId (MaxLength 64). (table id lives in WalletContext.)
+            var correlationId = $"bjr:{roundId}:{seat}";
+
+            if (net > 0m)
+            {
+                var txn = await wallet.CreditAsync(userId, CurrencyType.Chips, net, TransactionType.Win, correlationId, ctx);
+                return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
+            }
+            if (net < 0m)
+            {
+                var txn = await wallet.DebitAsync(userId, CurrencyType.Chips, -net, TransactionType.Bet, correlationId, ctx);
+                return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
+            }
+            return (null, await wallet.GetBalanceAsync(userId, CurrencyType.Chips));
+        }
+
+        /// <summary>
+        /// Persists the settled hand to the audit tables (provably-fair record + per-seat results).
+        /// Wrapped so an audit failure can never break gameplay — the round already settled in
+        /// Redis and the wallet.
+        /// </summary>
+        private async Task PersistHandAsync(BlackjackTable table, string roundId, List<GameHandParticipant> participants)
+        {
+            try
+            {
+                var roundSeed = ProvableShuffle.DeriveSeed(
+                    Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
+
+                var header = new GameHandHeader
+                {
+                    TableId = table.TableId,
+                    GameType = GameType.Blackjack,
+                    RoundId = roundId,
+                    HandNumber = (int)table.RoundNonce,
+                    StartedAt = table.RoundStartedAt?.UtcDateTime ?? DateTime.UtcNow,
+                    SettledAt = DateTime.UtcNow,
+                    Status = HandStatus.Settled,
+                    ShoeId = table.ServerSeedHash,
+                    ShuffleSeed = Convert.ToHexString(roundSeed).ToLowerInvariant(),
+                    DeckHash = table.CurrentDeckHash,
+                    ResultChecksum = ComputeResultChecksum(table, participants)
+                };
+
+                foreach (var p in participants) p.HandId = header.HandId;
+
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.GameHandHeaders.Add(header);
+                db.GameHandParticipants.AddRange(participants);
+                await db.SaveChangesAsync();
+
+                table.LastHandId = header.HandId.ToString(); // surfaced in the board for one-click verify
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to persist blackjack hand audit for table {TableId} round {RoundId}", table.TableId, roundId);
+            }
+        }
+
+        private static string ComputeResultChecksum(BlackjackTable table, List<GameHandParticipant> participants)
+        {
+            var dealer = string.Join(",", table.Game.Dealer.Hand.Cards.Select(ProvableShuffle.Canonical));
+            var players = string.Join(";", participants.OrderBy(p => p.SeatNumber)
+                .Select(p => $"{p.SeatNumber}:{p.FinalHandValue}:{p.Outcome}:{p.Payout}"));
+            var canonical = $"{table.CurrentDeckHash}|D={dealer}|{players}";
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         }
 
         private string GetKey(string tableId) => $"blackjack:table:{tableId}";
 
+        // Redis SET of all active table ids, so the lobby can enumerate tables without SCAN.
+        private const string LobbyIndexKey = "blackjack:tables";
+
         // Create a new table
-        public async Task<TableCreateResult> CreateTableAsync(int? maxPlayers = null, int? maxSeatsPerUser = null)
+        public async Task<TableCreateResult> CreateTableAsync(int? maxPlayers = null, int? maxSeatsPerUser = null,
+            BlackjackMode mode = BlackjackMode.Classic, decimal minBet = 0, decimal maxBet = 0)
         {
             var tableId = Guid.NewGuid().ToString();
             var game = new BlackJackGame();
@@ -35,16 +148,28 @@ namespace Khela.Game.Managers
                 Game = game,
                 RoundInProgress = false,
                 UpdatedAt = DateTimeOffset.UtcNow,
-                MaxSeatsPerUser = Math.Clamp(maxSeatsPerUser ?? 1, 1, Math.Clamp(maxPlayers ?? DefaultMaxPlayers, 1, 10))
+                MaxSeatsPerUser = Math.Clamp(maxSeatsPerUser ?? 1, 1, Math.Clamp(maxPlayers ?? DefaultMaxPlayers, 1, 10)),
+                Mode = mode,
+                MinBet = minBet,
+                MaxBet = maxBet
             };
 
             table.Seats = Enumerable.Range(1, table.MaxPlayers)
                 .Select(i => new Seat { SeatNumber = i })
                 .ToList();
 
-            table.TurnDurationSeconds = 20;
+            table.TurnDurationSeconds = turnDurationSeconds;
+
+            // Provably-fair: a secret per-session server seed, committed via its hash (published to
+            // clients), combined with a client seed + per-round nonce to seed each shoe's shuffle.
+            var serverSeedBytes = RandomNumberGenerator.GetBytes(32);
+            table.ServerSeed = Convert.ToHexString(serverSeedBytes);
+            table.ServerSeedHash = Convert.ToHexString(SHA256.HashData(serverSeedBytes)).ToLowerInvariant();
+            table.ClientSeed = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+            table.RoundNonce = 0;
 
             await SaveTableAsync(tableId, table);
+            await redisService.GetDatabase().SetAddAsync(LobbyIndexKey, tableId);
 
             return new TableCreateResult { Game = game, TableId = tableId, MaxPlayers = table.MaxPlayers, MaxSeatsPerUser = table.MaxSeatsPerUser };
         }
@@ -68,15 +193,97 @@ namespace Khela.Game.Managers
             table.UpdatedAt = DateTimeOffset.UtcNow;
             var json = JsonSerializer.Serialize(table);
             await redisService.GetDatabase().StringSetAsync(GetKey(tableId), json, TimeSpan.FromHours(2)); // TTL 2h
+
+            // Live update: every state change pushes the masked board to this table's subscribers.
+            await hubContext.Clients.Group($"table:{tableId}").SendAsync("TableUpdated", BlackjackBoard.Build(table));
+        }
+
+        // ---- Lobby ----
+
+        /// <summary>
+        /// Browsable list of blackjack tables for the lobby, optionally filtered by mode.
+        /// Self-heals: ids whose table key has expired (TTL) are pruned from the index.
+        /// </summary>
+        public async Task<List<BlackjackTableSummary>> GetLobbyAsync(BlackjackMode? mode = null)
+        {
+            var db = redisService.GetDatabase();
+
+            var ids = await db.SetMembersAsync(LobbyIndexKey);
+            if (ids.Length == 0)
+            {
+                await EnsureDefaultTablesAsync();
+                ids = await db.SetMembersAsync(LobbyIndexKey);
+            }
+
+            var summaries = new List<BlackjackTableSummary>();
+            var stale = new List<RedisValue>();
+
+            foreach (var id in ids)
+            {
+                var table = await GetTableAsync((string)id);
+                if (table == null) { stale.Add(id); continue; } // key expired (TTL) -> drop from index
+                if (mode.HasValue && table.Mode != mode.Value) continue;
+                summaries.Add(ToSummary(table));
+            }
+
+            if (stale.Count > 0) await db.SetRemoveAsync(LobbyIndexKey, stale.ToArray());
+
+            return summaries
+                .OrderBy(s => s.Mode)
+                .ThenBy(s => s.MinBet)
+                .ThenBy(s => s.TableId)
+                .ToList();
+        }
+
+        // Temporary "house tables" so the lobby is never empty in dev. Replace with proper table
+        // lifecycle + bot seeding later. NX-guarded so concurrent first hits don't duplicate.
+        private static readonly (BlackjackMode mode, decimal min, decimal max)[] DefaultTables =
+        {
+            (BlackjackMode.Classic, 1000m, 10000m),
+            (BlackjackMode.Classic, 5000m, 25000m),
+            (BlackjackMode.Classic, 25000m, 100000m),
+        };
+
+        public async Task EnsureDefaultTablesAsync()
+        {
+            var db = redisService.GetDatabase();
+            if (!await db.StringSetAsync("blackjack:tables:seeded", "1", TimeSpan.FromHours(2), When.NotExists))
+                return;
+
+            foreach (var t in DefaultTables)
+                await CreateTableAsync(maxPlayers: 5, maxSeatsPerUser: 1, mode: t.mode, minBet: t.min, maxBet: t.max);
+        }
+
+        private static BlackjackTableSummary ToSummary(BlackjackTable table)
+        {
+            var occupants = table.Seats
+                .Where(s => s.Player != null)
+                .Select(s => new TableOccupant
+                {
+                    SeatNumber = s.SeatNumber,
+                    Name = s.Player!.Name,
+                    Image = s.Player.Image,
+                    Balance = s.Player.Balance
+                })
+                .ToList();
+
+            return new BlackjackTableSummary
+            {
+                TableId = table.TableId,
+                Mode = table.Mode,
+                MinBet = table.MinBet,
+                MaxBet = table.MaxBet,
+                MaxPlayers = table.MaxPlayers,
+                SeatsOccupied = occupants.Count,
+                RoundInProgress = table.RoundInProgress,
+                Occupants = occupants
+            };
         }
 
         public async Task<BlackjackTable?> AddPlayerAsync(string tableId, Player player)
         {
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
-
-            if (player.Balance < 0)
-                throw new InvalidOperationException("Balance cannot be negative.");
 
             var existingSeatsForUser = table.Seats.Count(s => s.Player != null && s.Player.Id == player.Id);
             if (existingSeatsForUser >= table.MaxSeatsPerUser)
@@ -86,7 +293,9 @@ namespace Khela.Game.Managers
             if (openSeat == null)
                 throw new InvalidOperationException("Table is full.");
 
-            var seatedPlayer = new Player(player.Id, player.Balance, player.Name, player.Image, openSeat.SeatNumber);
+            // Seat from the AUTHORITATIVE wallet balance — never trust a client-supplied balance.
+            var chips = await GetWalletChipsAsync(player.Id);
+            var seatedPlayer = new Player(player.Id, chips, player.Name, player.Image, openSeat.SeatNumber);
 
             openSeat.Player = seatedPlayer;
             table.Game.Players.Add(seatedPlayer);
@@ -118,6 +327,10 @@ namespace Khela.Game.Managers
                 throw new InvalidOperationException("Cannot change bets during an active round.");
             if (amount <= 0)
                 throw new InvalidOperationException("Bet amount must be positive.");
+            if (table.MinBet > 0 && amount < table.MinBet)
+                throw new InvalidOperationException($"Bet is below the table minimum of {table.MinBet}.");
+            if (table.MaxBet > 0 && amount > table.MaxBet)
+                throw new InvalidOperationException($"Bet is above the table maximum of {table.MaxBet}.");
 
             var seat = table.Seats.FirstOrDefault(s => s.SeatNumber == seatNumber);
             if (seat == null || seat.Player == null || seat.Player.Id != userId)
@@ -139,16 +352,70 @@ namespace Khela.Game.Managers
             if (!table.Game.Players.Any())
                 throw new InvalidOperationException("No players seated.");
 
-            foreach (var player in table.Game.Players)
-            {
-                if (player.Hands.Count == 0 || player.Hands[0].Bet <= 0)
-                    throw new InvalidOperationException($"Player {player.Id} has no bet placed.");
+            // New round: refresh each player's mirror from the authoritative wallet and record the
+            // round-start balance. The round's NET effect is reconciled back to the wallet at settle.
+            table.CurrentRoundId = Guid.NewGuid().ToString("N");
+            table.RoundNonce += 1;
+            table.RoundStartBalance = new Dictionary<int, decimal>();
 
-                player.PlaceBet(0);
-                player.ClearInsurance(0);
+            // Defensive: tables created before provably-fair seeds existed get one lazily.
+            if (string.IsNullOrEmpty(table.ServerSeed))
+            {
+                var sb = RandomNumberGenerator.GetBytes(32);
+                table.ServerSeed = Convert.ToHexString(sb);
+                table.ServerSeedHash = Convert.ToHexString(SHA256.HashData(sb)).ToLowerInvariant();
+                if (string.IsNullOrEmpty(table.ClientSeed))
+                    table.ClientSeed = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
             }
 
-            table.Game.DealNewGame();
+            // Capture each wager BEFORE dealing — DealNewGame resets the hands (which would wipe the
+            // bet, so wins/pushes paid nothing); we re-apply it to the freshly dealt hand afterwards.
+            // Only players who placed a bet join THIS round; anyone else (e.g. someone who sat down
+            // mid-round) stays seated and waits for the next deal.
+            var wagers = new Dictionary<int, decimal>();
+            foreach (var player in table.Game.Players)
+            {
+                var bet = player.Hands.Count > 0 ? player.Hands[0].Bet : 0m;
+                player.InRound = bet > 0;
+                if (!player.InRound)
+                    continue;
+
+                var chips = await GetWalletChipsAsync(player.Id);
+                if (chips < bet)
+                    throw new InvalidOperationException($"Player {player.Id} has insufficient chips for the bet.");
+
+                player.SetBalance(chips);
+                table.RoundStartBalance[player.SeatNumber] = chips;
+                wagers[player.SeatNumber] = bet;
+            }
+
+            if (wagers.Count == 0)
+                throw new InvalidOperationException("No bets placed — at least one seated player must bet to deal.");
+
+            // Provably-fair seeded 6-deck shoe for this round.
+            var roundSeed = ProvableShuffle.DeriveSeed(
+                Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
+            table.Game.DealNewGame(roundSeed, 6);
+
+            // Audit: hash the full shuffled shoe (recomputed deterministically from the same seed)
+            // and stamp the round start, both persisted to GameHandHeader at settle.
+            var shoeForHash = new Deck(6);
+            shoeForHash.Shuffle(roundSeed);
+            table.CurrentDeckHash = shoeForHash.ComputeHash();
+            table.RoundStartedAt = DateTimeOffset.UtcNow;
+
+            // Re-apply each captured wager to the freshly dealt hand and deduct it from the mirror,
+            // so the bet survives to settlement and wins/pushes actually pay out.
+            foreach (var player in table.Game.Players)
+            {
+                if (wagers.TryGetValue(player.SeatNumber, out var bet) && bet > 0)
+                {
+                    player.IncreaseBet(bet, 0);
+                    player.PlaceBet(0);
+                    player.ClearInsurance(0);
+                }
+            }
+
             MarkNaturals(table);
             SetInitialTurn(table);
             table.RoundInProgress = true;
@@ -273,7 +540,62 @@ namespace Khela.Game.Managers
             }
 
             table.Game.DealerPlay();
+
+            // Capture gross wager + final hand state per seat BEFORE settle zeroes the bets.
+            var preSettle = table.Game.Players.ToDictionary(
+                p => p.SeatNumber,
+                p => (
+                    Wagered: p.Hands.Sum(h => h.Bet + h.InsuranceBet),
+                    FinalValue: p.Hands[0].Hand.GetSumOfHand(),
+                    Bust: p.Hands.Any(h => h.Hand.GetSumOfHand() > 21),
+                    Blackjack: p.HasBlackJack(0)
+                ));
+
             SettleRound(table.Game);
+
+            var roundId = table.CurrentRoundId ?? "";
+            var participants = new List<GameHandParticipant>();
+
+            // Reconcile each player's NET result to the authoritative wallet, sync the mirror, audit it.
+            foreach (var player in table.Game.Players)
+            {
+                if (!player.InRound) continue; // waiting players didn't play this round — no settle/audit
+
+                var start = table.RoundStartBalance != null
+                            && table.RoundStartBalance.TryGetValue(player.SeatNumber, out var s)
+                    ? s
+                    : player.Balance;
+                var net = player.Balance - start;
+                var (txId, newBalance) = await ApplyRoundNetAsync(player.Id, net, table.TableId, roundId, player.SeatNumber);
+                player.SetBalance(newBalance);
+
+                var pre = preSettle.TryGetValue(player.SeatNumber, out var ps)
+                    ? ps
+                    : (Wagered: 0m, FinalValue: 0, Bust: false, Blackjack: false);
+
+                Guid.TryParse(player.Id, out var uid);
+                participants.Add(new GameHandParticipant
+                {
+                    UserId = uid,
+                    SeatNumber = player.SeatNumber,
+                    Bet = pre.Wagered,
+                    Payout = pre.Wagered + net,            // gross returned (wins + pushes); 0 on a loss
+                    FinalHandValue = pre.FinalValue,
+                    Bust = pre.Bust,
+                    Blackjack = pre.Blackjack,
+                    Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
+                    WalletCreditTxId = net > 0 ? txId : null,
+                    WalletDebitTxId = net < 0 ? txId : null,
+                    BalanceBefore = start,
+                    BalanceAfter = newBalance
+                });
+            }
+
+            await PersistHandAsync(table, roundId, participants);
+
+            table.RoundStartBalance?.Clear();
+            table.CurrentRoundId = null;
+            table.CurrentDeckHash = null;
             table.RoundInProgress = false;
             await SaveTableAsync(tableId, table);
             return table;
@@ -307,6 +629,8 @@ namespace Khela.Game.Managers
 
             foreach (var player in game.Players)
             {
+                if (!player.InRound) continue; // waiting players didn't play this round
+
                 for (int i = 0; i < player.Hands.Count; i++)
                 {
                     var handState = player.Hands[i];
@@ -322,6 +646,21 @@ namespace Khela.Game.Managers
                     }
 
                     if (playerTotal > 21)
+                    {
+                        player.AddLoss(i);
+                        continue;
+                    }
+
+                    // A natural blackjack is a 2-card 21 on an unsplit hand; it pays 3:2.
+                    var playerNatural = player.Hands.Count == 1 && handState.Hand.Cards.Count == 2 && playerTotal == 21;
+                    if (playerNatural)
+                    {
+                        if (dealerBlackjack) player.AddPush(i);   // both naturals -> push
+                        else player.AddWin(2.5m, i);              // 3:2 (returns 2.5x the stake)
+                        continue;
+                    }
+
+                    if (dealerBlackjack)                          // dealer natural beats any non-natural hand
                     {
                         player.AddLoss(i);
                         continue;
@@ -465,7 +804,7 @@ namespace Khela.Game.Managers
         {
             foreach (var seat in table.Seats.OrderBy(s => s.SeatNumber))
             {
-                if (seat.Player == null) continue;
+                if (seat.Player == null || !seat.Player.InRound) continue;
                 for (int i = 0; i < seat.Player.Hands.Count; i++)
                 {
                     var hand = seat.Player.Hands[i];
@@ -492,6 +831,12 @@ namespace Khela.Game.Managers
     {
         public string TableId { get; set; }
 
+        public BlackjackMode Mode { get; set; } = BlackjackMode.Classic;
+
+        public decimal MinBet { get; set; }
+
+        public decimal MaxBet { get; set; }
+
         public int MaxPlayers { get; set; }
 
         public int MaxSeatsPerUser { get; set; }
@@ -511,6 +856,26 @@ namespace Khela.Game.Managers
         public int CurrentHandIndex { get; set; } = 0;
 
         public DateTimeOffset? TurnExpiresAt { get; set; }
+
+        // Current round (deal -> settle). RoundStartBalance maps seat -> wallet chips captured at
+        // deal, used to reconcile the round's net result to the wallet at settle.
+        public string CurrentRoundId { get; set; }
+
+        public Dictionary<int, decimal> RoundStartBalance { get; set; } = new Dictionary<int, decimal>();
+
+        // Provably-fair seeds. ServerSeed is SECRET (never sent to clients); ServerSeedHash is the
+        // public commitment; ClientSeed + RoundNonce complete each round's shuffle seed.
+        public string ServerSeed { get; set; }
+        public string ServerSeedHash { get; set; }
+        public string ClientSeed { get; set; }
+        public long RoundNonce { get; set; }
+
+        // Audit capture for the in-progress round, persisted to GameHandHeader at settle.
+        public string CurrentDeckHash { get; set; }
+        public DateTimeOffset? RoundStartedAt { get; set; }
+
+        // Id of the most recently settled hand, so clients can deep-link to GET /verify/{handId}.
+        public string LastHandId { get; set; }
     }
 
     public class Seat

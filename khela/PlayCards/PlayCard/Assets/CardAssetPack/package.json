@@ -1,0 +1,18 @@
+{
+  "name": "cardassetpack",
+  "unity": "2021.3",
+  "version": "0.0.1-preview",
+  "displayName": "CardAssetPack",
+  "author": {
+    "name": "Aarnituli",
+    "email": "",
+    "url": ""
+  },
+  "description": "Assets for creating a cardgame",
+  "keywords": [
+    "example",
+    "test",
+    "demo"
+  ],
+  "category": "examples"
+}

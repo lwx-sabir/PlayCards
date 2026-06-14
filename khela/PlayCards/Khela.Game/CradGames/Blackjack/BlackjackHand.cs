@@ -65,5 +65,27 @@ namespace CardGames.Blackjack
             isSoft = numAces > 0;
             return val;
         }
+
+        /// <summary>
+        /// Hand value counting ONLY face-up cards (Ace-aware). Lets the board show the dealer's
+        /// total while the hole card is hidden, without leaking the down card's value.
+        /// </summary>
+        public int GetVisibleSum()
+        {
+            int val = 0;
+            int numAces = 0;
+
+            foreach (Card c in Cards)
+            {
+                if (!c.IsCardUp) continue;
+
+                if (c.FaceVal == FaceValue.Ace) { numAces++; val += 11; }
+                else if (c.FaceVal == FaceValue.Jack || c.FaceVal == FaceValue.Queen || c.FaceVal == FaceValue.King) val += 10;
+                else val += (int)c.FaceVal;
+            }
+
+            while (val > 21 && numAces > 0) { val -= 10; numAces--; }
+            return val;
+        }
     }
 }

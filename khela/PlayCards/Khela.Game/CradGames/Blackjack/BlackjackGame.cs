@@ -58,11 +58,13 @@ namespace CardGames.Blackjack
             /// <summary>
             /// Deals a new game
             /// </summary>
-            public void DealNewGame()
+            public void DealNewGame(byte[] seed = null, int deckCount = 1)
             {
-                // Create and shuffle deck
-                Deck = new Deck();
-                Deck.Shuffle();
+                // Create and shuffle the shoe. With a seed the shuffle is deterministic and
+                // independently verifiable (provably fair); without one it uses a crypto shuffle.
+                Deck = new Deck(deckCount);
+                if (seed != null) Deck.Shuffle(seed);
+                else Deck.Shuffle();
 
                 // Reset hands for dealer and all players
                 Dealer.NewHand();
@@ -79,6 +81,7 @@ namespace CardGames.Blackjack
                 {
                     foreach (var p in Players)
                     {
+                        if (!p.InRound) continue; // seated-but-waiting players aren't dealt this round
                         p.Hand.Cards.Add(Deck.Draw());
                     }
 

@@ -205,7 +205,7 @@ namespace Khela.Game.Migrations
 
                     b.HasKey("DeviceId");
 
-                    b.ToTable("DeviceRegistrations");
+                    b.ToTable("DeviceRegistrations", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.GameHandAction", b =>
@@ -249,7 +249,7 @@ namespace Khela.Game.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("GameHandActions");
+                    b.ToTable("GameHandActions", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.GameHandHeader", b =>
@@ -314,7 +314,7 @@ namespace Khela.Game.Migrations
 
                     b.HasIndex("TableId");
 
-                    b.ToTable("GameHandHeaders");
+                    b.ToTable("GameHandHeaders", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.GameHandParticipant", b =>
@@ -381,7 +381,7 @@ namespace Khela.Game.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("GameHandParticipants");
+                    b.ToTable("GameHandParticipants", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.GameHandSnapshot", b =>
@@ -416,7 +416,7 @@ namespace Khela.Game.Migrations
 
                     b.HasIndex("Stage");
 
-                    b.ToTable("GameHandSnapshots");
+                    b.ToTable("GameHandSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.PlayerWallet", b =>
@@ -458,7 +458,7 @@ namespace Khela.Game.Migrations
                     b.HasIndex("UserId", "Currency")
                         .IsUnique();
 
-                    b.ToTable("PlayerWallets");
+                    b.ToTable("PlayerWallets", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.StoreItem", b =>
@@ -496,7 +496,7 @@ namespace Khela.Game.Migrations
 
                     b.HasKey("ItemId");
 
-                    b.ToTable("StoreItems");
+                    b.ToTable("StoreItems", (string)null);
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.WalletTransaction", b =>
@@ -574,7 +574,7 @@ namespace Khela.Game.Migrations
 
                     b.HasIndex("WalletId", "CreatedAt");
 
-                    b.ToTable("WalletTransactions");
+                    b.ToTable("WalletTransactions", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

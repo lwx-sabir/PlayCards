@@ -1,0 +1,76 @@
+### Khela round-lifecycle smoke test.
+### Run the API with the HTTP profile so HTTPS-redirect doesn't interfere:
+###   dotnet run --launch-profile http
+### Needs MySQL + Redis up. Execute the requests top to bottom.
+
+@host = http://localhost:5044
+@email = smoke1@khela.game
+@password = Passw0rd
+@bet = 1000
+
+### 1) Register (first run). On re-runs this 400s "email exists" — use step 1b instead.
+# @name register
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{ "email": "{{email}}", "username": "smoke1", "password": "{{password}}", "countryCode": "bd", "deviceId": "" }
+
+### 1b) Login (use on subsequent runs instead of register)
+# @name login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "{{email}}", "password": "{{password}}", "deviceId": "" }
+
+### Token from whichever of 1/1b you ran (edit .register -> .login if you logged in)
+@token = {{register.response.body.$.token}}
+
+### 2) Wallet HUD — provisions starter chips (10000) + gems (100) on first call
+GET {{host}}/api/wallet/balances
+Authorization: Bearer {{token}}
+
+### 3) Lobby — browsable tables (auto-seeds 3 Classic house tables on first hit)
+# @name lobby
+GET {{host}}/api/lobby/blackjack
+Authorization: Bearer {{token}}
+
+### Grab the first table's id (the 1K/10K Classic table)
+@tableId = {{lobby.response.body.$[0].tableId}}
+
+### 4) Join — seats you from the WALLET balance (request balance is ignored). Takes seat 1.
+POST {{host}}/api/blackjack/{{tableId}}/join
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "SmokeTester", "image": "", "balance": 0 }
+
+### 5) Place a bet on seat 1 (must be within table min/max)
+POST {{host}}/api/blackjack/{{tableId}}/bet
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "amount": {{bet}}, "seatNumber": 1, "handIndex": 0 }
+
+### 6) Deal — debits nothing yet (net-reconciled at settle); deals a seeded 6-deck shoe
+POST {{host}}/api/blackjack/{{tableId}}/deal
+Authorization: Bearer {{token}}
+
+### 7) Stand on seat 1 (or use /hit/1?handIndex=0 to draw)
+POST {{host}}/api/blackjack/{{tableId}}/stand/1
+Authorization: Bearer {{token}}
+
+### 8) Dealer plays + settles → wallet credited/debited by the net result + hand persisted
+POST {{host}}/api/blackjack/{{tableId}}/dealerPlay
+Authorization: Bearer {{token}}
+
+### 9) Balance again — should reflect the round's win/loss
+GET {{host}}/api/wallet/balances
+Authorization: Bearer {{token}}
+
+### 10) Board — dealer hole card now revealed; note "fairness" (commitment) block
+GET {{host}}/api/blackjack/{{tableId}}/board
+Authorization: Bearer {{token}}
+
+### 11) VERIFY a settled hand (public, no auth). Get the HandId from the GameHandHeaders
+###     table in MySQL (newest row), then:
+# GET {{host}}/api/blackjack/verify/PASTE-HANDID-HERE

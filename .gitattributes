@@ -1,0 +1,51 @@
+## ============================================================
+##  PlayCards / Khela — Git attributes
+##  Large binary art is stored via Git LFS to keep history small.
+##  Unity YAML/text assets are explicitly kept OUT of LFS.
+## ============================================================
+
+## ---- Binary art & media -> Git LFS ----
+*.png   filter=lfs diff=lfs merge=lfs -text
+*.jpg   filter=lfs diff=lfs merge=lfs -text
+*.jpeg  filter=lfs diff=lfs merge=lfs -text
+*.gif   filter=lfs diff=lfs merge=lfs -text
+*.psd   filter=lfs diff=lfs merge=lfs -text
+*.tga   filter=lfs diff=lfs merge=lfs -text
+*.tif   filter=lfs diff=lfs merge=lfs -text
+*.tiff  filter=lfs diff=lfs merge=lfs -text
+*.bmp   filter=lfs diff=lfs merge=lfs -text
+*.exr   filter=lfs diff=lfs merge=lfs -text
+*.hdr   filter=lfs diff=lfs merge=lfs -text
+
+## 3D models / sources
+*.fbx   filter=lfs diff=lfs merge=lfs -text
+*.FBX   filter=lfs diff=lfs merge=lfs -text
+*.obj   filter=lfs diff=lfs merge=lfs -text
+*.blend filter=lfs diff=lfs merge=lfs -text
+
+## Audio
+*.wav   filter=lfs diff=lfs merge=lfs -text
+*.mp3   filter=lfs diff=lfs merge=lfs -text
+*.ogg   filter=lfs diff=lfs merge=lfs -text
+*.aif   filter=lfs diff=lfs merge=lfs -text
+
+## Video
+*.mp4   filter=lfs diff=lfs merge=lfs -text
+*.webm  filter=lfs diff=lfs merge=lfs -text
+
+## Fonts & archives & packages
+*.ttf   filter=lfs diff=lfs merge=lfs -text
+*.otf   filter=lfs diff=lfs merge=lfs -text
+*.zip   filter=lfs diff=lfs merge=lfs -text
+*.unitypackage filter=lfs diff=lfs merge=lfs -text
+
+## ---- Unity text/YAML assets: NEVER LFS, treat as text ----
+*.cs        text diff=csharp
+*.asmdef    text
+*.meta      -filter -diff -merge text
+*.unity     -filter -diff -merge text
+*.prefab    -filter -diff -merge text
+*.asset     -filter -diff -merge text
+*.mat       -filter -diff -merge text
+*.anim      -filter -diff -merge text
+*.controller -filter -diff -merge text

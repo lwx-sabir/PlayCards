@@ -24,9 +24,20 @@ namespace CardGames.Blackjack.CardGames.Blackjack
         [JsonIgnore]
         public decimal InsuranceBet => Hands.First().InsuranceBet;
 
+        // [JsonInclude] so these survive the Redis round-trip — private setters that aren't
+        // constructor params are otherwise dropped on deserialize, resetting stats every round.
+        [JsonInclude]
         public int Wins { get; private set; }
+        [JsonInclude]
         public int Losses { get; private set; }
+        [JsonInclude]
         public int Push { get; private set; }
+
+        // True only while this player is part of the CURRENT round (had a bet at deal time). A
+        // player who sits down mid-round stays false and waits for the next deal.
+        [JsonInclude]
+        public bool InRound { get; set; }
+
         public string Image { get; private set; } = string.Empty;
         public string Name { get; private set; } = string.Empty;
 
@@ -47,6 +58,13 @@ namespace CardGames.Blackjack.CardGames.Blackjack
             Name = name;
             SeatNumber = seatNumber;
         }
+
+        /// <summary>
+        /// Overwrites the in-memory balance to mirror the authoritative wallet. The wallet (MySQL)
+        /// is the source of truth; this Balance is a display / round-math mirror that the table
+        /// layer syncs from the wallet at seat and after each settle.
+        /// </summary>
+        public void SetBalance(decimal balance) => Balance = balance;
 
         public void IncreaseBet(decimal amt, int handIndex = 0)
         {

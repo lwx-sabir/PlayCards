@@ -4,6 +4,9 @@
     {
         public int MaxPlayers { get; set; } = 5;
         public int MaxSeatsPerUser { get; set; } = 1;
+        public BlackjackMode Mode { get; set; } = BlackjackMode.Classic;
+        public decimal MinBet { get; set; } = 1000;
+        public decimal MaxBet { get; set; } = 10000;
     }
 
     public class JoinTableRequest

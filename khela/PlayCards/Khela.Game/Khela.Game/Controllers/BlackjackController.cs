@@ -1,7 +1,10 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Khela.Game.Managers;
+using Khela.Game.Database;
 using CardGames.Blackjack.CardGames.Blackjack;
+using CardGames.Platforms;
+using CardGames.Provable;
 using Khela.Common.Blackjack;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
@@ -16,10 +19,12 @@ namespace Khela.Game.Controllers
     public class BlackjackController : ControllerBase
     {
         private readonly BlackjackTableManager tableManager;
+        private readonly AppDbContext db;
 
-        public BlackjackController(BlackjackTableManager tableManager)
+        public BlackjackController(BlackjackTableManager tableManager, AppDbContext db)
         {
             this.tableManager = tableManager;
+            this.db = db;
         }
          
         [HttpPost("create")]
@@ -27,8 +32,9 @@ namespace Khela.Game.Controllers
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            var table = await tableManager.CreateTableAsync(request.MaxPlayers, request.MaxSeatsPerUser);
-            return Ok(new { table.TableId, table.MaxPlayers, table.MaxSeatsPerUser });
+            var table = await tableManager.CreateTableAsync(request.MaxPlayers, request.MaxSeatsPerUser,
+                request.Mode, request.MinBet, request.MaxBet);
+            return Ok(new { table.TableId, table.MaxPlayers, table.MaxSeatsPerUser, request.Mode, request.MinBet, request.MaxBet });
         }
 
         [HttpPost("{tableId}/join")]
@@ -121,19 +127,8 @@ namespace Khela.Game.Controllers
                 var table = await tableManager.DealAsync(tableId);
                 if (table == null) return NotFound("Table not found or expired.");
 
-                return Ok(new
-                {
-                    table.TableId,
-                    Round = "started",
-                    table.RoundInProgress,
-                    Dealer = new
-                    {
-                        Cards = table.Game.Dealer.Hand.Cards.Select(c => new { c.FaceVal, c.Suit, c.IsCardUp }),
-                        HandValue = table.Game.Dealer.Hand.GetSumOfHand()
-                    },
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                // Unified masked board — the dealer hole card stays hidden until dealer reveal.
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -276,14 +271,8 @@ namespace Khela.Game.Controllers
                 var table = await tableManager.DealerPlayAndSettleAsync(tableId);
                 if (table == null) return NotFound("Table not found or expired.");
 
-                return Ok(new
-                {
-                    DealerCards = table.Game.Dealer.Hand.Cards.Select(c => new { c.FaceVal, c.Suit, c.IsCardUp }),
-                    HandValue = table.Game.Dealer.Hand.GetSumOfHand(),
-                    RoundSettled = true,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                // Unified board — round settled (dealer revealed); includes LastHandId for one-click verify.
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -297,24 +286,45 @@ namespace Khela.Game.Controllers
             var table = await tableManager.GetTableAsync(tableId);
             if (table == null) return NotFound("Table not found or expired.");
 
-            var board = new
-            {
-                table.TableId,
-                table.MaxPlayers,
-                table.MaxSeatsPerUser,
-                table.RoundInProgress,
-                DeckRemaining = table.Game.Deck.GetRemainingDeck(),
-                Dealer = new
-                {
-                    Cards = table.Game.Dealer.Hand.Cards.Select(c => new { c.FaceVal, c.Suit, c.IsCardUp }),
-                    HandValue = table.Game.Dealer.Hand.GetSumOfHand()
-                },
-                Players = table.Game.Players.Select(ToPlayerDto),
-                Seats = table.Seats.Select(ToSeatDto)
-            };
-
-            return Ok(board);
+            return Ok(BlackjackBoard.Build(table));
         }
+
+        /// <summary>
+        /// Provably-fair verification for a settled hand: recompute the shoe from the recorded
+        /// per-round seed and confirm it hashes to the recorded deck. Public so anyone can verify.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("verify/{handId}")]
+        public async Task<IActionResult> Verify(Guid handId)
+        {
+            var header = await db.GameHandHeaders.FindAsync(handId);
+            if (header == null) return NotFound("Hand not found.");
+
+            var shoe = new Deck(6);
+            shoe.Shuffle(Convert.FromHexString(header.ShuffleSeed));
+            var recomputed = shoe.ComputeHash();
+
+            return Ok(new
+            {
+                header.HandId,
+                header.TableId,
+                header.RoundId,
+                header.HandNumber,
+                ShoeCommitment = header.ShoeId,
+                header.ShuffleSeed,
+                RecordedDeckHash = header.DeckHash,
+                RecomputedDeckHash = recomputed,
+                Verified = string.Equals(recomputed, header.DeckHash, StringComparison.OrdinalIgnoreCase),
+                header.ResultChecksum,
+                DeckOrder = shoe.Cards.Select(ProvableShuffle.Canonical)
+            });
+        }
+
+        // Face-down cards (the dealer hole card) are masked so a board snapshot never leaks the
+        // down card; the real value appears once it's flipped face-up at dealer play.
+        private static object MaskCard(Card c) => c.IsCardUp
+            ? new { FaceVal = (int)c.FaceVal, Suit = (int)c.Suit, c.IsCardUp }
+            : new { FaceVal = 0, Suit = 0, c.IsCardUp };
 
         private static object ToPlayerDto(Player p) => new
         {

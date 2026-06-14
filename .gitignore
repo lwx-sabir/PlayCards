@@ -32,10 +32,16 @@
 *.opendb
 *.VC.db
 
-# Auto-generated solution/project files (Unity can regenerate)
+# Auto-generated solution/project files (Unity regenerates these)
 *.csproj
 *.sln
 *.unityproj
+
+# ...but the .NET backend's project/solution files ARE source — keep them tracked.
+!/khela/PlayCards/Khela.Game/**/*.csproj
+!/khela/PlayCards/Khela.Game/*.sln
+!/khela/PlayCards/Khela.Common/**/*.csproj
+!/khela/PlayCards/Khela.Common/*.sln
 
 # Debug / symbol files (often huge)
 *.pdb
