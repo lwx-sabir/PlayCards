@@ -25,5 +25,27 @@ namespace Khela.Game.Database
         public DbSet<GameHandAction> GameHandActions { get; set; }
 
         public DbSet<GameHandSnapshot> GameHandSnapshots { get; set; }
+
+        // --- Profiles + leaderboards (AddUserProfileAndLeaderboards migration) ---
+        public DbSet<UserProfile> UserProfiles { get; set; }
+
+        public DbSet<UserGameStats> UserGameStats { get; set; }
+
+        public DbSet<LeaderboardDefinition> LeaderboardDefinitions { get; set; }
+
+        public DbSet<LeaderboardInstance> LeaderboardInstances { get; set; }
+
+        public DbSet<LeaderboardArchiveEntry> LeaderboardArchiveEntries { get; set; }
+
+        public DbSet<LeaderboardSeason> LeaderboardSeasons { get; set; }
+
+        public DbSet<UserLinkedAccount> UserLinkedAccounts { get; set; }
+
+        // --- Social + gifts (AddSocialAndGifts migration) ---
+        public DbSet<Friendship> Friendships { get; set; }
+
+        public DbSet<Gift> Gifts { get; set; }
+
+        public DbSet<ChatMessage> ChatMessages { get; set; }
     }
 }

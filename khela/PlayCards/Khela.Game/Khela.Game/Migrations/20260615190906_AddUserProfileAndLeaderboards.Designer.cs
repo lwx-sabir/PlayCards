@@ -4,6 +4,7 @@ using Khela.Game.Database;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Khela.Game.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260615190906_AddUserProfileAndLeaderboards")]
+    partial class AddUserProfileAndLeaderboards
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -168,46 +171,6 @@ namespace Khela.Game.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
-            modelBuilder.Entity("Khela.Game.Database.Models.ChatMessage", b =>
-                {
-                    b.Property<Guid>("MessageId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)");
-
-                    b.Property<string>("Body")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("varchar(1000)");
-
-                    b.Property<int>("Moderation")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("ReadAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<Guid>("RecipientId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime?>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("timestamp(6)");
-
-                    b.Property<Guid>("SenderId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime>("SentAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.HasKey("MessageId");
-
-                    b.HasIndex("RecipientId", "ReadAt");
-
-                    b.HasIndex("SenderId", "RecipientId", "SentAt");
-
-                    b.ToTable("ChatMessages");
-                });
-
             modelBuilder.Entity("Khela.Game.Database.Models.DeviceRegistration", b =>
                 {
                     b.Property<Guid>("DeviceId")
@@ -246,44 +209,6 @@ namespace Khela.Game.Migrations
                     b.HasKey("DeviceId");
 
                     b.ToTable("DeviceRegistrations");
-                });
-
-            modelBuilder.Entity("Khela.Game.Database.Models.Friendship", b =>
-                {
-                    b.Property<Guid>("FriendshipId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)");
-
-                    b.Property<Guid>("AddresseeId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<Guid>("RequesterId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime?>("RespondedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<DateTime?>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("timestamp(6)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.HasKey("FriendshipId");
-
-                    b.HasIndex("AddresseeId", "Status");
-
-                    b.HasIndex("RequesterId", "AddresseeId")
-                        .IsUnique();
-
-                    b.HasIndex("RequesterId", "Status");
-
-                    b.ToTable("Friendships");
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.GameHandAction", b =>
@@ -495,63 +420,6 @@ namespace Khela.Game.Migrations
                     b.HasIndex("Stage");
 
                     b.ToTable("GameHandSnapshots");
-                });
-
-            modelBuilder.Entity("Khela.Game.Database.Models.Gift", b =>
-                {
-                    b.Property<Guid>("GiftId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("char(36)");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("decimal(18,4)");
-
-                    b.Property<DateTime?>("ClaimedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("CorrelationId")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("varchar(80)");
-
-                    b.Property<int>("Currency")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("ExpiresAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(140)
-                        .HasColumnType("varchar(140)");
-
-                    b.Property<Guid>("RecipientId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime?>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("timestamp(6)");
-
-                    b.Property<Guid>("SenderId")
-                        .HasColumnType("char(36)");
-
-                    b.Property<DateTime>("SentAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.HasKey("GiftId");
-
-                    b.HasIndex("CorrelationId")
-                        .IsUnique();
-
-                    b.HasIndex("RecipientId", "Status");
-
-                    b.HasIndex("SenderId", "SentAt");
-
-                    b.ToTable("Gifts");
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.LeaderboardArchiveEntry", b =>

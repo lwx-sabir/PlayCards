@@ -71,6 +71,8 @@ namespace Khela.Game.Database.Models
     public enum Gender
     {
         Men = 1,
-        Women = 2
+        Women = 2,
+        Other = 3,
+        PreferNotToSay = 4
     }
 }
