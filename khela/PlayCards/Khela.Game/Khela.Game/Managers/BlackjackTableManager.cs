@@ -13,6 +13,7 @@ using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Managers.SRHubs;
 using Khela.Game.Services.Wallet;
+using Khela.Game.Services.Stats;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -117,6 +118,26 @@ namespace Khela.Game.Managers
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to persist blackjack hand audit for table {TableId} round {RoundId}", table.TableId, roundId);
+            }
+        }
+
+        /// <summary>
+        /// Rolls the settled round's per-seat net results into the durable player stats (UserGameStats +
+        /// UserProfile). Best-effort + scoped — runs after the wallet has already settled, so a failure
+        /// here never affects money. Maps to the LEADERBOARD GameType (distinct from the ledger enum).
+        /// </summary>
+        private async Task RecordStatsAsync(List<RoundResult> results)
+        {
+            if (results.Count == 0) return;
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var stats = scope.ServiceProvider.GetRequiredService<IPlayerStatsService>();
+                await stats.RecordRoundResultsAsync(Khela.Common.Leaderboards.GameType.Blackjack, results);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to record player stats for round");
             }
         }
 
@@ -580,6 +601,7 @@ namespace Khela.Game.Managers
 
             var roundId = table.CurrentRoundId ?? "";
             var participants = new List<GameHandParticipant>();
+            var statResults = new List<RoundResult>();
 
             // Reconcile each player's NET result to the authoritative wallet, sync the mirror, audit it.
             foreach (var player in table.Game.Players)
@@ -614,9 +636,11 @@ namespace Khela.Game.Managers
                     BalanceBefore = start,
                     BalanceAfter = newBalance
                 });
+                statResults.Add(new RoundResult(uid, pre.Wagered, net));
             }
 
             await PersistHandAsync(table, roundId, participants);
+            await RecordStatsAsync(statResults);
 
             table.RoundStartBalance?.Clear();
             table.CurrentRoundId = null;

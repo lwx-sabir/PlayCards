@@ -5,6 +5,8 @@ using Khela.Game.Managers;
 using Khela.Game.Managers.SRHubs;
 using Khela.Game.Services.Redis;
 using Khela.Game.Services.Wallet;
+using Khela.Game.Services.Stats;
+using Khela.Game.Services.Leaderboards;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore; 
@@ -38,7 +40,8 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddDefaultTokenProviders();
 
 // Bind JwtSettings
-var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>();
+var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>()
+    ?? throw new InvalidOperationException("Missing 'JwtSettings' configuration section.");
 builder.Services.AddSingleton(jwtSettings); 
 
 // Add Authentication
@@ -97,17 +100,36 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddSignalR();
 
+// CORS for the Unity WebGL client + cross-origin SignalR (native Android/iOS don't need it).
+// Permissive for now (dev); restrict to known origins before production.
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("KhelaClient", policy =>
+        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
+});
+
 var redisString = !builder.Environment.IsDevelopment()
     ? builder.Configuration.GetConnectionString("RedisConnection")
     : builder.Configuration.GetConnectionString("RedisConnectionDevelopment");
 
-builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisString));
+// Resilient + lazy: AbortOnConnectFail=false so a transient Redis outage doesn't crash startup
+// (the multiplexer reconnects in the background); constructed on first resolution, not at boot.
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+{
+    var redisOptions = ConfigurationOptions.Parse(redisString);
+    redisOptions.AbortOnConnectFail = false;
+    redisOptions.ConnectRetry = 5;
+    redisOptions.ConnectTimeout = 5000;
+    return ConnectionMultiplexer.Connect(redisOptions);
+});
 builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddSingleton<IRedisService , RedisService>(); 
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
+builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
+builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -119,11 +141,20 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseCors("KhelaClient");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
  
 app.MapHub<BlackjackHub>("/blackjackhub");
+
+// Seed leaderboard definitions + opening season at startup (idempotent; best-effort if the DB is down).
+using (var seedScope = app.Services.CreateScope())
+{
+    try { await seedScope.ServiceProvider.GetRequiredService<ILeaderboardService>().SeedAsync(); }
+    catch (Exception ex) { app.Logger.LogError(ex, "Leaderboard seeding failed at startup."); }
+}
 
 app.Run();

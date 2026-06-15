@@ -1,9 +1,11 @@
 ﻿using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
+using Khela.Game.Services.Wallet;
 using Khela.Common.Auth;
 using Microsoft.AspNetCore.Identity; 
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Khela.Game.Controllers
 {
@@ -16,19 +18,22 @@ namespace Khela.Game.Controllers
         private readonly ITokenService _tokenService;
         private readonly JwtSettings _jwtSettings;
         private readonly AppDbContext _dbContext;
+        private readonly IWalletService _wallet;
 
         public AuthController(
             UserManager<ApplicationUser> userManager,
             SignInManager<ApplicationUser> signInManager,
             ITokenService tokenService,
             JwtSettings jwtSettings,
-            AppDbContext dbContext)
+            AppDbContext dbContext,
+            IWalletService wallet)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _tokenService = tokenService;
             _jwtSettings = jwtSettings;
             _dbContext = dbContext;
+            _wallet = wallet;
         }
 
         // ================= Register =================
@@ -62,6 +67,9 @@ namespace Khela.Game.Controllers
 
             await LinkDeviceToUserAsync(request.DeviceId, user.Id);
              
+            // Create the game profile + grant starter chips for the new player.
+            await EnsureProfileAndStarterAsync(user);
+
             // await _userManager.AddToRoleAsync(user, "Player");
 
             // Generate JWT
@@ -94,6 +102,9 @@ namespace Khela.Game.Controllers
                 return Unauthorized(new { message = "Invalid credentials." });
 
             await LinkDeviceToUserAsync(request.DeviceId, user.Id);
+
+            // Backfill the game profile + starter for accounts created before bootstrap (idempotent).
+            await EnsureProfileAndStarterAsync(user);
 
             var token = _tokenService.GenerateToken(Guid.Parse(user.Id), user.UserName!);
 
@@ -172,6 +183,43 @@ namespace Khela.Game.Controllers
             }
 
             return Ok(new { message = "Password changed successfully." });
+        }
+
+        /// <summary>
+        /// Ensures a new (or pre-bootstrap) user has a game UserProfile + the one-time starter grant.
+        /// Idempotent: profile is created once, the wallet grant is keyed on a stable correlation id
+        /// (same keys WalletController uses for its lazy grant). Best-effort — never fails auth.
+        /// </summary>
+        private async Task EnsureProfileAndStarterAsync(ApplicationUser user)
+        {
+            try
+            {
+                var userGuid = Guid.Parse(user.Id);
+                if (!await _dbContext.UserProfiles.AnyAsync(p => p.UserId == userGuid))
+                {
+                    var region = (user.CountryCode ?? "").Trim().ToUpperInvariant();
+                    if (region.Length != 2) region = "ZZ";
+                    _dbContext.UserProfiles.Add(new UserProfile
+                    {
+                        UserId = userGuid,
+                        DisplayName = user.UserName!,
+                        DisplayNameNormalized = user.UserName!.ToUpperInvariant(),
+                        Region = region
+                    });
+                    await _dbContext.SaveChangesAsync();
+                }
+
+                // Starter grant — idempotent on correlation id (same keys as WalletController's lazy grant).
+                await _wallet.CreditAsync(user.Id, CurrencyType.Chips, 10000m, TransactionType.Bonus,
+                    $"starter:{user.Id}:Chips", new WalletContext { Description = "Starter chips" });
+                await _wallet.CreditAsync(user.Id, CurrencyType.Gems, 100m, TransactionType.Bonus,
+                    $"starter:{user.Id}:Gems", new WalletContext { Description = "Starter gems" });
+            }
+            catch (Exception ex)
+            {
+                // Never fail auth over bootstrap — it's idempotent and re-runs on next login.
+                Console.Error.WriteLine($"[AuthController] profile/starter bootstrap failed for {user.Id}: {ex.Message}");
+            }
         }
 
         private async Task LinkDeviceToUserAsync(string deviceId, string userId)
