@@ -114,8 +114,15 @@ namespace CardGames.Blackjack.CardGames.Blackjack
             if (handState.Hand.Cards.Count != 2)
                 throw new InvalidOperationException("Double down only on first action.");
 
-            IncreaseBet(handState.Bet, handIndex);
-            Balance -= handState.Bet / 2; // deduct extra half of bet
+            // Stake an ADDITIONAL bet equal to the original (total 2x), then draw exactly one card.
+            // (The old code's IncreaseBet check double-counted the already-deducted bet, wrongly
+            // demanding 3x the stake to double.)
+            var extra = handState.Bet;
+            if (Balance < extra)
+                throw new InvalidOperationException("Not enough balance to double down.");
+
+            Balance -= extra;
+            handState.Bet += extra;
             var hitResult = Hit(handIndex);
 
             handState.Done = true;
@@ -215,7 +222,9 @@ namespace CardGames.Blackjack.CardGames.Blackjack
 
         public void AddInsurancePayout(decimal amount)
         {
-            Balance += amount * 2; // 2:1 payout
+            // Insurance pays 2:1. The stake was deducted when placed, so return the stake plus twice
+            // it (total 3x) — a net +2x the insurance bet when the dealer has blackjack.
+            Balance += amount * 3;
         }
 
         public void Stand(int handIndex = 0)

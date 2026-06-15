@@ -312,8 +312,28 @@ namespace Khela.Game.Managers
             if (seat == null || seat.Player == null || seat.Player.Id != userId)
                 throw new InvalidOperationException("Seat not occupied by this player.");
 
+            var player = seat.Player;
+            var wasCurrentTurn = table.RoundInProgress && table.CurrentSeatNumber == seatNumber;
+
+            // Leaving mid-round FORFEITS the in-progress wager — debit whatever was staked so a player
+            // can't dodge a losing hand by leaving. Same correlation id as settle, so it's idempotent.
+            if (table.RoundInProgress && player.InRound
+                && table.RoundStartBalance != null
+                && table.RoundStartBalance.TryGetValue(seatNumber, out var roundStart))
+            {
+                var net = player.Balance - roundStart; // negative: staked but not yet returned
+                if (net < 0)
+                    await ApplyRoundNetAsync(player.Id, net, table.TableId, table.CurrentRoundId ?? "", seatNumber);
+                table.RoundStartBalance.Remove(seatNumber);
+            }
+
             table.Game.Players.RemoveAll(p => p.SeatNumber == seatNumber);
             seat.Player = null;
+
+            // If it was this player's turn, pass the turn to the next active player so play continues.
+            if (wasCurrentTurn)
+                SetInitialTurn(table);
+
             await SaveTableAsync(tableId, table);
             return table;
         }
@@ -348,6 +368,9 @@ namespace Khela.Game.Managers
         {
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
+
+            if (table.RoundInProgress)
+                throw new InvalidOperationException("A round is already in progress.");
 
             if (!table.Game.Players.Any())
                 throw new InvalidOperationException("No players seated.");
@@ -533,8 +556,10 @@ namespace Khela.Game.Managers
             if (!table.RoundInProgress)
                 throw new InvalidOperationException("Round not in progress.");
 
-            // If player turns are still active, advance until done
-            if (table.CurrentSeatNumber > 0)
+            // Resolve any still-pending player turns (auto-stand them) before the dealer plays, so a
+            // dealerPlay call can't settle other seats before they've acted.
+            int guard = 0;
+            while (table.CurrentSeatNumber > 0 && guard++ < 64)
             {
                 AdvanceTurn(table);
             }
