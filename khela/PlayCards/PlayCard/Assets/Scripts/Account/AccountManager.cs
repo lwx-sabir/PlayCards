@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks; 
 using PlayCard.Core;
 using UnityEngine;
@@ -35,6 +36,15 @@ namespace PlayCard.Account
 
         public event Action OnReady;
         public event Action OnTokenRefreshed;
+
+        // System.Text.Json so the property-based Khela.Common.Auth DTOs (de)serialize correctly and the
+        // server's camelCase JSON binds case-insensitively. Unity's JsonUtility does NEITHER — it only
+        // handles public fields and is case-sensitive — which silently broke the entire auth bootstrap.
+        private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
 
         private readonly HttpClient _httpClient = new HttpClient();
         private AuthSave _authSave = new AuthSave();
@@ -264,12 +274,19 @@ namespace PlayCard.Account
             return SystemInfo.deviceUniqueIdentifier;
         }
 
+        // Prefer an explicit, non-placeholder inspector URL; otherwise use the shared AppConfig
+        // so there's a single server URL across auth, the REST client, and the hub.
+        private string ResolveBaseUrl()
+            => !string.IsNullOrWhiteSpace(baseApiUrl) && !baseApiUrl.Contains("example.com")
+                ? baseApiUrl.TrimEnd('/')
+                : AppConfig.Instance.BaseApiUrl;
+
         private async Task<T?> PostJsonAsync<T>(string endpoint, object payload, bool expectResponseBody = true) where T : class
         {
             try
             {
-                var url = $"{baseApiUrl}{endpoint}";
-                var json = JsonUtility.ToJson(payload);
+                var url = $"{ResolveBaseUrl()}{endpoint}";
+                var json = JsonSerializer.Serialize(payload, JsonOpts);
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 var response = await _httpClient.PostAsync(url, content);
                 if (!response.IsSuccessStatusCode)
@@ -282,7 +299,7 @@ namespace PlayCard.Account
                     return Activator.CreateInstance<T>();
 
                 var body = await response.Content.ReadAsStringAsync();
-                return JsonUtility.FromJson<T>(body);
+                return JsonSerializer.Deserialize<T>(body, JsonOpts);
             }
             catch (Exception ex)
             {

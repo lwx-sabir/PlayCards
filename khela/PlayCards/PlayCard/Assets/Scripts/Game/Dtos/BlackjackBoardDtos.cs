@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace PlayCard.Game.Dtos
@@ -19,9 +20,33 @@ namespace PlayCard.Game.Dtos
         public int MaxPlayers { get; set; }
         public int MaxSeatsPerUser { get; set; }
         public bool RoundInProgress { get; set; }
+
+        /// <summary>Seat whose turn it is (server seat number), or -1 when nobody is to act.</summary>
+        public int CurrentSeatNumber { get; set; } = -1;
+
+        /// <summary>Hand index (for splits) the current seat must act on.</summary>
+        public int CurrentHandIndex { get; set; }
+
+        /// <summary>When the current turn auto-expires (UTC), or null when no turn is active.</summary>
+        public DateTimeOffset? TurnExpiresAt { get; set; }
+
+        /// <summary>Id of the most recently settled hand — feeds GET /api/Blackjack/verify/{handId}.</summary>
+        public string LastHandId { get; set; }
+
+        /// <summary>Provably-fair commitment for the current round (never the secret server seed).</summary>
+        public FairnessView Fairness { get; set; }
+
         public DealerView Dealer { get; set; }
         public List<PlayerView> Players { get; set; } = new List<PlayerView>();
         public List<SeatView> Seats { get; set; } = new List<SeatView>();
+    }
+
+    public sealed class FairnessView
+    {
+        /// <summary>SHA-256 commitment of the secret server seed, published before the deal.</summary>
+        public string ServerSeedHash { get; set; }
+        public string ClientSeed { get; set; }
+        public long RoundNonce { get; set; }
     }
 
     public sealed class DealerView
@@ -65,6 +90,9 @@ namespace PlayCard.Game.Dtos
 
         /// <summary>Server Suit enum as an integer. Confirm ordering before mapping to art.</summary>
         public int Suit { get; set; }
+
+        /// <summary>Blackjack point value (J/Q/K = 10, Ace = 11); 0 for a masked hole card.</summary>
+        public int Value { get; set; }
 
         /// <summary>False for the dealer's hole card (rendered face-down).</summary>
         public bool IsCardUp { get; set; }

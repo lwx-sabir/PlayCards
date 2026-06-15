@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR.Client;
 using UnityEngine;
 using PlayCard.Account;
+using PlayCard.Core;
 using PlayCard.Game.Dtos;
 
 namespace PlayCard.Game.Net
@@ -91,10 +92,16 @@ namespace PlayCard.Game.Net
             catch (Exception ex) { Debug.LogWarning($"[Hub] {method} failed: {ex.Message}"); }
         }
 
+        // Prefer an explicit, non-placeholder inspector URL; otherwise use the shared AppConfig.
+        private string ResolveHubUrl()
+            => !string.IsNullOrWhiteSpace(hubUrl) && !hubUrl.Contains("localhost:5000")
+                ? hubUrl
+                : AppConfig.Instance.HubUrl;
+
         private void Build()
         {
             _hub = new HubConnectionBuilder()
-                .WithUrl(hubUrl, options =>
+                .WithUrl(ResolveHubUrl(), options =>
                 {
                     // JWT for the [Authorize] BlackjackHub.
                     options.AccessTokenProvider = () => Task.FromResult(TokenProvider?.Invoke());
