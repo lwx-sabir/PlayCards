@@ -7,6 +7,7 @@ using Khela.Game.Services.Redis;
 using Khela.Game.Services.Wallet;
 using Khela.Game.Services.Stats;
 using Khela.Game.Services.Leaderboards;
+using Khela.Game.Services.Chat;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore; 
@@ -98,7 +99,10 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
-builder.Services.AddSignalR();
+builder.Services.AddSignalR().AddStackExchangeRedis(
+    builder.Environment.IsDevelopment()
+        ? builder.Configuration.GetConnectionString("RedisConnectionDevelopment")
+        : builder.Configuration.GetConnectionString("RedisConnection"));
 
 // CORS for the Unity WebGL client + cross-origin SignalR (native Android/iOS don't need it).
 // Permissive for now (dev); restrict to known origins before production.
@@ -130,6 +134,8 @@ builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
+builder.Services.AddSingleton<IChatModerator, BasicChatModerator>();
+builder.Services.AddScoped<IChatService, ChatService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -149,6 +155,7 @@ app.UseAuthorization();
 app.MapControllers();
  
 app.MapHub<BlackjackHub>("/blackjackhub");
+app.MapHub<ChatHub>("/chathub");
 
 // Seed leaderboard definitions + opening season at startup (idempotent; best-effort if the DB is down).
 using (var seedScope = app.Services.CreateScope())

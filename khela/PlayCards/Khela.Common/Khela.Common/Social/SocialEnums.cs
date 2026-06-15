@@ -26,4 +26,12 @@ namespace Khela.Common.Social
         Flagged  = 2,
         Removed  = 3
     }
+
+    /// <summary>Chat channel kind. DM persists to MySQL; Table/Global are Redis-ephemeral.</summary>
+    public enum ChatChannelType
+    {
+        Dm     = 0,
+        Table  = 1,
+        Global = 2
+    }
 }
