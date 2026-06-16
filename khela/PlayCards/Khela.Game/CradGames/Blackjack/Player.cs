@@ -115,12 +115,10 @@ namespace CardGames.Blackjack.CardGames.Blackjack
                 throw new InvalidOperationException("Double down only on first action.");
 
             // Stake an ADDITIONAL bet equal to the original (total 2x), then draw exactly one card.
-            // (The old code's IncreaseBet check double-counted the already-deducted bet, wrongly
-            // demanding 3x the stake to double.)
+            // Funds are enforced authoritatively at the wallet boundary (the server debits the extra stake
+            // before this runs); Balance here is a display mirror, so there is no balance guard — a stale
+            // mirror must never reject (and strand) a stake the wallet already accepted.
             var extra = handState.Bet;
-            if (Balance < extra)
-                throw new InvalidOperationException("Not enough balance to double down.");
-
             Balance -= extra;
             handState.Bet += extra;
             var hitResult = Hit(handIndex);
@@ -186,9 +184,8 @@ namespace CardGames.Blackjack.CardGames.Blackjack
             if (c1.FaceVal != c2.FaceVal)
                 throw new InvalidOperationException("Cards must be a pair to split.");
 
-            if (Balance < handState.Bet)
-                throw new InvalidOperationException("Not enough balance to split.");
-
+            // Funds enforced at the wallet boundary (server debits the second stake before this runs);
+            // Balance is a display mirror, so no balance guard (a stale mirror must not strand a stake).
             var newHandState = new PlayerHandState
             {
                 Bet = handState.Bet
@@ -214,7 +211,7 @@ namespace CardGames.Blackjack.CardGames.Blackjack
             var hand = GetHand(handIndex);
             if (amount <= 0) throw new InvalidOperationException("Insurance must be positive.");
             if (amount > hand.Bet / 2) throw new InvalidOperationException("Insurance cannot exceed half the bet.");
-            if (Balance < amount) throw new InvalidOperationException("Not enough balance for insurance.");
+            // Funds enforced at the wallet boundary (server debits before this runs); no balance guard.
 
             Balance -= amount;
             hand.InsuranceBet = amount;

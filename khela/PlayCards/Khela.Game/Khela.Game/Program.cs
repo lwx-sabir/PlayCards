@@ -150,6 +150,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
+builder.Services.AddHostedService<BlackjackRoundDriver>();   // server round-driver: auto-stand on timeout + auto-settle
 builder.Services.AddSingleton<IRedisService , RedisService>(); 
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();

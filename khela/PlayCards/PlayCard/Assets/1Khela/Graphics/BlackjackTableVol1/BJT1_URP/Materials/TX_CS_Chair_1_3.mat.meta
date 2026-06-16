@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b0bb93c0a06b00f499e1460e8d89219f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 309967
+  packageName: Blackjack Table Vol. 1
+  packageVersion: 1.0.1
+  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Materials/TX_CS_Chair_1_3.mat
+  uploadId: 841666

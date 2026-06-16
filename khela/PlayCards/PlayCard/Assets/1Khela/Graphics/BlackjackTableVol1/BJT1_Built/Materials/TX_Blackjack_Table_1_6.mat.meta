@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e64695ccad00e1042bcf6f460718e0de
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 309967
+  packageName: Blackjack Table Vol. 1
+  packageVersion: 1.0.1
+  assetPath: Assets/BlackjackTableVol1/BJT1_Built/Materials/TX_Blackjack_Table_1_6.mat
+  uploadId: 841666

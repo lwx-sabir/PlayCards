@@ -53,29 +53,67 @@ namespace Khela.Game.Managers
         }
 
         /// <summary>
-        /// Applies a round's net chip delta to the authoritative wallet and returns the new balance.
-        /// Idempotent on the round+seat correlation id, so a retried settle never double-pays.
+        /// Debits a committed stake (initial bet / double / split / insurance) from the authoritative
+        /// wallet at the moment it is staked — "debit-on-bet". Idempotent on the round+seat+suffix
+        /// correlation id. Throws <see cref="InsufficientFundsException"/> if the wallet can't cover it,
+        /// so the same chips can never be staked twice (across seats/tables) and a loss can never overdraw
+        /// at settle.
         /// </summary>
-        private async Task<(string TxId, decimal Balance)> ApplyRoundNetAsync(string userId, decimal net, string tableId, string roundId, int seat)
+        private async Task<(string TxId, decimal Balance)> DebitStakeAsync(string userId, decimal amount, string tableId, string roundId, int seat, string suffix)
         {
             using var scope = scopeFactory.CreateScope();
             var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
-            var ctx = new WalletContext { TableId = tableId, RoundId = roundId, Description = $"Blackjack round {roundId} seat {seat}" };
-            // roundId is itself a GUID, so it alone makes the key unique — keep it short to fit
-            // WalletTransaction.CorrelationId (MaxLength 64). (table id lives in WalletContext.)
-            var correlationId = $"bjr:{roundId}:{seat}";
+            var ctx = new WalletContext { TableId = tableId, RoundId = roundId, Description = $"Blackjack {suffix} round {roundId} seat {seat}" };
+            // roundId is a GUID (unique alone); the suffix distinguishes stk/dd/sp/ins. Fits CorrelationId(64).
+            var correlationId = $"bjr:{roundId}:{seat}:{suffix}";
+            var txn = await wallet.DebitAsync(userId, CurrencyType.Chips, amount, TransactionType.Bet, correlationId, ctx);
+            return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
+        }
 
-            if (net > 0m)
+        /// <summary>
+        /// Credits a settled hand's GROSS return (wins + pushes + insurance payouts) to the wallet. Stakes
+        /// already left the wallet via <see cref="DebitStakeAsync"/>, so settle only ever returns money.
+        /// Idempotent on the round+seat payout key, so a retried settle never double-pays.
+        /// </summary>
+        private async Task<(string TxId, decimal Balance)> CreditGrossAsync(string userId, decimal gross, string tableId, string roundId, int seat)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+            var ctx = new WalletContext { TableId = tableId, RoundId = roundId, Description = $"Blackjack payout round {roundId} seat {seat}" };
+            var correlationId = $"bjr:{roundId}:{seat}:pay";
+            var txn = await wallet.CreditAsync(userId, CurrencyType.Chips, gross, TransactionType.Win, correlationId, ctx);
+            return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
+        }
+
+        /// <summary>
+        /// Credits the gross payout, retrying a few times on a transient/locked-wallet failure. Safe to
+        /// retry because the credit is idempotent on its <c>:pay</c> correlation id (never double-pays).
+        /// </summary>
+        private async Task<(string TxId, decimal Balance)> CreditGrossWithRetryAsync(string userId, decimal gross, string tableId, string roundId, int seat)
+        {
+            const int attempts = 3;
+            for (int i = 1; ; i++)
             {
-                var txn = await wallet.CreditAsync(userId, CurrencyType.Chips, net, TransactionType.Win, correlationId, ctx);
-                return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
+                try { return await CreditGrossAsync(userId, gross, tableId, roundId, seat); }
+                catch (Exception ex) when (i < attempts)
+                {
+                    logger.LogWarning(ex, "Payout credit attempt {Attempt} failed for seat {Seat} round {RoundId}; retrying.", i, seat, roundId);
+                    await Task.Delay(150 * i);
+                }
             }
-            if (net < 0m)
-            {
-                var txn = await wallet.DebitAsync(userId, CurrencyType.Chips, -net, TransactionType.Bet, correlationId, ctx);
-                return (txn.TransactionId.ToString(), txn.BalanceAfter ?? 0m);
-            }
-            return (null, await wallet.GetBalanceAsync(userId, CurrencyType.Chips));
+        }
+
+        /// <summary>
+        /// Refunds a reserved stake when a round fails to start AFTER the stake was debited, so chips are
+        /// never stranded. Idempotent on its own correlation id, so a retried refund never double-credits.
+        /// </summary>
+        private async Task RefundStakeAsync(string userId, decimal amount, string tableId, string roundId, int seat)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var wallet = scope.ServiceProvider.GetRequiredService<IWalletService>();
+            var ctx = new WalletContext { TableId = tableId, RoundId = roundId, Description = $"Blackjack stake refund round {roundId} seat {seat}" };
+            var correlationId = $"bjr:{roundId}:{seat}:stkrf";
+            await wallet.CreditAsync(userId, CurrencyType.Chips, amount, TransactionType.Refund, correlationId, ctx);
         }
 
         /// <summary>
@@ -226,6 +264,57 @@ namespace Khela.Game.Managers
             await hubContext.Clients.Group($"table:{tableId}").SendAsync("TableUpdated", BlackjackBoard.Build(table));
         }
 
+        // ---- Per-table concurrency lock ----
+        // The table is a single JSON blob in Redis with plain read-modify-write semantics, so two
+        // concurrent mutations (or the round-driver racing a player action) would clobber each other
+        // (last-write-wins). A short distributed lock per table serialises all mutations across instances.
+
+        // 30s comfortably exceeds the worst-case settle latency (N per-seat wallet credits + retries + the
+        // audit SaveChanges), so the lock can't lapse mid-settle on a slow-but-alive run and re-open the
+        // table-blob race; a crashed holder still self-releases within 30s.
+        private static readonly TimeSpan TableLockTtl = TimeSpan.FromSeconds(30);
+        private const int TableLockRetries = 100;                       // * 50ms = up to ~5s wait under contention
+        private static readonly TimeSpan TableLockRetryDelay = TimeSpan.FromMilliseconds(50);
+
+        /// <summary>
+        /// Acquires a short per-table distributed lock and returns a handle that releases it on dispose.
+        /// Use as <c>await using var _ = await LockTableAsync(tableId);</c> at the top of any method that
+        /// reads-mutates-writes the table, so concurrent actions on the same table serialise.
+        /// </summary>
+        private async Task<TableLock> LockTableAsync(string tableId)
+        {
+            var db = redisService.GetDatabase();
+            var key = $"bjlock:{tableId}";
+            var token = Guid.NewGuid().ToString("N");
+
+            for (int i = 0; i < TableLockRetries; i++)
+            {
+                if (await db.StringSetAsync(key, token, TableLockTtl, When.NotExists))
+                    return new TableLock(db, key, token);
+                await Task.Delay(TableLockRetryDelay);
+            }
+            throw new InvalidOperationException("The table is busy; please retry.");
+        }
+
+        /// <summary>Releases its table lock on dispose, but only if it still owns it (token match), so a
+        /// lock that already expired and was re-acquired by someone else is never wrongly released.</summary>
+        private sealed class TableLock : IAsyncDisposable
+        {
+            private const string ReleaseLua =
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+            private readonly IDatabase _db;
+            private readonly string _key;
+            private readonly string _token;
+
+            public TableLock(IDatabase db, string key, string token) { _db = db; _key = key; _token = token; }
+
+            public async ValueTask DisposeAsync()
+            {
+                try { await _db.ScriptEvaluateAsync(ReleaseLua, new RedisKey[] { _key }, new RedisValue[] { _token }); }
+                catch { /* the lock TTL will clean it up */ }
+            }
+        }
+
         // ---- Lobby ----
 
         /// <summary>
@@ -310,6 +399,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> AddPlayerAsync(string tableId, Player player)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -333,6 +424,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> RemovePlayerAsync(string tableId, int seatNumber, string userId)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -343,17 +436,10 @@ namespace Khela.Game.Managers
             var player = seat.Player;
             var wasCurrentTurn = table.RoundInProgress && table.CurrentSeatNumber == seatNumber;
 
-            // Leaving mid-round FORFEITS the in-progress wager — debit whatever was staked so a player
-            // can't dodge a losing hand by leaving. Same correlation id as settle, so it's idempotent.
-            if (table.RoundInProgress && player.InRound
-                && table.RoundStartBalance != null
-                && table.RoundStartBalance.TryGetValue(seatNumber, out var roundStart))
-            {
-                var net = player.Balance - roundStart; // negative: staked but not yet returned
-                if (net < 0)
-                    await ApplyRoundNetAsync(player.Id, net, table.TableId, table.CurrentRoundId ?? "", seatNumber);
-                table.RoundStartBalance.Remove(seatNumber);
-            }
+            // Leaving mid-round forfeits the in-progress wager — but with debit-on-bet the stake ALREADY
+            // left the wallet at deal/action, so the forfeit is automatic: this seat simply isn't credited
+            // at settle. (A player can't dodge a loss by leaving, and an abandoned winning hand is forfeit.)
+            table.RoundStartBalance?.Remove(seatNumber);
 
             table.Game.Players.RemoveAll(p => p.SeatNumber == seatNumber);
             seat.Player = null;
@@ -368,6 +454,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> PlaceBetAsync(string tableId, string userId, int seatNumber, decimal amount, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -394,6 +482,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> DealAsync(string tableId)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -419,63 +509,93 @@ namespace Khela.Game.Managers
                     table.ClientSeed = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
             }
 
-            // Capture each wager BEFORE dealing — DealNewGame resets the hands (which would wipe the
-            // bet, so wins/pushes paid nothing); we re-apply it to the freshly dealt hand afterwards.
-            // Only players who placed a bet join THIS round; anyone else (e.g. someone who sat down
-            // mid-round) stays seated and waits for the next deal.
+            // Derive the provably-fair seed + shoe hash NOW, BEFORE any wallet debit. This is the throwable
+            // work (a corrupt ServerSeed would make FromHexString throw); doing it first means a failure
+            // here can never strand a stake that was already debited.
+            var roundId = table.CurrentRoundId;
+            var roundSeed = ProvableShuffle.DeriveSeed(
+                Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
+            var shoeForHash = new Deck(6);
+            shoeForHash.Shuffle(roundSeed);
+            var deckHash = shoeForHash.ComputeHash();
+
+            // Reserve each wager from the AUTHORITATIVE wallet NOW (debit-on-bet): the stake leaves the
+            // wallet at deal, so the same chips can't be staked at another table/seat and a loss can never
+            // overdraw at settle. A player whose debit fails (insufficient / already committed elsewhere)
+            // SITS OUT this round rather than freezing settle later. Only players with a funded bet join
+            // THIS round; anyone else (e.g. someone who sat down mid-round) waits for the next deal.
             var wagers = new Dictionary<int, decimal>();
+            var debited = new List<(string PlayerId, decimal Amount, int Seat)>();
             foreach (var player in table.Game.Players)
             {
                 var bet = player.Hands.Count > 0 ? player.Hands[0].Bet : 0m;
-                player.InRound = bet > 0;
-                if (!player.InRound)
-                    continue;
+                if (bet <= 0) { player.InRound = false; continue; }
 
-                var chips = await GetWalletChipsAsync(player.Id);
-                if (chips < bet)
-                    throw new InvalidOperationException($"Player {player.Id} has insufficient chips for the bet.");
-
-                player.SetBalance(chips);
-                table.RoundStartBalance[player.SeatNumber] = chips;
-                wagers[player.SeatNumber] = bet;
-            }
-
-            if (wagers.Count == 0)
-                throw new InvalidOperationException("No bets placed — at least one seated player must bet to deal.");
-
-            // Provably-fair seeded 6-deck shoe for this round.
-            var roundSeed = ProvableShuffle.DeriveSeed(
-                Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
-            table.Game.DealNewGame(roundSeed, 6);
-
-            // Audit: hash the full shuffled shoe (recomputed deterministically from the same seed)
-            // and stamp the round start, both persisted to GameHandHeader at settle.
-            var shoeForHash = new Deck(6);
-            shoeForHash.Shuffle(roundSeed);
-            table.CurrentDeckHash = shoeForHash.ComputeHash();
-            table.RoundStartedAt = DateTimeOffset.UtcNow;
-
-            // Re-apply each captured wager to the freshly dealt hand and deduct it from the mirror,
-            // so the bet survives to settlement and wins/pushes actually pay out.
-            foreach (var player in table.Game.Players)
-            {
-                if (wagers.TryGetValue(player.SeatNumber, out var bet) && bet > 0)
+                try
                 {
-                    player.IncreaseBet(bet, 0);
-                    player.PlaceBet(0);
-                    player.ClearInsurance(0);
+                    var (_, walletAfter) = await DebitStakeAsync(player.Id, bet, table.TableId, roundId, player.SeatNumber, "stk");
+                    player.InRound = true;
+                    table.RoundStartBalance[player.SeatNumber] = walletAfter + bet; // pre-stake balance (audit)
+                    player.SetBalance(walletAfter);                                  // mirror = wallet after the stake
+                    wagers[player.SeatNumber] = bet;
+                    debited.Add((player.Id, bet, player.SeatNumber));
+                }
+                catch (Exception ex)
+                {
+                    player.InRound = false;
+                    player.ClearBet(0);
+                    logger.LogWarning(ex, "Seat {Seat} sat out this round: stake debit failed for player {PlayerId} on table {TableId}",
+                        player.SeatNumber, player.Id, table.TableId);
                 }
             }
 
-            MarkNaturals(table);
-            SetInitialTurn(table);
-            table.RoundInProgress = true;
-            await SaveTableAsync(tableId, table);
+            if (wagers.Count == 0)
+                throw new InvalidOperationException("No funded bets — at least one seated player must have chips to cover their bet.");
+
+            // Stakes are now committed to the wallet. From here the deal must either complete and persist the
+            // round, or REFUND every reserved stake — so a deal that throws after debiting can never strand
+            // chips (e.g. a Redis/SignalR blip in SaveTableAsync).
+            try
+            {
+                table.Game.DealNewGame(roundSeed, 6);
+                table.CurrentDeckHash = deckHash;
+                table.RoundStartedAt = DateTimeOffset.UtcNow;
+
+                // Restore each reserved wager onto the freshly dealt hand. The stake already left the wallet
+                // AND the mirror (mirror was set to the post-debit balance), so set the bet directly — do NOT
+                // PlaceBet, which would deduct it from the mirror a second time.
+                foreach (var player in table.Game.Players)
+                {
+                    if (wagers.TryGetValue(player.SeatNumber, out var bet) && bet > 0)
+                    {
+                        player.GetHand(0).Bet = bet;
+                        player.ClearInsurance(0);
+                    }
+                }
+
+                MarkNaturals(table);
+                SetInitialTurn(table);
+                table.RoundInProgress = true;
+                await SaveTableAsync(tableId, table);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Deal failed after reserving stakes on table {TableId} round {RoundId}; refunding {Count} stake(s).",
+                    table.TableId, roundId, debited.Count);
+                foreach (var d in debited)
+                {
+                    try { await RefundStakeAsync(d.PlayerId, d.Amount, table.TableId, roundId, d.Seat); }
+                    catch (Exception rex) { logger.LogError(rex, "Stake refund FAILED for seat {Seat} player {PlayerId} round {RoundId} — needs reconciliation.", d.Seat, d.PlayerId, roundId); }
+                }
+                throw;
+            }
             return table;
         }
 
         public async Task<(BlackjackTable? Table, HitResult? Result)> HitAsync(string tableId, string userId, int seatNumber, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return (null, null);
 
@@ -507,6 +627,8 @@ namespace Khela.Game.Managers
 
         public async Task<(BlackjackTable? Table, DoubleDownResult? Result)> DoubleDownAsync(string tableId, string userId, int seatNumber, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return (null, null);
 
@@ -523,7 +645,13 @@ namespace Khela.Game.Managers
             if (player.HasBust(handIndex) || player.GetHand(handIndex).Done) throw new InvalidOperationException("Hand already finished.");
             if (player.GetHand(handIndex).Hand.Cards.Count != 2) throw new InvalidOperationException("Double down only allowed on first action.");
 
+            // Reserve the extra stake (equal to the current bet) from the wallet FIRST. If it fails
+            // (insufficient / committed elsewhere) we throw before mutating the game — no rollback needed.
+            var ddExtra = player.GetHand(handIndex).Bet;
+            var (_, ddWalletAfter) = await DebitStakeAsync(player.Id, ddExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"dd{handIndex}");
+
             var result = player.DoubleDown(handIndex);
+            player.SetBalance(ddWalletAfter);
             AdvanceTurn(table);
             await SaveTableAsync(tableId, table);
             return (table, result);
@@ -531,6 +659,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> PlaceInsuranceAsync(string tableId, string userId, int seatNumber, decimal amount, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -544,13 +674,21 @@ namespace Khela.Game.Managers
                 throw new InvalidOperationException("Seat not occupied by this player.");
 
             var player = seat.Player;
-            if (player.GetHand(handIndex).InsuranceBet > 0) throw new InvalidOperationException("Insurance already placed.");
+            var insHand = player.GetHand(handIndex);
+            if (insHand.InsuranceBet > 0) throw new InvalidOperationException("Insurance already placed.");
 
             var upCard = table.Game.Dealer.Hand.Cards.FirstOrDefault(c => c.IsCardUp);
             if (upCard == null || upCard.FaceVal != CardGames.Platforms.FaceValue.Ace)
                 throw new InvalidOperationException("Insurance available only when dealer shows an Ace.");
 
+            // Pre-validate the amount (mirrors Player.PlaceInsurance) so the wallet debit can't succeed and
+            // then PlaceInsurance throw. Reserve wallet-first, then place.
+            if (amount <= 0) throw new InvalidOperationException("Insurance must be positive.");
+            if (amount > insHand.Bet / 2) throw new InvalidOperationException("Insurance cannot exceed half the bet.");
+
+            var (_, insWalletAfter) = await DebitStakeAsync(player.Id, amount, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"ins{handIndex}");
             player.PlaceInsurance(amount, handIndex);
+            player.SetBalance(insWalletAfter);
             RefreshTurn(table);
             await SaveTableAsync(tableId, table);
             return table;
@@ -558,6 +696,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> SplitAsync(string tableId, string userId, int seatNumber, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -570,7 +710,21 @@ namespace Khela.Game.Managers
             if (seat == null || seat.Player == null || seat.Player.Id != userId)
                 throw new InvalidOperationException("Seat not occupied by this player.");
 
-            seat.Player.Split(handIndex);
+            var player = seat.Player;
+            // Pre-validate (mirrors Player.Split's guards) so the wallet debit can't succeed and then Split
+            // throw, which would leave the wallet debited with no split.
+            var splitHand = player.GetHand(handIndex);
+            if (splitHand.Hand.Cards.Count != 2)
+                throw new InvalidOperationException("Can only split with two cards.");
+            if (splitHand.Hand.Cards[0].FaceVal != splitHand.Hand.Cards[1].FaceVal)
+                throw new InvalidOperationException("Cards must be a pair to split.");
+
+            // Reserve the extra stake (a second bet for the new hand) wallet-first, then split.
+            var splitExtra = splitHand.Bet;
+            var (_, splitWalletAfter) = await DebitStakeAsync(player.Id, splitExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"sp{handIndex}");
+
+            player.Split(handIndex);
+            player.SetBalance(splitWalletAfter);
             RefreshTurn(table);
             await SaveTableAsync(tableId, table);
             return table;
@@ -578,6 +732,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> DealerPlayAndSettleAsync(string tableId, string userId)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -588,12 +744,22 @@ namespace Khela.Game.Managers
             if (!table.Seats.Any(s => s.Player != null && s.Player.Id == userId))
                 throw new InvalidOperationException("You are not seated at this table.");
 
-            // Single-shot: claim the round so a raced/retried dealerPlay can't re-enter settle (which would
+            return await SettleInternalAsync(table, tableId);
+        }
+
+        /// <summary>
+        /// Dealer-plays the round and settles every seat to the wallet, then tears the round down. The
+        /// CALLER must already hold the table lock. Shared by the user-triggered DealerPlayAndSettleAsync
+        /// (after seat-auth) and by the round-driver (system-triggered, no user).
+        /// </summary>
+        private async Task<BlackjackTable> SettleInternalAsync(BlackjackTable table, string tableId)
+        {
+            // Single-shot: claim the round so a raced/retried settle can't re-enter (which would
             // double-count stats + leaderboards and insert a duplicate audit row). Auto-expires so a crash
             // can't permanently wedge the round.
             var settleRoundId = table.CurrentRoundId ?? "";
             if (!await redisService.GetDatabase().StringSetAsync(
-                    $"bjr:settling:{settleRoundId}", "1", TimeSpan.FromSeconds(30), When.NotExists))
+                    $"bjr:settling:{settleRoundId}", "1", TimeSpan.FromSeconds(120), When.NotExists))
                 return table; // another settle for this round is already in flight
 
             // Resolve any still-pending player turns (auto-stand them) before the dealer plays, so a
@@ -616,7 +782,10 @@ namespace Khela.Game.Managers
                     Blackjack: p.HasBlackJack(0)
                 ));
 
-            SettleRound(table.Game);
+            // Mirror balance per seat BEFORE settle returns any money — the baseline for the gross credit.
+            var preSettleBalance = table.Game.Players.ToDictionary(p => p.SeatNumber, p => p.Balance);
+
+            BlackjackSettlement.Settle(table.Game);
 
             var roundId = table.CurrentRoundId ?? "";
             var participants = new List<GameHandParticipant>();
@@ -632,20 +801,36 @@ namespace Khela.Game.Managers
                 {
                     if (!player.InRound) continue; // waiting players didn't play this round — no settle/audit
 
+                    // Pre-stake wallet balance (audit BalanceBefore); the stakes already left the wallet.
                     var start = table.RoundStartBalance != null
                                 && table.RoundStartBalance.TryGetValue(player.SeatNumber, out var s)
                         ? s
                         : player.Balance;
-                    var net = player.Balance - start;
                     Guid.TryParse(player.Id, out var uid);
 
                     var pre = preSettle.TryGetValue(player.SeatNumber, out var ps)
                         ? ps
                         : (Wagered: 0m, FinalValue: 0, Bust: false, Blackjack: false);
 
+                    // Stakes already left the wallet at deal/action, so settle only RETURNS money: credit the
+                    // GROSS the settlement added to the mirror (gross = post-settle balance - pre-settle).
+                    var preSettleBal = preSettleBalance.TryGetValue(player.SeatNumber, out var pb) ? pb : player.Balance;
+                    var gross = player.Balance - preSettleBal;
+                    if (gross < 0m) gross = 0m;        // defensive — settlement never reduces the mirror
+                    var net = player.Balance - start;  // true round net (gross minus everything staked)
+
                     try
                     {
-                        var (txId, newBalance) = await ApplyRoundNetAsync(player.Id, net, table.TableId, roundId, player.SeatNumber);
+                        decimal newBalance;
+                        string txId = null;
+                        if (gross > 0m)
+                        {
+                            (txId, newBalance) = await CreditGrossWithRetryAsync(player.Id, gross, table.TableId, roundId, player.SeatNumber);
+                        }
+                        else
+                        {
+                            newBalance = await GetWalletChipsAsync(player.Id); // nothing returned (full loss)
+                        }
                         player.SetBalance(newBalance);
 
                         participants.Add(new GameHandParticipant
@@ -653,13 +838,13 @@ namespace Khela.Game.Managers
                             UserId = uid,
                             SeatNumber = player.SeatNumber,
                             Bet = pre.Wagered,
-                            Payout = pre.Wagered + net,            // gross returned (wins + pushes); 0 on a loss
+                            Payout = gross,                        // gross returned (wins + pushes + insurance); 0 on a full loss
                             FinalHandValue = pre.FinalValue,
                             Bust = pre.Bust,
                             Blackjack = pre.Blackjack,
                             Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
-                            WalletCreditTxId = net > 0 ? txId : null,
-                            WalletDebitTxId = net < 0 ? txId : null,
+                            WalletCreditTxId = gross > 0m ? txId : null,
+                            WalletDebitTxId = null,                // stakes were debited at deal/action, not here
                             BalanceBefore = start,
                             BalanceAfter = newBalance
                         });
@@ -667,10 +852,11 @@ namespace Khela.Game.Managers
                     }
                     catch (Exception ex)
                     {
-                        // The wallet rejected this seat (overdraw / locked). Don't strand the round — flag
-                        // the seat for reconciliation and continue. The real fix is deal-time fund
-                        // reservation so a loss-debit can never overdraw.
-                        logger.LogError(ex, "Settle failed for seat {Seat} on table {TableId}", player.SeatNumber, table.TableId);
+                        // The payout credit still failed after inline retries (persistently locked wallet /
+                        // outage). Stakes already left the wallet and the payout is idempotent on its :pay key,
+                        // so the seat is flagged settle_failed for reconciliation rather than double-paid.
+                        // Overdraw-at-settle is no longer possible (funds were reserved at deal).
+                        logger.LogError(ex, "Settle payout failed for seat {Seat} on table {TableId} after retries", player.SeatNumber, table.TableId);
                         participants.Add(new GameHandParticipant
                         {
                             UserId = uid,
@@ -685,8 +871,15 @@ namespace Khela.Game.Managers
                     }
                 }
 
-                await PersistHandAsync(table, roundId, participants);
-                await RecordStatsAsync(statResults);
+                // The money credits above are idempotent (per-seat :pay key), but the stats roll-up and the
+                // audit insert are NOT — run them at most once per round, even if the settling claim's TTL
+                // lapsed mid-settle and a retry re-entered.
+                if (await redisService.GetDatabase().StringSetAsync(
+                        $"bjr:settled:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
+                {
+                    await PersistHandAsync(table, roundId, participants);
+                    await RecordStatsAsync(statResults);
+                }
             }
             finally
             {
@@ -702,6 +895,8 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> StandAsync(string tableId, string userId, int seatNumber, int handIndex = 0)
         {
+            await using var _tableLock = await LockTableAsync(tableId);
+
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
@@ -720,71 +915,54 @@ namespace Khela.Game.Managers
             return table;
         }
 
-        private static void SettleRound(BlackJackGame game)
+        /// <summary>
+        /// Server round-driver tick for one table: if the current player's turn timer has expired, auto-stand
+        /// it and advance; once all player turns are resolved, dealer-play + settle. Lets an idle table finish
+        /// its round on its own (the lazy timeout in EnsureTurn only fires when the NEXT action arrives).
+        /// Takes the table lock, so it's safe against a concurrent player action.
+        /// </summary>
+        public async Task TickTableAsync(string tableId)
         {
-            var dealerTotal = game.Dealer.Hand.GetSumOfHand();
-            var dealerBust = dealerTotal > 21;
-            var dealerBlackjack = dealerTotal == 21 && game.Dealer.Hand.Cards.Count == 2;
-
-            foreach (var player in game.Players)
+            // Cheap unlocked peek so idle tables aren't locked every tick. Prune ids whose table key has
+            // TTL-expired so the driver stops re-probing them forever (mirrors GetLobbyAsync's self-heal).
+            var peek = await GetTableAsync(tableId);
+            if (peek == null)
             {
-                if (!player.InRound) continue; // waiting players didn't play this round
-
-                for (int i = 0; i < player.Hands.Count; i++)
-                {
-                    var handState = player.Hands[i];
-                    var playerTotal = handState.Hand.GetSumOfHand();
-
-                    if (handState.InsuranceBet > 0)
-                    {
-                        if (dealerBlackjack)
-                        {
-                            player.AddInsurancePayout(handState.InsuranceBet);
-                        }
-                        handState.InsuranceBet = 0;
-                    }
-
-                    if (playerTotal > 21)
-                    {
-                        player.AddLoss(i);
-                        continue;
-                    }
-
-                    // A natural blackjack is a 2-card 21 on an unsplit hand; it pays 3:2.
-                    var playerNatural = player.Hands.Count == 1 && handState.Hand.Cards.Count == 2 && playerTotal == 21;
-                    if (playerNatural)
-                    {
-                        if (dealerBlackjack) player.AddPush(i);   // both naturals -> push
-                        else player.AddWin(2.5m, i);              // 3:2 (returns 2.5x the stake)
-                        continue;
-                    }
-
-                    if (dealerBlackjack)                          // dealer natural beats any non-natural hand
-                    {
-                        player.AddLoss(i);
-                        continue;
-                    }
-
-                    if (dealerBust)
-                    {
-                        player.AddWin(2, i);
-                        continue;
-                    }
-
-                    if (playerTotal > dealerTotal)
-                    {
-                        player.AddWin(2, i);
-                    }
-                    else if (playerTotal == dealerTotal)
-                    {
-                        player.AddPush(i);
-                    }
-                    else
-                    {
-                        player.AddLoss(i);
-                    }
-                }
+                await redisService.GetDatabase().SetRemoveAsync(LobbyIndexKey, tableId);
+                return;
             }
+            if (!peek.RoundInProgress) return;
+
+            await using var _tableLock = await LockTableAsync(tableId);
+
+            var table = await GetTableAsync(tableId);       // authoritative re-read under the lock
+            if (table == null || !table.RoundInProgress) return;
+
+            var changed = false;
+
+            // Auto-stand a player whose turn timer expired, then advance to the next hand.
+            if (table.CurrentSeatNumber > 0 && table.TurnExpiresAt.HasValue
+                && DateTimeOffset.UtcNow > table.TurnExpiresAt.Value)
+            {
+                AutoStand(table);
+                changed = true;
+            }
+
+            // All player hands resolved → finish the round (dealer plays + settle). SettleInternal saves.
+            if (table.CurrentSeatNumber == -1)
+            {
+                await SettleInternalAsync(table, tableId);
+                return;
+            }
+
+            if (changed) await SaveTableAsync(tableId, table);
+        }
+
+        /// <summary>The ids of all tables in the lobby index — the round-driver ticks each one.</summary>
+        public async Task<IReadOnlyList<string>> GetActiveTableIdsAsync()
+        {
+            var ids = await redisService.GetDatabase().SetMembersAsync(LobbyIndexKey);
+            return ids.Select(v => v.ToString()).ToList();
         }
 
         private static void MarkNaturals(BlackjackTable table)
