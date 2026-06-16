@@ -6,10 +6,12 @@ using Microsoft.EntityFrameworkCore;
 namespace Khela.Game.Database.Models
 {
     /// <summary>
-    /// A gift of in-game currency (the daily "send free chips" loop). Credited to the recipient's wallet
-    /// on CLAIM via WalletService, idempotent on CorrelationId. Only Chips/Coins/Gems may be gifted —
-    /// NEVER the token (dual-currency guard, enforced at the service). The daily send limit is enforced
-    /// in the service (count today's rows / a Redis counter), not by the schema.
+    /// A gift of in-game currency. Credited to the recipient's wallet on CLAIM via WalletService
+    /// (TransactionType.Bonus, idempotent on CorrelationId — a Bonus grant is never a wager). Today the
+    /// only producer is the daily "send free chips" loop, which hardcodes <see cref="CurrencyType.Chips"/>
+    /// (GiftService.SendAsync); the <see cref="Currency"/> field leaves room for future paid Kash/cosmetic
+    /// gifts. The tradeable token is NEVER giftable. The daily send limit is enforced in the service
+    /// (a Redis counter), not by the schema.
     /// </summary>
     [Table("Gifts")]
     [Index(nameof(RecipientId), nameof(Status))]    // a user's claimable gifts

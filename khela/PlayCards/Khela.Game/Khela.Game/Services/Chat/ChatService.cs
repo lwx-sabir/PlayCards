@@ -2,8 +2,10 @@ using System.Text.Json;
 using Khela.Common.Social;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
+using Khela.Game.Managers;
 using Khela.Game.Services.Redis;
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 namespace Khela.Game.Services.Chat
 {
@@ -21,6 +23,9 @@ namespace Khela.Game.Services.Chat
         Task<IReadOnlyList<ChatMessageDto>> GetChannelRecentAsync(string channelKey, int count);
         Task<int> GetUnreadCountAsync(Guid userId);
         Task MarkDmReadAsync(Guid userId, Guid otherUserId);
+
+        /// <summary>True if the user may read/post in the given channel ("global" is open; "table:{id}" requires a seat).</summary>
+        Task<bool> CanAccessChannelAsync(Guid userId, string channelKey);
     }
 
     /// <summary>
@@ -41,17 +46,20 @@ namespace Khela.Game.Services.Chat
         private readonly AppDbContext _db;
         private readonly IRedisService _redis;
         private readonly IChatModerator _moderator;
+        private readonly BlackjackTableManager _tables;
 
-        public ChatService(AppDbContext db, IRedisService redis, IChatModerator moderator)
+        public ChatService(AppDbContext db, IRedisService redis, IChatModerator moderator, BlackjackTableManager tables)
         {
             _db = db;
             _redis = redis;
             _moderator = moderator;
+            _tables = tables;
         }
 
         public async Task<ChatSendResult> SendDmAsync(Guid senderId, Guid recipientId, string body)
         {
             if (senderId == recipientId) return Fail("Cannot message yourself.");
+            if (await IsBlockedBetweenAsync(senderId, recipientId)) return Fail("Unavailable.");
             if (!await CheckRateLimitAsync(senderId)) return Fail("You're sending messages too fast.");
 
             var mod = await _moderator.ModerateAsync(body);
@@ -152,15 +160,41 @@ namespace Khela.Game.Services.Chat
             if (unread.Count > 0) await _db.SaveChangesAsync();
         }
 
+        public async Task<bool> CanAccessChannelAsync(Guid userId, string channelKey)
+        {
+            if (string.IsNullOrWhiteSpace(channelKey)) return false;
+            if (channelKey == "global") return true;                       // the open lobby room
+            const string tablePrefix = "table:";
+            if (channelKey.StartsWith(tablePrefix, StringComparison.Ordinal))
+            {
+                var tableId = channelKey[tablePrefix.Length..];
+                return !string.IsNullOrEmpty(tableId) && await _tables.IsUserSeatedAsync(tableId, userId.ToString());
+            }
+            return false;                                                  // unknown channel shape → deny
+        }
+
         // ---- helpers ----
+
+        // INCR + first-write PEXPIRE in one atomic script so a crash between them can never orphan the
+        // key without a TTL (which would silently lock the user out of chat once the count maxes out).
+        private const string RateLimitLua =
+            "local v = redis.call('INCR', KEYS[1]) " +
+            "if v == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end " +
+            "return v";
+
         private async Task<bool> CheckRateLimitAsync(Guid userId)
         {
-            var rdb = _redis.GetDatabase();
-            var key = $"chat:rl:{userId}";
-            var n = await rdb.StringIncrementAsync(key);
-            if (n == 1) await rdb.KeyExpireAsync(key, RateLimitWindow);
+            var n = (long)await _redis.GetDatabase().ScriptEvaluateAsync(RateLimitLua,
+                new RedisKey[] { $"chat:rl:{userId}" },
+                new RedisValue[] { (long)RateLimitWindow.TotalMilliseconds });
             return n <= RateLimitMax;
         }
+
+        private Task<bool> IsBlockedBetweenAsync(Guid a, Guid b)
+            => _db.Friendships.AsNoTracking().AnyAsync(f =>
+                f.Status == FriendshipStatus.Blocked &&
+                ((f.RequesterId == a && f.AddresseeId == b) ||
+                 (f.RequesterId == b && f.AddresseeId == a)));
 
         private async Task<string> DisplayNameAsync(Guid userId)
             => (await _db.UserProfiles.AsNoTracking().Where(p => p.UserId == userId)

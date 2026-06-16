@@ -1,0 +1,29 @@
+{
+    "name": "ChocDino.UIFX",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.video",
+            "expression": "1.0.0",
+            "define": "UIFX_VIDEOPLAYER"
+        },
+        {
+            "name": "Unity",
+            "expression": "6000.0.56",
+            "define": "UNITY_6000_0_56_OR_NEWER"
+        },
+        {
+            "name": "Unity",
+            "expression": "6000.2.1",
+            "define": "UNITY_6000_2_1_OR_NEWER"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -53,7 +53,12 @@ namespace Khela.Game.Controllers
         /// <summary>Recent messages of a Table/Global room (Redis-backed ephemeral buffer).</summary>
         [HttpGet("channel/{channelKey}")]
         public async Task<IActionResult> Channel(string channelKey, [FromQuery] int count = 50)
-            => Ok(await _chat.GetChannelRecentAsync(channelKey, count));
+        {
+            var me = GetUserGuid();
+            if (me == null) return Unauthorized();
+            if (!await _chat.CanAccessChannelAsync(me.Value, channelKey)) return Forbid();
+            return Ok(await _chat.GetChannelRecentAsync(channelKey, count));
+        }
 
         private Guid? GetUserGuid()
         {

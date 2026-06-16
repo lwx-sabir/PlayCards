@@ -266,9 +266,11 @@ namespace Khela.Game.Controllers
         [HttpPost("{tableId}/dealerPlay")]
         public async Task<IActionResult> DealerPlay(string tableId)
         {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
             try
             {
-                var table = await tableManager.DealerPlayAndSettleAsync(tableId);
+                var table = await tableManager.DealerPlayAndSettleAsync(tableId, userId);
                 if (table == null) return NotFound("Table not found or expired.");
 
                 // Unified board — round settled (dealer revealed); includes LastHandId for one-click verify.

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 81bdef25eb5729b4aa005f82ded1b8b2
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 274847
+  packageName: UIFX Legacy 1.x - Glow Filter
+  packageVersion: 1.10.2
+  assetPath: Assets/ChocDino/UIFX/Docs/OFL.txt
+  uploadId: 914008

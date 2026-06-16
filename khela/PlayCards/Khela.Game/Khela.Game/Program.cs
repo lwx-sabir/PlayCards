@@ -8,6 +8,9 @@ using Khela.Game.Services.Wallet;
 using Khela.Game.Services.Stats;
 using Khela.Game.Services.Leaderboards;
 using Khela.Game.Services.Chat;
+using Khela.Game.Services.Presence;
+using Khela.Game.Services.Friends;
+using Khela.Game.Services.Gifts;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore; 
@@ -68,6 +71,24 @@ builder.Services.AddAuthentication(options =>
 
         ValidateLifetime = true,
         ClockSkew = TimeSpan.FromMinutes(1) // Reduce default 5 min skew
+    };
+
+    // WebGL/browser clients cannot attach an Authorization header to the WebSocket/SSE handshake,
+    // so the JWT arrives as ?access_token=. Read it from the query string for the SignalR hub paths
+    // (native clients still send the header and are unaffected). Required by CLAUDE.md's Networking rule.
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = ctx =>
+        {
+            var accessToken = ctx.Request.Query["access_token"];
+            var path = ctx.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) &&
+                (path.StartsWithSegments("/chathub") || path.StartsWithSegments("/blackjackhub")))
+            {
+                ctx.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
     };
 });
 
@@ -136,6 +157,9 @@ builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
 builder.Services.AddSingleton<IChatModerator, BasicChatModerator>();
 builder.Services.AddScoped<IChatService, ChatService>();
+builder.Services.AddSingleton<IPresenceService, PresenceService>();
+builder.Services.AddScoped<IFriendsService, FriendsService>();
+builder.Services.AddScoped<IGiftService, GiftService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

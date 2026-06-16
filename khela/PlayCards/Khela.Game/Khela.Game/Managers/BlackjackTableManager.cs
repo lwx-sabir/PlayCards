@@ -208,6 +208,13 @@ namespace Khela.Game.Managers
             return table;
         }
 
+        /// <summary>True if the given user currently holds a seat at the table (authoritative seat state).</summary>
+        public async Task<bool> IsUserSeatedAsync(string tableId, string userId)
+        {
+            var table = await GetTableAsync(tableId);
+            return table != null && table.Seats.Any(s => s.Player != null && s.Player.Id == userId);
+        }
+
         // Save updated table back
         public async Task SaveTableAsync(string tableId, BlackjackTable table)
         {
@@ -569,13 +576,25 @@ namespace Khela.Game.Managers
             return table;
         }
 
-        public async Task<BlackjackTable?> DealerPlayAndSettleAsync(string tableId)
+        public async Task<BlackjackTable?> DealerPlayAndSettleAsync(string tableId, string userId)
         {
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
 
             if (!table.RoundInProgress)
                 throw new InvalidOperationException("Round not in progress.");
+
+            // Only a seated player may trigger settle — no unseated user can force-settle/grief a table.
+            if (!table.Seats.Any(s => s.Player != null && s.Player.Id == userId))
+                throw new InvalidOperationException("You are not seated at this table.");
+
+            // Single-shot: claim the round so a raced/retried dealerPlay can't re-enter settle (which would
+            // double-count stats + leaderboards and insert a duplicate audit row). Auto-expires so a crash
+            // can't permanently wedge the round.
+            var settleRoundId = table.CurrentRoundId ?? "";
+            if (!await redisService.GetDatabase().StringSetAsync(
+                    $"bjr:settling:{settleRoundId}", "1", TimeSpan.FromSeconds(30), When.NotExists))
+                return table; // another settle for this round is already in flight
 
             // Resolve any still-pending player turns (auto-stand them) before the dealer plays, so a
             // dealerPlay call can't settle other seats before they've acted.
@@ -604,49 +623,80 @@ namespace Khela.Game.Managers
             var statResults = new List<RoundResult>();
 
             // Reconcile each player's NET result to the authoritative wallet, sync the mirror, audit it.
-            foreach (var player in table.Game.Players)
+            // try/finally guarantees the round always tears down + saves, so one seat's wallet failure
+            // (an overdraw from concurrent multi-table play, or a locked wallet) can never leave the table
+            // frozen at RoundInProgress=true.
+            try
             {
-                if (!player.InRound) continue; // waiting players didn't play this round — no settle/audit
-
-                var start = table.RoundStartBalance != null
-                            && table.RoundStartBalance.TryGetValue(player.SeatNumber, out var s)
-                    ? s
-                    : player.Balance;
-                var net = player.Balance - start;
-                var (txId, newBalance) = await ApplyRoundNetAsync(player.Id, net, table.TableId, roundId, player.SeatNumber);
-                player.SetBalance(newBalance);
-
-                var pre = preSettle.TryGetValue(player.SeatNumber, out var ps)
-                    ? ps
-                    : (Wagered: 0m, FinalValue: 0, Bust: false, Blackjack: false);
-
-                Guid.TryParse(player.Id, out var uid);
-                participants.Add(new GameHandParticipant
+                foreach (var player in table.Game.Players)
                 {
-                    UserId = uid,
-                    SeatNumber = player.SeatNumber,
-                    Bet = pre.Wagered,
-                    Payout = pre.Wagered + net,            // gross returned (wins + pushes); 0 on a loss
-                    FinalHandValue = pre.FinalValue,
-                    Bust = pre.Bust,
-                    Blackjack = pre.Blackjack,
-                    Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
-                    WalletCreditTxId = net > 0 ? txId : null,
-                    WalletDebitTxId = net < 0 ? txId : null,
-                    BalanceBefore = start,
-                    BalanceAfter = newBalance
-                });
-                statResults.Add(new RoundResult(uid, pre.Wagered, net));
+                    if (!player.InRound) continue; // waiting players didn't play this round — no settle/audit
+
+                    var start = table.RoundStartBalance != null
+                                && table.RoundStartBalance.TryGetValue(player.SeatNumber, out var s)
+                        ? s
+                        : player.Balance;
+                    var net = player.Balance - start;
+                    Guid.TryParse(player.Id, out var uid);
+
+                    var pre = preSettle.TryGetValue(player.SeatNumber, out var ps)
+                        ? ps
+                        : (Wagered: 0m, FinalValue: 0, Bust: false, Blackjack: false);
+
+                    try
+                    {
+                        var (txId, newBalance) = await ApplyRoundNetAsync(player.Id, net, table.TableId, roundId, player.SeatNumber);
+                        player.SetBalance(newBalance);
+
+                        participants.Add(new GameHandParticipant
+                        {
+                            UserId = uid,
+                            SeatNumber = player.SeatNumber,
+                            Bet = pre.Wagered,
+                            Payout = pre.Wagered + net,            // gross returned (wins + pushes); 0 on a loss
+                            FinalHandValue = pre.FinalValue,
+                            Bust = pre.Bust,
+                            Blackjack = pre.Blackjack,
+                            Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
+                            WalletCreditTxId = net > 0 ? txId : null,
+                            WalletDebitTxId = net < 0 ? txId : null,
+                            BalanceBefore = start,
+                            BalanceAfter = newBalance
+                        });
+                        statResults.Add(new RoundResult(uid, pre.Wagered, net));
+                    }
+                    catch (Exception ex)
+                    {
+                        // The wallet rejected this seat (overdraw / locked). Don't strand the round — flag
+                        // the seat for reconciliation and continue. The real fix is deal-time fund
+                        // reservation so a loss-debit can never overdraw.
+                        logger.LogError(ex, "Settle failed for seat {Seat} on table {TableId}", player.SeatNumber, table.TableId);
+                        participants.Add(new GameHandParticipant
+                        {
+                            UserId = uid,
+                            SeatNumber = player.SeatNumber,
+                            Bet = pre.Wagered,
+                            FinalHandValue = pre.FinalValue,
+                            Bust = pre.Bust,
+                            Blackjack = pre.Blackjack,
+                            Outcome = "settle_failed",
+                            BalanceBefore = start
+                        });
+                    }
+                }
+
+                await PersistHandAsync(table, roundId, participants);
+                await RecordStatsAsync(statResults);
             }
-
-            await PersistHandAsync(table, roundId, participants);
-            await RecordStatsAsync(statResults);
-
-            table.RoundStartBalance?.Clear();
-            table.CurrentRoundId = null;
-            table.CurrentDeckHash = null;
-            table.RoundInProgress = false;
-            await SaveTableAsync(tableId, table);
+            finally
+            {
+                // Always finish the round so a seat failure can never wedge the table.
+                table.RoundStartBalance?.Clear();
+                table.CurrentRoundId = null;
+                table.CurrentDeckHash = null;
+                table.RoundInProgress = false;
+                await SaveTableAsync(tableId, table);
+            }
             return table;
         }
 

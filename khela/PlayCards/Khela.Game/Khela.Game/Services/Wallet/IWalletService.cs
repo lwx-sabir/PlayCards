@@ -34,9 +34,9 @@ namespace Khela.Game.Services.Wallet
             TransactionType type, string correlationId, WalletContext context = null);
 
         /// <summary>
-        /// True for currencies that may be bet or won at a table (Chips, Coins). Tradeable
-        /// currencies (Tokens, Gems) are never wagerable — wagering them would constitute
-        /// real-money gambling.
+        /// True for currencies that may be bet or won at a table (Chips, Coins). Premium / spend
+        /// currencies (Gems, Kash) and the tradeable token (Tokens) are never wagerable — wagering
+        /// them would constitute real-money gambling.
         /// </summary>
         bool IsWagerable(CurrencyType currency);
     }

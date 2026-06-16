@@ -1,5 +1,6 @@
 using Khela.Common.Social;
 using Khela.Game.Services.Chat;
+using Khela.Game.Services.Presence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
@@ -17,8 +18,25 @@ namespace Khela.Game.Managers.SRHubs
     public sealed class ChatHub : Hub
     {
         private readonly IChatService _chat;
+        private readonly IPresenceService _presence;
 
-        public ChatHub(IChatService chat) => _chat = chat;
+        public ChatHub(IChatService chat, IPresenceService presence)
+        {
+            _chat = chat;
+            _presence = presence;
+        }
+
+        public override async Task OnConnectedAsync()
+        {
+            if (TryUser(out var uid)) await _presence.MarkOnlineAsync(uid, Context.ConnectionId);
+            await base.OnConnectedAsync();
+        }
+
+        public override async Task OnDisconnectedAsync(Exception exception)
+        {
+            if (TryUser(out var uid)) await _presence.MarkOfflineAsync(uid, Context.ConnectionId);
+            await base.OnDisconnectedAsync(exception);
+        }
 
         public async Task SendDm(string recipientId, string body)
         {
@@ -31,13 +49,20 @@ namespace Khela.Game.Managers.SRHubs
             await Clients.Caller.SendAsync("ChatMessage", res.Message);
         }
 
-        public Task JoinChannel(string channelKey) => Groups.AddToGroupAsync(Context.ConnectionId, channelKey);
+        public async Task JoinChannel(string channelKey)
+        {
+            if (!TryUser(out var uid) || !await _chat.CanAccessChannelAsync(uid, channelKey))
+            { await Clients.Caller.SendAsync("ChatError", "You can't join this channel."); return; }
+            await Groups.AddToGroupAsync(Context.ConnectionId, channelKey);
+        }
 
         public Task LeaveChannel(string channelKey) => Groups.RemoveFromGroupAsync(Context.ConnectionId, channelKey);
 
         public async Task SendChannel(int channelType, string channelKey, string body)
         {
             if (!TryUser(out var senderId)) return;
+            if (!await _chat.CanAccessChannelAsync(senderId, channelKey))
+            { await Clients.Caller.SendAsync("ChatError", "You can't post in this channel."); return; }
 
             var res = await _chat.SendChannelAsync(senderId, (ChatChannelType)channelType, channelKey, body);
             if (!res.Ok) { await Clients.Caller.SendAsync("ChatError", res.Error); return; }

@@ -48,7 +48,8 @@ namespace Khela.Game.Controllers
                     Chips = await wallet.GetBalanceAsync(userId, CurrencyType.Chips),
                     Coins = await wallet.GetBalanceAsync(userId, CurrencyType.Coins),
                     Gems = await wallet.GetBalanceAsync(userId, CurrencyType.Gems),
-                    Tokens = await wallet.GetBalanceAsync(userId, CurrencyType.Tokens)
+                    Tokens = await wallet.GetBalanceAsync(userId, CurrencyType.Tokens),
+                    Kash = await wallet.GetBalanceAsync(userId, CurrencyType.Kash)
                 });
             }
             catch (Exception ex)

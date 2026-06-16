@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 872c8c7407f549248be77c1106826f29
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 274847
+  packageName: UIFX Legacy 1.x - Glow Filter
+  packageVersion: 1.10.2
+  assetPath: Assets/ChocDino/UIFX-TMP/Editor/AssemblyInfo.cs
+  uploadId: 914008

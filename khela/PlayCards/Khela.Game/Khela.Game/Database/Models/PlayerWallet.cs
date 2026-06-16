@@ -4,12 +4,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Khela.Game.Database.Models
 {
+    /// <summary>
+    /// Wallet currencies. Persisted as <c>int</c> — <b>append new values only; never reorder or insert</b>
+    /// (that would renumber existing wallet rows). Only <see cref="Chips"/> and <see cref="Coins"/> are
+    /// wagerable (enforced in <c>WalletService.IsWagerableCurrency</c>); every other value here is
+    /// non-wagerable by construction and can never be bet or won at a table.
+    /// </summary>
     public enum CurrencyType
     {
-        Chips,
-        Coins,
-        Gems,
-        Tokens
+        Chips,   // 0 — wagerable play money (non-cashable)
+        Coins,   // 1 — wagerable play money (non-cashable)
+        Gems,    // 2 — premium soft currency (non-wagerable)
+        Tokens,  // 3 — Phase-2 revenue-backed tradeable token (never wagered, never won)
+        Kash     // 4 — cosmetics & gifting spend currency (non-wagerable; buys items/gifts, never bet)
     }
 
     [Table("PlayerWallets")]
