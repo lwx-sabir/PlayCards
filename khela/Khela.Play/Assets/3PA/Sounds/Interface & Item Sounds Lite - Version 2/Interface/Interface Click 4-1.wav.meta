@@ -1,0 +1,30 @@
+fileFormatVersion: 2
+guid: bf3c4a678ca974f379b882ccb58abcea
+AudioImporter:
+  externalObjects: {}
+  serializedVersion: 6
+  defaultSettings:
+    loadType: 0
+    sampleRateSetting: 0
+    sampleRateOverride: 44100
+    compressionFormat: 1
+    quality: 1
+    conversionMode: 0
+  platformSettingOverrides: {}
+  forceToMono: 0
+  normalize: 1
+  preloadAudioData: 1
+  loadInBackground: 0
+  ambisonic: 0
+  3D: 1
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 277305
+  packageName: Interface and Collectible Sounds - Lite Edition
+  packageVersion: Version 2
+  assetPath: Assets/Interface & Item Sounds Lite - Version 2/Interface/Interface
+    Click 4-1.wav
+  uploadId: 705856

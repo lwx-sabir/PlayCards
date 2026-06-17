@@ -67,6 +67,27 @@ table, we would be running real-money gambling.
 **Enforced in code** at the wallet/engine boundary: only `Chips`/`Coins` are wagerable;
 `Tokens` can never be bet or won (`WalletService` rejects it).
 
+### Premium cosmetics & NFT policy
+
+- **Paid-only, never won or gifted.** Premium cosmetics are *purchased* — never awarded by
+  gameplay, RNG, loot boxes, or gifting. The casino only ever pays out non-cashable coins.
+  This is what keeps us clear of gambling law and Google's "no paying for a chance to win
+  NFTs" rule. **Non-negotiable.**
+- **Apple-compliant flow:** pay via **In-App Purchase** (Apple's 15–30%, in fiat) → unlock the
+  cosmetic → **mint the NFT server-side** as the on-chain record. The unlock is gated by the
+  IAP, NOT by holding an externally-acquired NFT (the reverse is barred by Apple). No in-app
+  links to external NFT marketplaces or crypto purchase on iOS.
+- **Google:** allowed with transparency; do NOT market scarcity as appreciation/earning.
+- **Custodial-by-default wallet**, with optional self-custody export for crypto-native players.
+  Casual players never see gas or seed phrases; the minority who want true ownership/resale can
+  export. This avoids the wallet-onboarding friction that kills casual conversion.
+- **Scarcity:** total supply per item is **public** (live counter + serial numbers, e.g. #142/500).
+  **Cosmetic-only — never gameplay-affecting** (limits securities exposure). No appreciation promises.
+- **Sequencing:** ship cosmetics **off-chain first** (public counter + serials, same paid-only
+  flow) in Phase 0/1; turn on NFT minting as an **optional later layer** once real demand is
+  proven. The purchase flow is identical, so sequencing the chain part later costs nothing.
+- Lawyer review before any on-chain sale; mind Bangladesh crypto restrictions (geo).
+
 ---
 
 ## 4. Token model (Phase 2) — buy-and-burn
@@ -153,6 +174,16 @@ signed-delta amounts, `RowVersion` drift fixed to `DateTime?`).
 
 - **Pipeline:** URP. After importing any Built-in-pipeline assets, run the **Render
   Pipeline Converter** (materials show magenta until converted).
+- **UI stack — ONE visual language.** Use **GUI PRO – Casual Game** (Layer Lab, owned) as
+  the *single* UI framework for ALL screens: home, shop, coin HUD, popups, settings, and the
+  social/apartment/gifting screens. Its bright/glossy/rounded style is the right fit for a
+  social casino. Do **NOT** mix in GUI PRO *Survival Clean* or *Fantasy RPG* (different
+  themes → patchwork, amateur look), and do **NOT** add ricimi (a redundant second framework).
+  Skin Casual with a **casino icon/art pack** (chips, cards, coins, gold accents) applied
+  consistently to give it casino identity. Borrow an element from another kit only if
+  re-skinned to match Casual. UI is screen-space Canvas (uGUI) — pipeline-agnostic, works in
+  URP as-is. **Presentation only:** coin balances, shop prices, and purchases come from the
+  server (wallet + IAP), never from demo/kit logic.
 - **SignalR:** Best SignalR (Best HTTP + WebSockets + SignalR bundle). Implement
   `BlackjackHubClient` against `IBlackjackHubClient`; JWT via `?access_token=`.
 - **Card pack (AarniTuli, itch.io ZIP):** it's a `.blend`-based UPM package (`package.json`
