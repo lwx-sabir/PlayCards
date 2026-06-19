@@ -145,10 +145,24 @@ namespace Khela.Game.Managers
 
                 foreach (var p in participants) p.HandId = header.HandId;
 
+                // Flush the buffered move-by-move log → GameHandActions, stamped with this round's HandId.
+                var actions = (table.ActionLog ?? new List<GameActionEntry>()).Select(a => new GameHandAction
+                {
+                    HandId = header.HandId,
+                    UserId = Guid.TryParse(a.UserId, out var au) ? au : (Guid?)null,
+                    SeatNumber = a.SeatNumber,
+                    ActionType = a.ActionType,
+                    CardDrawn = a.CardDrawn,
+                    HandValueAfter = a.HandValueAfter,
+                    Amount = a.Amount,
+                    CreatedAt = a.CreatedAt.UtcDateTime
+                }).ToList();
+
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 db.GameHandHeaders.Add(header);
                 db.GameHandParticipants.AddRange(participants);
+                if (actions.Count > 0) db.GameHandActions.AddRange(actions);
                 await db.SaveChangesAsync();
 
                 table.LastHandId = header.HandId.ToString(); // surfaced in the board for one-click verify
@@ -371,6 +385,20 @@ namespace Khela.Game.Managers
                 await CreateTableAsync(maxPlayers: 5, maxSeatsPerUser: 1, mode: t.mode, minBet: t.min, maxBet: t.max);
         }
 
+        /// <summary>DEV: wipe the seeded house tables (lobby index + table entries + seed guard) and re-create
+        /// them. Use after editing <see cref="DefaultTables"/> so the lobby reflects the new stakes/seats.</summary>
+        public async Task<List<BlackjackTableSummary>> ReseedDefaultTablesAsync()
+        {
+            var db = redisService.GetDatabase();
+            var ids = await db.SetMembersAsync(LobbyIndexKey);
+            foreach (var id in ids)
+                await db.KeyDeleteAsync(GetKey((string)id));
+            await db.KeyDeleteAsync(LobbyIndexKey);
+            await db.KeyDeleteAsync("blackjack:tables:seeded");
+            await EnsureDefaultTablesAsync();
+            return await GetLobbyAsync();
+        }
+
         private static BlackjackTableSummary ToSummary(BlackjackTable table)
         {
             var occupants = table.Seats
@@ -498,6 +526,8 @@ namespace Khela.Game.Managers
             table.CurrentRoundId = Guid.NewGuid().ToString("N");
             table.RoundNonce += 1;
             table.RoundStartBalance = new Dictionary<int, decimal>();
+            table.LastResults = new List<SeatRoundResult>(); // new round — clear last round's result banner
+            table.ActionLog = new List<GameActionEntry>();   // new round — start a fresh move log
 
             // Defensive: tables created before provably-fair seeds existed get one lazily.
             if (string.IsNullOrEmpty(table.ServerSeed))
@@ -525,6 +555,7 @@ namespace Khela.Game.Managers
             // SITS OUT this round rather than freezing settle later. Only players with a funded bet join
             // THIS round; anyone else (e.g. someone who sat down mid-round) waits for the next deal.
             var wagers = new Dictionary<int, decimal>();
+            var stakeTxIds = new Dictionary<int, string>();   // seat -> the stake debit's wallet tx id (per-hand audit)
             var debited = new List<(string PlayerId, decimal Amount, int Seat)>();
             foreach (var player in table.Game.Players)
             {
@@ -533,11 +564,12 @@ namespace Khela.Game.Managers
 
                 try
                 {
-                    var (_, walletAfter) = await DebitStakeAsync(player.Id, bet, table.TableId, roundId, player.SeatNumber, "stk");
+                    var (stkTx, walletAfter) = await DebitStakeAsync(player.Id, bet, table.TableId, roundId, player.SeatNumber, "stk");
                     player.InRound = true;
                     table.RoundStartBalance[player.SeatNumber] = walletAfter + bet; // pre-stake balance (audit)
                     player.SetBalance(walletAfter);                                  // mirror = wallet after the stake
                     wagers[player.SeatNumber] = bet;
+                    stakeTxIds[player.SeatNumber] = stkTx;
                     debited.Add((player.Id, bet, player.SeatNumber));
                 }
                 catch (Exception ex)
@@ -570,6 +602,11 @@ namespace Khela.Game.Managers
                     {
                         player.GetHand(0).Bet = bet;
                         player.ClearInsurance(0);
+                        // Record the funding debit on the (freshly dealt) hand for the per-hand settle audit.
+                        player.GetHand(0).StakeTxId = stakeTxIds.GetValueOrDefault(player.SeatNumber);
+                        LogAction(table, HandActionType.Deal, player.SeatNumber, player.Id, amount: bet,
+                            handValueAfter: player.GetHand(0).Hand.GetSumOfHand(),
+                            cardDrawn: string.Join(" ", player.GetHand(0).Hand.Cards.Select(ProvableShuffle.Canonical)));
                     }
                 }
 
@@ -612,6 +649,8 @@ namespace Khela.Game.Managers
             if (player.HasBust(handIndex) || player.GetHand(handIndex).Done) throw new InvalidOperationException("Hand already finished.");
 
             var result = player.Hit(handIndex);
+            LogAction(table, HandActionType.Hit, seatNumber, userId, handValueAfter: result.HandValue,
+                cardDrawn: ProvableShuffle.Canonical(result.DrawnCard));
             if (result.IsBust)
             {
                 player.GetHand(handIndex).Done = true;
@@ -648,10 +687,15 @@ namespace Khela.Game.Managers
             // Reserve the extra stake (equal to the current bet) from the wallet FIRST. If it fails
             // (insufficient / committed elsewhere) we throw before mutating the game — no rollback needed.
             var ddExtra = player.GetHand(handIndex).Bet;
-            var (_, ddWalletAfter) = await DebitStakeAsync(player.Id, ddExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"dd{handIndex}");
+            var (ddTx, ddWalletAfter) = await DebitStakeAsync(player.Id, ddExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"dd{handIndex}");
 
             var result = player.DoubleDown(handIndex);
             player.SetBalance(ddWalletAfter);
+            // Append the double-down debit to this hand's funding trail (deal/split stake + this dd) for audit.
+            var ddHand = player.GetHand(handIndex);
+            ddHand.StakeTxId = string.IsNullOrEmpty(ddHand.StakeTxId) ? ddTx : ddHand.StakeTxId + "," + ddTx;
+            LogAction(table, HandActionType.Double, seatNumber, userId, amount: ddExtra,
+                handValueAfter: result.HitResult.HandValue, cardDrawn: ProvableShuffle.Canonical(result.HitResult.DrawnCard));
             AdvanceTurn(table);
             await SaveTableAsync(tableId, table);
             return (table, result);
@@ -689,6 +733,7 @@ namespace Khela.Game.Managers
             var (_, insWalletAfter) = await DebitStakeAsync(player.Id, amount, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"ins{handIndex}");
             player.PlaceInsurance(amount, handIndex);
             player.SetBalance(insWalletAfter);
+            LogAction(table, HandActionType.Insurance, seatNumber, userId, amount: amount);
             RefreshTurn(table);
             await SaveTableAsync(tableId, table);
             return table;
@@ -716,16 +761,26 @@ namespace Khela.Game.Managers
             var splitHand = player.GetHand(handIndex);
             if (splitHand.Hand.Cards.Count != 2)
                 throw new InvalidOperationException("Can only split with two cards.");
-            if (splitHand.Hand.Cards[0].FaceVal != splitHand.Hand.Cards[1].FaceVal)
-                throw new InvalidOperationException("Cards must be a pair to split.");
+            if (!Player.CanSplitPair(splitHand.Hand.Cards[0], splitHand.Hand.Cards[1]))
+                throw new InvalidOperationException("Cards must be a pair (equal value) to split.");
 
             // Reserve the extra stake (a second bet for the new hand) wallet-first, then split.
             var splitExtra = splitHand.Bet;
-            var (_, splitWalletAfter) = await DebitStakeAsync(player.Id, splitExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"sp{handIndex}");
+            var (spTx, splitWalletAfter) = await DebitStakeAsync(player.Id, splitExtra, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"sp{handIndex}");
 
-            player.Split(handIndex);
+            var newHandIndex = player.Split(handIndex);
+            player.GetHand(newHandIndex).StakeTxId = spTx;   // the split stake funded the NEW hand
             player.SetBalance(splitWalletAfter);
-            RefreshTurn(table);
+            LogAction(table, HandActionType.Split, seatNumber, userId, amount: splitExtra,
+                handValueAfter: player.GetHand(handIndex).Hand.GetSumOfHand());
+
+            // Split aces are locked to one card each (both hands Done) → advance off this player. A normal
+            // split leaves the current hand playable → keep the turn here so the player plays hand `handIndex`.
+            if (player.GetHand(handIndex).Done)
+                AdvanceTurn(table);
+            else
+                RefreshTurn(table);
+
             await SaveTableAsync(tableId, table);
             return table;
         }
@@ -771,6 +826,9 @@ namespace Khela.Game.Managers
             }
 
             table.Game.DealerPlay();
+            LogAction(table, HandActionType.DealerPlay, null, null,
+                handValueAfter: table.Game.Dealer.Hand.GetSumOfHand(),
+                cardDrawn: string.Join(" ", table.Game.Dealer.Hand.Cards.Select(ProvableShuffle.Canonical)));
 
             // Capture gross wager + final hand state per seat BEFORE settle zeroes the bets.
             var preSettle = table.Game.Players.ToDictionary(
@@ -785,11 +843,17 @@ namespace Khela.Game.Managers
             // Mirror balance per seat BEFORE settle returns any money — the baseline for the gross credit.
             var preSettleBalance = table.Game.Players.ToDictionary(p => p.SeatNumber, p => p.Balance);
 
-            BlackjackSettlement.Settle(table.Game);
+            // Settle decides each hand's outcome and applies payouts to the mirror; capture the per-hand
+            // results so the audit can record one row per (split) hand.
+            var handSettlements = BlackjackSettlement.Settle(table.Game);
+            var settledBySeat = handSettlements
+                .GroupBy(h => h.SeatNumber)
+                .ToDictionary(g => g.Key, g => g.OrderBy(h => h.HandIndex).ToList());
 
             var roundId = table.CurrentRoundId ?? "";
             var participants = new List<GameHandParticipant>();
             var statResults = new List<RoundResult>();
+            var lastResults = new List<SeatRoundResult>();
 
             // Reconcile each player's NET result to the authoritative wallet, sync the mirror, audit it.
             // try/finally guarantees the round always tears down + saves, so one seat's wallet failure
@@ -819,6 +883,19 @@ namespace Khela.Game.Managers
                     if (gross < 0m) gross = 0m;        // defensive — settlement never reduces the mirror
                     var net = player.Balance - start;  // true round net (gross minus everything staked)
 
+                    // Capture this seat's result for the board's banner — decided by the settle math, so
+                    // it's recorded whether or not the wallet credit below succeeds.
+                    lastResults.Add(new SeatRoundResult
+                    {
+                        SeatNumber = player.SeatNumber,
+                        Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
+                        Delta = net,
+                        Payout = gross,
+                        FinalHandValue = pre.FinalValue,
+                        Bust = pre.Bust,
+                        Blackjack = pre.Blackjack
+                    });
+
                     try
                     {
                         decimal newBalance;
@@ -833,21 +910,32 @@ namespace Khela.Game.Managers
                         }
                         player.SetBalance(newBalance);
 
-                        participants.Add(new GameHandParticipant
+                        // One audit row PER HAND (a split yields two): each hand's own stake, outcome, payout,
+                        // and funding-debit tx id. The payout credit is a single seat-level :pay transaction, so
+                        // its tx id and the BalanceBefore/After audit are recorded once, on the first hand's row.
+                        var seatHands = settledBySeat.TryGetValue(player.SeatNumber, out var shs)
+                            ? shs : new List<HandSettlement>();
+                        for (int hi = 0; hi < seatHands.Count; hi++)
                         {
-                            UserId = uid,
-                            SeatNumber = player.SeatNumber,
-                            Bet = pre.Wagered,
-                            Payout = gross,                        // gross returned (wins + pushes + insurance); 0 on a full loss
-                            FinalHandValue = pre.FinalValue,
-                            Bust = pre.Bust,
-                            Blackjack = pre.Blackjack,
-                            Outcome = net > 0 ? "win" : net < 0 ? "lose" : "push",
-                            WalletCreditTxId = gross > 0m ? txId : null,
-                            WalletDebitTxId = null,                // stakes were debited at deal/action, not here
-                            BalanceBefore = start,
-                            BalanceAfter = newBalance
-                        });
+                            var h = seatHands[hi];
+                            participants.Add(new GameHandParticipant
+                            {
+                                UserId = uid,
+                                SeatNumber = player.SeatNumber,
+                                HandIndex = h.HandIndex,
+                                Bet = h.Bet,
+                                InsuranceBet = h.InsuranceBet,
+                                Payout = h.Payout,                                  // gross returned for THIS hand
+                                FinalHandValue = h.FinalValue,
+                                Bust = h.Bust,
+                                Blackjack = h.Blackjack,
+                                Outcome = h.Outcome,
+                                WalletDebitTxId = player.GetHand(h.HandIndex).StakeTxId,
+                                WalletCreditTxId = hi == 0 && gross > 0m ? txId : null,  // credit is seat-level (:pay)
+                                BalanceBefore = hi == 0 ? start : (decimal?)null,
+                                BalanceAfter = hi == 0 ? newBalance : (decimal?)null
+                            });
+                        }
                         statResults.Add(new RoundResult(uid, pre.Wagered, net));
                     }
                     catch (Exception ex)
@@ -857,17 +945,43 @@ namespace Khela.Game.Managers
                         // so the seat is flagged settle_failed for reconciliation rather than double-paid.
                         // Overdraw-at-settle is no longer possible (funds were reserved at deal).
                         logger.LogError(ex, "Settle payout failed for seat {Seat} on table {TableId} after retries", player.SeatNumber, table.TableId);
-                        participants.Add(new GameHandParticipant
+                        var failHands = settledBySeat.TryGetValue(player.SeatNumber, out var fhs)
+                            ? fhs : new List<HandSettlement>();
+                        if (failHands.Count == 0)
                         {
-                            UserId = uid,
-                            SeatNumber = player.SeatNumber,
-                            Bet = pre.Wagered,
-                            FinalHandValue = pre.FinalValue,
-                            Bust = pre.Bust,
-                            Blackjack = pre.Blackjack,
-                            Outcome = "settle_failed",
-                            BalanceBefore = start
-                        });
+                            participants.Add(new GameHandParticipant
+                            {
+                                UserId = uid,
+                                SeatNumber = player.SeatNumber,
+                                Bet = pre.Wagered,
+                                FinalHandValue = pre.FinalValue,
+                                Bust = pre.Bust,
+                                Blackjack = pre.Blackjack,
+                                Outcome = "settle_failed",
+                                BalanceBefore = start
+                            });
+                        }
+                        else
+                        {
+                            for (int hi = 0; hi < failHands.Count; hi++)
+                            {
+                                var h = failHands[hi];
+                                participants.Add(new GameHandParticipant
+                                {
+                                    UserId = uid,
+                                    SeatNumber = player.SeatNumber,
+                                    HandIndex = h.HandIndex,
+                                    Bet = h.Bet,
+                                    InsuranceBet = h.InsuranceBet,
+                                    FinalHandValue = h.FinalValue,
+                                    Bust = h.Bust,
+                                    Blackjack = h.Blackjack,
+                                    Outcome = "settle_failed",
+                                    WalletDebitTxId = player.GetHand(h.HandIndex).StakeTxId,
+                                    BalanceBefore = hi == 0 ? start : (decimal?)null
+                                });
+                            }
+                        }
                     }
                 }
 
@@ -888,6 +1002,7 @@ namespace Khela.Game.Managers
                 table.CurrentRoundId = null;
                 table.CurrentDeckHash = null;
                 table.RoundInProgress = false;
+                table.LastResults = lastResults;   // surface per-seat outcomes to the board for the banner
                 await SaveTableAsync(tableId, table);
             }
             return table;
@@ -910,6 +1025,8 @@ namespace Khela.Game.Managers
                 throw new InvalidOperationException("Seat not occupied by this player.");
 
             seat.Player.Stand(handIndex);
+            LogAction(table, HandActionType.Stand, seatNumber, userId,
+                handValueAfter: seat.Player.GetHand(handIndex).Hand.GetSumOfHand());
             AdvanceTurn(table);
             await SaveTableAsync(tableId, table);
             return table;
@@ -1066,15 +1183,43 @@ namespace Khela.Game.Managers
             AdvanceTurn(table);
         }
 
+        // Append one move to the round's buffered action log (flushed to GameHandActions at settle).
+        private static void LogAction(BlackjackTable table, HandActionType type, int? seat, string userId,
+            decimal? amount = null, int? handValueAfter = null, string cardDrawn = null)
+        {
+            (table.ActionLog ??= new List<GameActionEntry>()).Add(new GameActionEntry
+            {
+                UserId = userId,
+                SeatNumber = seat,
+                ActionType = type,
+                Amount = amount,
+                HandValueAfter = handValueAfter,
+                CardDrawn = cardDrawn,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+
         private static void AdvanceTurn(BlackjackTable table)
         {
-            var active = GetOrderedHands(table).ToList();
-            var idx = active.FindIndex(x => x.seat == table.CurrentSeatNumber && x.hand == table.CurrentHandIndex);
-            var next = idx >= 0 && idx + 1 < active.Count ? active[idx + 1] : (seat: -1, hand: 0);
+            // The current hand is usually already marked Done/bust before this runs (stand, hit-bust, double,
+            // split-aces, auto-stand), so it's no longer in GetOrderedHands. Advance to the first STILL-ACTIVE
+            // hand AFTER the current position in canonical (seat asc, hand asc) order — never jump straight to
+            // the dealer while later seats/hands still have to act. (Looking up the current position by index
+            // would miss-fire here: a Done current hand isn't in the list, so it would resolve to the dealer.)
+            int curSeat = table.CurrentSeatNumber;
+            int curHand = table.CurrentHandIndex;
 
-            table.CurrentSeatNumber = next.seat;
-            table.CurrentHandIndex = next.hand;
-            table.TurnExpiresAt = next.seat == -1 ? null : DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
+            (int seat, int hand)? next = null;
+            foreach (var h in GetOrderedHands(table))
+            {
+                if (h.seat == -1) continue; // dealer sentinel
+                if (h.seat > curSeat || (h.seat == curSeat && h.hand > curHand)) { next = h; break; }
+            }
+
+            var n = next ?? (seat: -1, hand: 0);
+            table.CurrentSeatNumber = n.seat;
+            table.CurrentHandIndex = n.hand;
+            table.TurnExpiresAt = n.seat == -1 ? null : DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
         }
 
         private static IEnumerable<(int seat, int hand)> GetOrderedHands(BlackjackTable table)
@@ -1153,11 +1298,45 @@ namespace Khela.Game.Managers
 
         // Id of the most recently settled hand, so clients can deep-link to GET /verify/{handId}.
         public string LastHandId { get; set; }
+
+        // Per-seat result of the most recently settled round (for the client's result banner). Set at
+        // settle, cleared when a new round is dealt.
+        public List<SeatRoundResult> LastResults { get; set; } = new List<SeatRoundResult>();
+
+        // Buffered move-by-move action log for THIS round; flushed to GameHandActions at settle (stamped with
+        // the header's HandId) and reset at the next deal. Lives in the table blob so it survives Redis.
+        public List<GameActionEntry> ActionLog { get; set; } = new List<GameActionEntry>();
     }
 
     public class Seat
     {
         public int SeatNumber { get; set; }
         public Player? Player { get; set; }
+    }
+
+    /// <summary>One seat's outcome for the most recently settled round, surfaced on the board snapshot.</summary>
+    public class SeatRoundResult
+    {
+        public int SeatNumber { get; set; }
+        public string Outcome { get; set; }    // "win" | "lose" | "push"
+        public decimal Delta { get; set; }       // net chips change this round (signed: + win, - loss, 0 push)
+        public decimal Payout { get; set; }      // gross returned to the wallet
+        public int FinalHandValue { get; set; }
+        public bool Bust { get; set; }
+        public bool Blackjack { get; set; }
+    }
+
+    /// <summary>One buffered move in a round (bet/deal/hit/stand/double/split/insurance/dealerPlay), held in
+    /// the table blob during play and written to GameHandActions at settle. UserId is the player's string id;
+    /// CardDrawn is space-separated canonical card tokens (e.g. "14H 10S").</summary>
+    public class GameActionEntry
+    {
+        public string UserId { get; set; }
+        public int? SeatNumber { get; set; }
+        public HandActionType ActionType { get; set; }
+        public string CardDrawn { get; set; }
+        public int? HandValueAfter { get; set; }
+        public decimal? Amount { get; set; }
+        public DateTimeOffset CreatedAt { get; set; }
     }
 }

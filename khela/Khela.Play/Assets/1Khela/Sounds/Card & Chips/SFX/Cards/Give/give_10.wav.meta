@@ -1,0 +1,30 @@
+fileFormatVersion: 2
+guid: 2cc6c2e8ecb7c8b4c8f2041d39f8ce41
+AudioImporter:
+  externalObjects: {}
+  serializedVersion: 8
+  defaultSettings:
+    serializedVersion: 2
+    loadType: 0
+    sampleRateSetting: 0
+    sampleRateOverride: 44100
+    compressionFormat: 1
+    quality: 1
+    conversionMode: 0
+    preloadAudioData: 0
+  platformSettingOverrides: {}
+  forceToMono: 0
+  normalize: 1
+  loadInBackground: 0
+  ambisonic: 0
+  3D: 1
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 339944
+  packageName: 'uVegas: Authentic Casino Chips & Cards Sounds'
+  packageVersion: 1.1.0
+  assetPath: Assets/uVegas/Audio/SFX/Cards/Give/give_10.wav
+  uploadId: 872786

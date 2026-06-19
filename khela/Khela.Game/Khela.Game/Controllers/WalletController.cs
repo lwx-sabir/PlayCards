@@ -5,7 +5,9 @@ using System.Threading.Tasks;
 using Khela.Game.Database.Models;
 using Khela.Game.Services.Wallet;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 
 namespace Khela.Game.Controllers
 {
@@ -15,14 +17,16 @@ namespace Khela.Game.Controllers
     public class WalletController : ControllerBase
     {
         private readonly IWalletService wallet;
+        private readonly IWebHostEnvironment env;
 
         // Free starting balances so a new guest can play immediately (the social-casino model).
         private const decimal StarterChips = 10000m;
         private const decimal StarterGems = 100m;
 
-        public WalletController(IWalletService wallet)
+        public WalletController(IWalletService wallet, IWebHostEnvironment env)
         {
             this.wallet = wallet;
+            this.env = env;
         }
 
         /// <summary>
@@ -67,6 +71,22 @@ namespace Khela.Game.Controllers
 
             var balance = await wallet.GetBalanceAsync(userId, currency);
             return Ok(new { Currency = currency.ToString(), Balance = balance });
+        }
+
+        /// <summary>DEV ONLY — credit test Chips to the signed-in player (top-up while testing). Returns 404
+        /// outside Development so it can never ship as a money cheat.</summary>
+        [HttpPost("dev/chips")]
+        public async Task<IActionResult> DevAddChips([FromQuery] decimal amount)
+        {
+            if (!env.IsDevelopment()) return NotFound();
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+            if (amount <= 0) return BadRequest(new { message = "amount must be > 0" });
+
+            await wallet.CreditAsync(userId, CurrencyType.Chips, amount, TransactionType.AdminAdjustment,
+                $"dev:{Guid.NewGuid():N}", new WalletContext { Description = "Dev test chips" });
+
+            return Ok(new { Chips = await wallet.GetBalanceAsync(userId, CurrencyType.Chips) });
         }
 
         private string GetUserId() =>

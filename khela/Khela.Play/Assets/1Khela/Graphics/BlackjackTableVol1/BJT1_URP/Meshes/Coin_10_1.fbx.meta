@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 58b9e835a53635148af33affd8b89cc4
+guid: d1e2befb9aa8dbe4ba981338fe242a69
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
@@ -8,7 +8,7 @@ ModelImporter:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: TX_Coin1
-    second: {fileID: 2100000, guid: 0eb20927bf1eba94a852ce509ce308ec, type: 2}
+    second: {fileID: 2100000, guid: 48c5eff853d95c648ac9644258452cf0, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -112,10 +112,3 @@ ModelImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Meshes/Coin_10_1.fbx
-  uploadId: 841666

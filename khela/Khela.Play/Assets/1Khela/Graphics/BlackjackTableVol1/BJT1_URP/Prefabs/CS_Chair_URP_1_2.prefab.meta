@@ -1,14 +1,7 @@
 fileFormatVersion: 2
-guid: bb604b3946cd5ac4db10d142beeab740
+guid: 4ea4ab2f1b5d4af49b3adfc6b60b8f75
 PrefabImporter:
   externalObjects: {}
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Prefabs/CS_Chair_URP_1_2.prefab
-  uploadId: 841666

@@ -21,6 +21,7 @@ namespace Khela.Game.Managers
             table.CurrentHandIndex,
             table.TurnExpiresAt,
             table.LastHandId, // id of the most recently settled hand — feeds GET /verify/{handId}
+            table.LastResults, // per-seat outcome of the last settled round (drives the client result banner)
             // Commitment only — the server seed stays secret until reveal/verify.
             Fairness = new { table.ServerSeedHash, table.ClientSeed, table.RoundNonce },
             Dealer = new

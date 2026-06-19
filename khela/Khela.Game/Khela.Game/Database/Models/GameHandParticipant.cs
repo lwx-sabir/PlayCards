@@ -20,6 +20,12 @@ namespace Khela.Game.Database.Models
 
         public int SeatNumber { get; set; }
 
+        /// <summary>
+        /// Which of the player's hands this row records. 0 for a normal hand; a split produces one row per
+        /// hand (0, 1, …) so each split hand's stake, outcome, and payout are audited independently.
+        /// </summary>
+        public int HandIndex { get; set; }
+
         [Precision(18, 4)]
         public decimal Bet { get; set; }
 

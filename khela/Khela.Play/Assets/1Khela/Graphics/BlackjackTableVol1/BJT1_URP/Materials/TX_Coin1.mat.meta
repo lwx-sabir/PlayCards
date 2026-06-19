@@ -1,15 +1,8 @@
 fileFormatVersion: 2
-guid: 0eb20927bf1eba94a852ce509ce308ec
+guid: 48c5eff853d95c648ac9644258452cf0
 NativeFormatImporter:
   externalObjects: {}
   mainObjectFileID: 2100000
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Materials/TX_Coin1.mat
-  uploadId: 841666

@@ -425,6 +425,9 @@ namespace Khela.Game.Migrations
                     b.Property<Guid>("HandId")
                         .HasColumnType("char(36)");
 
+                    b.Property<int>("HandIndex")
+                        .HasColumnType("int");
+
                     b.Property<decimal>("InsuranceBet")
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");

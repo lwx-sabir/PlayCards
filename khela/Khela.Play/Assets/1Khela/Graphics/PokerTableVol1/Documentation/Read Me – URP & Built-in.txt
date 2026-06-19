@@ -1,0 +1,7 @@
+If you are using Built-in Render Pipeline:
+➝ Delete the PKTB1_URP folder.
+
+If you are using Universal Render Pipeline (URP):
+➝ Delete the PKTB1_Built folder.
+
+Keep only the folder that matches your project to avoid conflicts and save space.

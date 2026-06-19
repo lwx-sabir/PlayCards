@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: c5291604890c335438dd9432b964f18a
+guid: 1120ab641a0500e408be1829f605ea00
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
@@ -8,12 +8,12 @@ ModelImporter:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: TX_Blackjack_Table_1_1
-    second: {fileID: 2100000, guid: a6a45675fa748074ab9282e532b757e5, type: 2}
+    second: {fileID: 2100000, guid: 56f8f9c5d19824944a7f7892285a442e, type: 2}
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: TX_Blackjack_Table_1_2
-    second: {fileID: 2100000, guid: 1f0a1cfaaae9109499233477cb08cdc4, type: 2}
+    second: {fileID: 2100000, guid: d2c6c1c2566ff744fb08bc44872458ac, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -117,10 +117,3 @@ ModelImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Meshes/Blackjack_Table_1_1.fbx
-  uploadId: 841666

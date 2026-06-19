@@ -167,6 +167,33 @@ namespace CardGames.Tests
         }
 
         [Fact]
+        public void Split_TenValuePair_DifferentRanks_Splits()
+        {
+            // Casino-standard: any two 10-value cards (e.g. King + Queen) form a splittable pair.
+            var p = PlayerWith(1000m, C(FaceValue.King, Suit.Spades), C(FaceValue.Queen, Suit.Hearts));
+            p.GetHand(0).Bet = 100m;
+            p.CurrentDeck = new Deck();
+
+            var idx = p.Split();
+            Assert.Equal(1, idx);
+            Assert.Equal(2, p.Hands.Count);
+        }
+
+        [Fact]
+        public void Split_Aces_DrawOneCardEach_AndLockBothHands()
+        {
+            var p = PlayerWith(1000m, C(FaceValue.Ace, Suit.Spades), C(FaceValue.Ace, Suit.Hearts));
+            p.GetHand(0).Bet = 100m;
+            p.CurrentDeck = new Deck();
+
+            p.Split();
+            Assert.Equal(2, p.GetHand(0).Hand.Cards.Count); // exactly one card added to each
+            Assert.Equal(2, p.GetHand(1).Hand.Cards.Count);
+            Assert.True(p.GetHand(0).Done);                 // split aces can't be hit/doubled/re-split
+            Assert.True(p.GetHand(1).Done);
+        }
+
+        [Fact]
         public void DoubleDown_DoublesBet_DrawsExactlyOneCard_AndLocksHand()
         {
             var p = PlayerWith(1000m, C(FaceValue.Five), C(FaceValue.Six));

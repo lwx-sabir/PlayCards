@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: d84ef191630d16543a368faf6633a4f2
+guid: b722c35a8bbef6345b6d328134d8c749
 ModelImporter:
   serializedVersion: 22200
   internalIDToNameTable: []
@@ -8,7 +8,7 @@ ModelImporter:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: TX_Poker_Card_1
-    second: {fileID: 2100000, guid: 2d1a63e69cbfc3042bf8b1a27baf2fb1, type: 2}
+    second: {fileID: 2100000, guid: 24ff1581ea6f3f04aa2000102c2b234e, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -112,10 +112,3 @@ ModelImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Meshes/Card_13.fbx
-  uploadId: 841666

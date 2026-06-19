@@ -1,14 +1,7 @@
 fileFormatVersion: 2
-guid: e44b3b26eb7da9e4caacb5f9e8f4ce76
+guid: d792a0c99df82d3489e7e86e53fc8870
 PrefabImporter:
   externalObjects: {}
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 309967
-  packageName: Blackjack Table Vol. 1
-  packageVersion: 1.0.1
-  assetPath: Assets/BlackjackTableVol1/BJT1_URP/Prefabs/Blackjack_Table_URP_1_1.prefab
-  uploadId: 841666

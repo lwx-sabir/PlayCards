@@ -173,6 +173,19 @@ namespace CardGames.Blackjack.CardGames.Blackjack
 
         public void AddPush() => AddPush(0);
 
+        /// <summary>
+        /// Blackjack split value of a single card: any 10-value card (10/J/Q/K) is 10, an Ace is 11, others
+        /// their pip value. Used to decide a splittable pair — casino-standard "equal value" lets any two
+        /// 10-value cards (e.g. K+Q) split, while keeping rank pairs (7+7) and aces splittable.
+        /// </summary>
+        public static int SplitValue(Card c) =>
+            c.FaceVal == FaceValue.Ace ? 11 :
+            (c.FaceVal == FaceValue.Jack || c.FaceVal == FaceValue.Queen || c.FaceVal == FaceValue.King) ? 10 :
+            (int)c.FaceVal;
+
+        /// <summary>Whether two cards form a splittable pair (equal blackjack value).</summary>
+        public static bool CanSplitPair(Card a, Card b) => SplitValue(a) == SplitValue(b);
+
         public int Split(int handIndex = 0)
         {
             var handState = GetHand(handIndex);
@@ -181,8 +194,8 @@ namespace CardGames.Blackjack.CardGames.Blackjack
 
             var c1 = handState.Hand.Cards[0];
             var c2 = handState.Hand.Cards[1];
-            if (c1.FaceVal != c2.FaceVal)
-                throw new InvalidOperationException("Cards must be a pair to split.");
+            if (!CanSplitPair(c1, c2))
+                throw new InvalidOperationException("Cards must be a pair (equal value) to split.");
 
             // Funds enforced at the wallet boundary (server debits the second stake before this runs);
             // Balance is a display mirror, so no balance guard (a stale mirror must not strand a stake).
@@ -201,6 +214,15 @@ namespace CardGames.Blackjack.CardGames.Blackjack
             // Draw one card to each hand
             handState.Hand.Cards.Add(CurrentDeck.Draw());
             newHandState.Hand.Cards.Add(CurrentDeck.Draw());
+
+            // Split aces get exactly one card each and cannot be hit/doubled/re-split (standard rule). Lock
+            // both hands so the turn engine skips them and the action endpoints reject further play. A
+            // resulting 21 is an ordinary 21 (pays 1:1), not a natural — settlement already enforces that.
+            if (c1.FaceVal == FaceValue.Ace)
+            {
+                handState.Done = true;
+                newHandState.Done = true;
+            }
 
             Hands.Add(newHandState);
             return Hands.Count - 1;
@@ -251,6 +273,14 @@ namespace CardGames.Blackjack.CardGames.Blackjack
 
         [JsonInclude]
         public bool Done { get; set; }
+
+        /// <summary>
+        /// Wallet transaction id(s) of the stake debit(s) that funded THIS hand — the deal/split stake, with a
+        /// double-down debit appended (comma-separated) if doubled. Set by the table layer at debit time and
+        /// round-tripped through Redis so settle can record a per-hand audit trail. Null until a stake is taken.
+        /// </summary>
+        [JsonInclude]
+        public string StakeTxId { get; set; }
     }
 
     public class HitResult

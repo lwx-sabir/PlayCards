@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Khela.Game.Managers;
 using Khela.Game.Database;
@@ -26,7 +26,7 @@ namespace Khela.Game.Controllers
             this.tableManager = tableManager;
             this.db = db;
         }
-         
+
         [HttpPost("create")]
         public async Task<IActionResult> CreateTable([FromBody] CreateBlackjackTableRequest request)
         {
@@ -36,6 +36,12 @@ namespace Khela.Game.Controllers
                 request.Mode, request.MinBet, request.MaxBet);
             return Ok(new { table.TableId, table.MaxPlayers, table.MaxSeatsPerUser, request.Mode, request.MinBet, request.MaxBet });
         }
+
+        // ----------------------------------------------------------------------------------------------
+        // Every state-changing endpoint returns the SAME masked projection — BlackjackBoard.Build(table) —
+        // so the client has one board contract (BoardSnapshot) regardless of which action it sent, and can
+        // render immediately even if the SignalR push lags. The dealer hole card stays masked until reveal.
+        // ----------------------------------------------------------------------------------------------
 
         [HttpPost("{tableId}/join")]
         public async Task<IActionResult> JoinTable(string tableId, [FromBody] JoinTableRequest request)
@@ -47,20 +53,13 @@ namespace Khela.Game.Controllers
 
             try
             {
+                // Seat from the AUTHORITATIVE wallet — request.Balance is ignored by AddPlayerAsync.
                 var table = await tableManager.AddPlayerAsync(
                     tableId,
                     new Player(userId, request.Balance, request.Name, request.Image));
 
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    table.MaxPlayers,
-                    table.MaxSeatsPerUser,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -77,15 +76,7 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.RemovePlayerAsync(tableId, seatNumber, userId);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    table.MaxPlayers,
-                    table.MaxSeatsPerUser,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -105,13 +96,7 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.PlaceBetAsync(tableId, userId, request.SeatNumber, request.Amount, request.HandIndex);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -126,8 +111,6 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.DealAsync(tableId);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                // Unified masked board — the dealer hole card stays hidden until dealer reveal.
                 return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
@@ -146,15 +129,7 @@ namespace Khela.Game.Controllers
             {
                 var (table, result) = await tableManager.HitAsync(tableId, userId, seatNumber, handIndex);
                 if (table == null || result == null) return NotFound("Table not found or expired.");
-
-                var player = table.Game.Players.First(p => p.SeatNumber == seatNumber && p.Id == userId);
-
-                return Ok(new
-                {
-                    Player = player.Name,
-                    HandValue = player.GetHand(handIndex).Hand.GetSumOfHand(),
-                    Hit = result
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -172,16 +147,7 @@ namespace Khela.Game.Controllers
             {
                 var (table, result) = await tableManager.DoubleDownAsync(tableId, userId, seatNumber, handIndex);
                 if (table == null || result == null) return NotFound("Table not found or expired.");
-
-                var player = table.Game.Players.First(p => p.SeatNumber == seatNumber && p.Id == userId);
-
-                return Ok(new
-                {
-                    Player = player.Name,
-                    HandValue = player.GetHand(handIndex).Hand.GetSumOfHand(),
-                    Double = result,
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -201,13 +167,7 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.PlaceInsuranceAsync(tableId, userId, request.SeatNumber, request.Amount, request.HandIndex);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -225,13 +185,7 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.SplitAsync(tableId, userId, seatNumber, handIndex);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
@@ -249,20 +203,14 @@ namespace Khela.Game.Controllers
             {
                 var table = await tableManager.StandAsync(tableId, userId, seatNumber, handIndex);
                 if (table == null) return NotFound("Table not found or expired.");
-
-                return Ok(new
-                {
-                    table.TableId,
-                    Players = table.Game.Players.Select(ToPlayerDto),
-                    Seats = table.Seats.Select(ToSeatDto)
-                });
+                return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
             {
                 return BadRequest(new { message = ex.Message });
             }
         }
-         
+
         [HttpPost("{tableId}/dealerPlay")]
         public async Task<IActionResult> DealerPlay(string tableId)
         {
@@ -273,7 +221,7 @@ namespace Khela.Game.Controllers
                 var table = await tableManager.DealerPlayAndSettleAsync(tableId, userId);
                 if (table == null) return NotFound("Table not found or expired.");
 
-                // Unified board — round settled (dealer revealed); includes LastHandId for one-click verify.
+                // Round settled (dealer revealed); board includes LastHandId for one-click verify.
                 return Ok(BlackjackBoard.Build(table));
             }
             catch (Exception ex)
@@ -281,7 +229,7 @@ namespace Khela.Game.Controllers
                 return BadRequest(new { message = ex.Message });
             }
         }
-         
+
         [HttpGet("{tableId}/board")]
         public async Task<IActionResult> GetBoard(string tableId)
         {
@@ -321,38 +269,6 @@ namespace Khela.Game.Controllers
                 DeckOrder = shoe.Cards.Select(ProvableShuffle.Canonical)
             });
         }
-
-        // Face-down cards (the dealer hole card) are masked so a board snapshot never leaks the
-        // down card; the real value appears once it's flipped face-up at dealer play.
-        private static object MaskCard(Card c) => c.IsCardUp
-            ? new { FaceVal = (int)c.FaceVal, Suit = (int)c.Suit, c.IsCardUp }
-            : new { FaceVal = 0, Suit = 0, c.IsCardUp };
-
-        private static object ToPlayerDto(Player p) => new
-        {
-            p.Id,
-            p.Name,
-            p.Balance,
-            p.SeatNumber,
-            Hands = p.Hands.Select((h, idx) => new
-            {
-                HandIndex = idx,
-                h.Bet,
-                Insurance = h.InsuranceBet,
-                Cards = h.Hand.Cards.Select(c => new { c.FaceVal, c.Suit, c.IsCardUp }),
-                HandValue = h.Hand.GetSumOfHand()
-            }),
-            p.Wins,
-            p.Losses,
-            p.Push
-        };
-
-        private static object ToSeatDto(Seat s) => new
-        {
-            s.SeatNumber,
-            Occupied = s.Player != null,
-            Player = s.Player == null ? null : ToPlayerDto(s.Player)
-        };
 
         private string? GetUserId()
         {
