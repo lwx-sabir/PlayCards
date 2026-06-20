@@ -1,6 +1,6 @@
 # Khela World — Master Project Plan
 
-*Owner: Reza · Last updated: 2026-06-15*
+*Owner: Reza · Last updated: 2026-06-19*
 
 This is the full plan and reasoning for the game project. The terse, must-follow
 rules live in `/CLAUDE.md` (read automatically by Claude Code); this document is the
@@ -120,11 +120,12 @@ promises, lawyer review before any sale.
 
 ## 5. Architecture
 
-- `khela/PlayCards/Khela.Game` — ASP.NET Core .NET 8 backend: JWT + Identity, MySQL
+- `khela/Khela.Game/Khela.Game` — ASP.NET Core .NET 8 backend: JWT + Identity, MySQL
   (Pomelo EF Core), Redis, SignalR, REST API, Serilog.
-- `khela/PlayCards/Khela.Game/CradGames` — game-logic library (blackjack engine).
-- `khela/PlayCards/Khela.Common` — DTOs shared between backend and Unity client.
-- `khela/PlayCards/PlayCard` — Unity client (URP, fully 3D). Namespaces `PlayCard.*`.
+- `khela/Khela.Game/CradGames` — game-logic library (blackjack engine).
+- `khela/Khela.Common` — DTOs shared between backend and Unity client.
+- `khela/Khela.Play` — Unity client (URP, fully 3D). Namespaces `PlayCard.*`; assets under
+  `Assets/1Khela`. *(Layout flattened ~2026-06; the old `khela/PlayCards/*` nesting is gone.)*
 
 ### Networking
 - **Actions** (bet/hit/stand/deal/double/split) → **REST** (`BlackjackController`).
@@ -148,25 +149,36 @@ promises, lawyer review before any sale.
 
 ## 6. Current state & next steps
 
-**Done:** blackjack engine (hit/stand/double/split/insurance, dealer logic, settlement),
-SignalR push, JWT + device auth, Redis table state, hand-history audit tables, and the
-**`WalletService` ledger** (idempotent debit/credit, FOR UPDATE locking, wagerable guard,
-signed-delta amounts, `RowVersion` drift fixed to `DateTime?`).
+*Updated 2026-06-19. The money path was DB-audited sound — see `docs/DB_AUDIT_2026-06-19.md`.*
+
+**Done (server, live + DB-audited):** blackjack engine (hit/stand/double/split/insurance, dealer
+logic, **3:2 naturals**, casino-standard split — any two 10-value cards split, split aces get one
+card), SignalR push, JWT + device auth, Redis table state, hand-history audit. The **wallet is
+wired end-to-end**: `WalletService` (idempotent debit/credit, `SELECT…FOR UPDATE`, wagerable guard,
+signed-delta, `RowVersion` as `DateTime?`) now drives **debit-on-bet + credit-gross-on-settle**;
+players are **seated from their real wallet**; a **`BlackjackRoundDriver`** (2s tick) auto-stands
+expired turns + auto-settles. Per-hand settle audit (`GameHandParticipant.HandIndex`), move-by-move
+`GameHandActions`, and the provably-fair shuffle persist. Phase-1 **leaderboards, profiles, and
+social/gifts/chat/presence** are also built.
+
+**Done (client):** the blackjack vertical slice is **assembled + playable** — Boot → Home
+(config-driven carousel) → Lobby (table browser) → Table, with device-guest auth, REST action
+channel + SignalR/polling transport, server-authoritative card rendering, action bar, result
+banner, and balance HUD.
 
 **Next (Phase 0 → revenue), in order:**
-1. **Wire `WalletService` into bet/settle** — debit coins on `Deal`, credit on settlement;
-   record `WalletDebitTxId`/`WalletCreditTxId` on `GameHandParticipant`. (Wallet calls live
-   at the controller/hub boundary since `BlackjackTableManager` is a singleton and the
-   `WalletService`/DbContext is scoped.)
-2. **IAP purchase flow** — `StoreController` + server-side Apple/Google receipt validation
-   → credit Chips via `WalletTransaction`. This is the literal "take money" step.
-3. **Seat players from their real wallet balance** (not a client-supplied value).
-4. **Unity client** — Best SignalR `BlackjackHubClient` (against `IBlackjackHubClient`),
-   card renderer, play loop, buy-coins screen.
+1. **IAP purchase flow** — `StoreController` + server-side Apple/Google receipt validation →
+   credit Chips via `WalletTransaction`. This is the literal "take money" step and the remaining
+   Phase-0 gate.
+2. **Client gameplay polish** — seat-pick (clickable seats + join-by-seat: add `int? SeatNumber`
+   to `JoinTableRequest`), split-hand UI, bet validation, card dealing animations, dealer + avatar
+   models, mobile-readable card faces; swap polling → Best SignalR for WebGL.
+3. **Ship blackjack** to a small Bengali/South-Asian audience; measure retention + whether
+   strangers pay. That gate decides everything after it.
 
-**Smaller fixes:** natural blackjack should pay 3:2; remove the doubled
-`namespace CardGames.Blackjack` in `BlackjackGame.cs`; add a server-side balance check in
-`PlaceBet`.
+**Smaller fixes:** remove the doubled `namespace CardGames.Blackjack` in `BlackjackGame.cs`; wire
+`GameHandSnapshot` persistence (deal/settle board JSON+hash — schema exists, unwired); add a
+`PrevHandHash` chain for tamper-evident round linking.
 
 ---
 
@@ -193,6 +205,18 @@ signed-delta amounts, `RowVersion` drift fixed to `DateTime?`).
   into `Packages/`. **Use it as a renderer only** — never its local deck/shuffle. Map the
   server's `FaceValue`/`Suit` enums to the pack's `value`/`Suit` (it has `suitToInt()`);
   ideally promote those enums to `Khela.Common` so both sides share one definition.
+- **Asset delivery — Addressables, grouped per game/feature.** Structure all heavy assets
+  (3D models, textures, avatar/wardrobe content, table skins, each game's art) as **Unity
+  Addressables** groups — one per game/feature — so the app ships small and content streams at
+  runtime. A **boot/loader scene** downloads required content with a progress bar; optional
+  content (other games, cosmetics, avatar packs) loads **on demand** when the player opens it,
+  mapping directly onto the `GameDefinition`/`GameCatalog` system. **Phase 0:** keep content
+  **local / in-build** (no CDN yet). **Before launch:** flip the same groups to **remote
+  delivery** via a CDN (Unity CCD / S3+CloudFront / Cloudflare R2), plus **Google Play Asset
+  Delivery** on Android (to clear the ~200 MB base-AAB limit) and a CDN (or On-Demand
+  Resources) on iOS. The remote catalog lets you push new *assets* without an app-store update
+  (assets/data only — never executable code). **Group as Addressables now even while local** —
+  retrofitting an asset-heavy project later is painful. Budget for CDN bandwidth at scale.
 
 ---
 
@@ -257,17 +281,17 @@ PokerBaazi, RummyCircle, Junglee) — don't name anything "Adda" or "Baazi."
 
 ---
 
-## 11. Repo & workflow hygiene (fix soon)
+## 11. Repo & workflow hygiene
 
-- **Two trees are diverged.** All recent backend/Unity work (incl. `WalletService`) is in
-  the `main` working tree and **uncommitted**; the Claude Code agent's worktree
-  (`claude/reverent-davinci-7b2dc0`) is on an older commit **without it** and is flagged
-  `prunable`. Pick one source of truth and reconcile (commit `main`, then rebase/merge the
-  worktree) before the agent re-implements the ledger from scratch.
-- **Build artifacts are tracked** (`bin/`, `obj/`, Unity `Library/`, `*.deps.json`). Fix
-  `.gitignore` and untrack them.
-- **Commit meaningful units** — nothing is committed; the work is at risk.
-- Commit `CLAUDE.md` so every worktree inherits the rules.
+- **Resolved (2026-06-19):** backend + Unity work is **committed on `main`** in meaningful units
+  (recent: `table`, `home`, `social-chat`, the unity client, leaderboards/social schema). Build
+  artifacts (`bin/`, `obj/`, Unity `Library/`) are **gitignored** (0 tracked). The old
+  `khela/PlayCards/*` nesting has been flattened to `khela/Khela.Game` + `khela/Khela.Play` +
+  `khela/Khela.Common`.
+- **Still loose:** the root `CLAUDE.md`/`AGENTS.md` are now synced to current; the agent-worktree
+  copy of `CLAUDE.md` is untracked — commit it on `main` so every worktree inherits the rules.
+  Agent sessions run in throwaway worktrees, but the buildable code is the **main checkout** — do
+  backend/Unity file work there, with absolute `D:\Projects\PlayCards\khela\...` paths.
 
 ---
 
@@ -285,9 +309,11 @@ PokerBaazi, RummyCircle, Junglee) — don't name anything "Adda" or "Baazi."
 
 ## 13. Immediate next steps
 
-1. Reconcile the git trees onto one branch; fix `.gitignore`; commit current work.
-2. Wire `WalletService` into bet/settle (debit on deal, credit on settle, idempotent).
-3. Build the IAP purchase flow + receipt validation → credit coins.
-4. Finish Unity: Best SignalR client + card renderer + buy-coins + play loop.
-5. Ship blackjack to a small Bengali/South-Asian audience; measure retention + whether
-   strangers pay. That gate decides everything after it.
+1. ✅ Done — git trees reconciled + `.gitignore` fixed + work committed; `WalletService` wired into
+   bet/settle (debit-on-bet + credit-on-settle, idempotent); the blackjack vertical slice is playable.
+2. **Build the IAP purchase flow + Apple/Google receipt validation → credit Chips** — the remaining
+   Phase-0 gate (the "take money" step).
+3. Client gameplay polish: seat-pick, split UI, bet validation, dealing animations, dealer/avatars;
+   swap polling → Best SignalR for WebGL.
+4. Ship blackjack to a small Bengali/South-Asian audience; measure retention + whether strangers
+   pay. That gate decides everything after it.

@@ -54,9 +54,11 @@ namespace Khela.Game.Controllers
             try
             {
                 // Seat from the AUTHORITATIVE wallet — request.Balance is ignored by AddPlayerAsync.
+                // request.SeatNumber (nullable) lets the client pick a seat; null = auto-assign first open.
                 var table = await tableManager.AddPlayerAsync(
                     tableId,
-                    new Player(userId, request.Balance, request.Name, request.Image));
+                    new Player(userId, request.Balance, request.Name, request.Image),
+                    request.SeatNumber);
 
                 if (table == null) return NotFound("Table not found or expired.");
                 return Ok(BlackjackBoard.Build(table));
@@ -166,6 +168,26 @@ namespace Khela.Game.Controllers
             try
             {
                 var table = await tableManager.PlaceInsuranceAsync(tableId, userId, request.SeatNumber, request.Amount, request.HandIndex);
+                if (table == null) return NotFound("Table not found or expired.");
+                return Ok(BlackjackBoard.Build(table));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>Decline insurance during the insurance phase (the NO button). No money moves; it just
+        /// marks the player decided so the window can close early once everyone has decided.</summary>
+        [HttpPost("{tableId}/insurance/decline/{seatNumber:int}")]
+        public async Task<IActionResult> DeclineInsurance(string tableId, int seatNumber)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+
+            try
+            {
+                var table = await tableManager.DeclineInsuranceAsync(tableId, userId, seatNumber);
                 if (table == null) return NotFound("Table not found or expired.");
                 return Ok(BlackjackBoard.Build(table));
             }

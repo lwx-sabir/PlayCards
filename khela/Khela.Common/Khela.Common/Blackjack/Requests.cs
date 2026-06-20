@@ -16,6 +16,9 @@
         public decimal Balance { get; set; }
 
         public string Image { get; set; } = string.Empty;
+
+        /// <summary>Seat the player wants (1-based). Null = let the server assign the first open seat.</summary>
+        public int? SeatNumber { get; set; }
     }
 
     public class PlaceBetRequest

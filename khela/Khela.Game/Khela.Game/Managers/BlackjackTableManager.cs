@@ -14,8 +14,10 @@ using Khela.Game.Database.Models;
 using Khela.Game.Managers.SRHubs;
 using Khela.Game.Services.Wallet;
 using Khela.Game.Services.Stats;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
@@ -31,16 +33,23 @@ namespace Khela.Game.Managers
         private readonly IHubContext<BlackjackHub> hubContext;
         private readonly ILogger<BlackjackTableManager> logger;
         private readonly int turnDurationSeconds;
+        private readonly int insuranceDurationSeconds;
+        private readonly IConfiguration config;
+        private readonly IWebHostEnvironment env;
         private const int DefaultMaxPlayers = 5;
 
         public BlackjackTableManager(IRedisService redisService, IServiceScopeFactory scopeFactory,
-            IHubContext<BlackjackHub> hubContext, ILogger<BlackjackTableManager> logger, IConfiguration config)
+            IHubContext<BlackjackHub> hubContext, ILogger<BlackjackTableManager> logger, IConfiguration config,
+            IWebHostEnvironment env)
         {
             this.redisService = redisService;
             this.scopeFactory = scopeFactory;
             this.hubContext = hubContext;
             this.logger = logger;
+            this.config = config;
+            this.env = env;
             this.turnDurationSeconds = config.GetValue("Blackjack:TurnSeconds", 30);
+            this.insuranceDurationSeconds = config.GetValue("Blackjack:InsuranceSeconds", 12);
         }
 
         // ---- Wallet integration (this manager is a singleton; resolve the scoped wallet per op) ----
@@ -425,7 +434,7 @@ namespace Khela.Game.Managers
             };
         }
 
-        public async Task<BlackjackTable?> AddPlayerAsync(string tableId, Player player)
+        public async Task<BlackjackTable?> AddPlayerAsync(string tableId, Player player, int? requestedSeat = null)
         {
             await using var _tableLock = await LockTableAsync(tableId);
 
@@ -436,9 +445,22 @@ namespace Khela.Game.Managers
             if (existingSeatsForUser >= table.MaxSeatsPerUser)
                 throw new InvalidOperationException("Player has reached max seats at this table.");
 
-            var openSeat = table.Seats.FirstOrDefault(s => s.Player == null);
-            if (openSeat == null)
-                throw new InvalidOperationException("Table is full.");
+            // Seat-pick: honor a specific requested seat if free; otherwise auto-assign the first open seat.
+            Seat openSeat;
+            if (requestedSeat.HasValue)
+            {
+                openSeat = table.Seats.FirstOrDefault(s => s.SeatNumber == requestedSeat.Value);
+                if (openSeat == null)
+                    throw new InvalidOperationException($"Seat {requestedSeat.Value} does not exist at this table.");
+                if (openSeat.Player != null)
+                    throw new InvalidOperationException($"Seat {requestedSeat.Value} is already taken.");
+            }
+            else
+            {
+                openSeat = table.Seats.FirstOrDefault(s => s.Player == null);
+                if (openSeat == null)
+                    throw new InvalidOperationException("Table is full.");
+            }
 
             // Seat from the AUTHORITATIVE wallet balance — never trust a client-supplied balance.
             var chips = await GetWalletChipsAsync(player.Id);
@@ -590,6 +612,7 @@ namespace Khela.Game.Managers
             try
             {
                 table.Game.DealNewGame(roundSeed, 6);
+                ApplyDevDealerRig(table);   // DEV one-shot: force dealer cards for insurance testing (no-op unless armed)
                 table.CurrentDeckHash = deckHash;
                 table.RoundStartedAt = DateTimeOffset.UtcNow;
 
@@ -611,7 +634,7 @@ namespace Khela.Game.Managers
                 }
 
                 MarkNaturals(table);
-                SetInitialTurn(table);
+                BeginPlayOrInsurance(table);
                 table.RoundInProgress = true;
                 await SaveTableAsync(tableId, table);
             }
@@ -711,15 +734,21 @@ namespace Khela.Game.Managers
             if (!table.RoundInProgress)
                 throw new InvalidOperationException("Round not in progress.");
 
-            EnsureTurn(table, seatNumber, handIndex);
-
             var seat = table.Seats.FirstOrDefault(s => s.SeatNumber == seatNumber);
             if (seat == null || seat.Player == null || seat.Player.Id != userId)
                 throw new InvalidOperationException("Seat not occupied by this player.");
 
             var player = seat.Player;
+            if (!player.InRound) throw new InvalidOperationException("You are not in this round.");
+            if (!table.InsuranceExpiresAt.HasValue) throw new InvalidOperationException("The insurance window has closed.");
+
             var insHand = player.GetHand(handIndex);
             if (insHand.InsuranceBet > 0) throw new InvalidOperationException("Insurance already placed.");
+            // Insurance is a PRE-PLAY decision offered to EVERY dealt player the moment the dealer shows an Ace
+            // — it is NOT turn-gated (multiplayer: all players decide before play). Allowed only while the hand
+            // is untouched: still its two dealt cards and not yet acted.
+            if (insHand.Hand.Cards.Count != 2 || insHand.Done)
+                throw new InvalidOperationException("Insurance is only available before you act, on your first two cards.");
 
             var upCard = table.Game.Dealer.Hand.Cards.FirstOrDefault(c => c.IsCardUp);
             if (upCard == null || upCard.FaceVal != CardGames.Platforms.FaceValue.Ace)
@@ -733,8 +762,35 @@ namespace Khela.Game.Managers
             var (_, insWalletAfter) = await DebitStakeAsync(player.Id, amount, table.TableId, table.CurrentRoundId ?? "", seatNumber, $"ins{handIndex}");
             player.PlaceInsurance(amount, handIndex);
             player.SetBalance(insWalletAfter);
+            player.InsuranceDecided = true;
             LogAction(table, HandActionType.Insurance, seatNumber, userId, amount: amount);
-            RefreshTurn(table);
+            // Insurance neither consumes nor advances a turn, and a non-current player must NOT reset the
+            // active player's turn timer — so the turn state is intentionally left untouched here. Close the
+            // insurance phase early if this was the last undecided player → play starts immediately.
+            MaybeCloseInsurance(table);
+            await SaveTableAsync(tableId, table);
+            return table;
+        }
+
+        /// <summary>
+        /// Records that a player declines insurance during the insurance phase (the NO button). No money moves;
+        /// it just marks them decided so the phase can close early once everyone has decided. No-op if the
+        /// window isn't open.
+        /// </summary>
+        public async Task<BlackjackTable?> DeclineInsuranceAsync(string tableId, string userId, int seatNumber)
+        {
+            await using var _tableLock = await LockTableAsync(tableId);
+
+            var table = await GetTableAsync(tableId);
+            if (table == null) return null;
+            if (!table.RoundInProgress || !table.InsuranceExpiresAt.HasValue) return table; // window closed → no-op
+
+            var seat = table.Seats.FirstOrDefault(s => s.SeatNumber == seatNumber);
+            if (seat == null || seat.Player == null || seat.Player.Id != userId)
+                throw new InvalidOperationException("Seat not occupied by this player.");
+
+            seat.Player.InsuranceDecided = true;
+            MaybeCloseInsurance(table);   // if that was the last undecided player, start play now
             await SaveTableAsync(tableId, table);
             return table;
         }
@@ -794,6 +850,9 @@ namespace Khela.Game.Managers
 
             if (!table.RoundInProgress)
                 throw new InvalidOperationException("Round not in progress.");
+
+            if (table.InsuranceExpiresAt.HasValue)
+                throw new InvalidOperationException("Insurance is still open; the round isn't ready to settle.");
 
             // Only a seated player may trigger settle — no unseated user can force-settle/grief a table.
             if (!table.Seats.Any(s => s.Player != null && s.Player.Id == userId))
@@ -876,12 +935,21 @@ namespace Khela.Game.Managers
                         ? ps
                         : (Wagered: 0m, FinalValue: 0, Bust: false, Blackjack: false);
 
-                    // Stakes already left the wallet at deal/action, so settle only RETURNS money: credit the
-                    // GROSS the settlement added to the mirror (gross = post-settle balance - pre-settle).
+                    // RULE-DERIVED payout is the payer: sum each hand's GrossReturn from the explicit rule
+                    // table (BlackjackSettlement). The engine mirror delta is only a tripwire — if the two
+                    // disagree, settlement math has drifted (a future AddWin/multiplier bug, a side bet); we
+                    // flag it loudly and still credit the rule value.
+                    var seatHands = settledBySeat.TryGetValue(player.SeatNumber, out var shs)
+                        ? shs : new List<HandSettlement>();
                     var preSettleBal = preSettleBalance.TryGetValue(player.SeatNumber, out var pb) ? pb : player.Balance;
-                    var gross = player.Balance - preSettleBal;
-                    if (gross < 0m) gross = 0m;        // defensive — settlement never reduces the mirror
-                    var net = player.Balance - start;  // true round net (gross minus everything staked)
+                    var computed = seatHands.Sum(h => h.GrossReturn);   // rule-derived gross (the credit)
+                    var mirrorDelta = player.Balance - preSettleBal;    // engine mirror delta (the tripwire)
+                    var (gross, payoutMismatch) = BlackjackSettlement.ReconcilePayout(computed, mirrorDelta);
+                    if (payoutMismatch)
+                        logger.LogError("Settle payout MISMATCH table {TableId} round {RoundId} seat {Seat}: rule-computed {Computed} != engine-mirror {Mirror}. Crediting the rule value.",
+                            table.TableId, roundId, player.SeatNumber, computed, mirrorDelta);
+                    var totalStaked = start - preSettleBal;             // everything debited this round (seat)
+                    var net = gross - totalStaked;                      // true round net (gross minus staked)
 
                     // Capture this seat's result for the board's banner — decided by the settle math, so
                     // it's recorded whether or not the wallet credit below succeeds.
@@ -910,11 +978,9 @@ namespace Khela.Game.Managers
                         }
                         player.SetBalance(newBalance);
 
-                        // One audit row PER HAND (a split yields two): each hand's own stake, outcome, payout,
-                        // and funding-debit tx id. The payout credit is a single seat-level :pay transaction, so
-                        // its tx id and the BalanceBefore/After audit are recorded once, on the first hand's row.
-                        var seatHands = settledBySeat.TryGetValue(player.SeatNumber, out var shs)
-                            ? shs : new List<HandSettlement>();
+                        // One audit row PER HAND (a split yields two): each hand's own stake, rule-derived
+                        // payout, and funding-debit tx id. The payout credit is a single seat-level :pay
+                        // transaction, so its tx id + the BalanceBefore/After audit are recorded once, on hand 0.
                         for (int hi = 0; hi < seatHands.Count; hi++)
                         {
                             var h = seatHands[hi];
@@ -923,19 +989,36 @@ namespace Khela.Game.Managers
                                 UserId = uid,
                                 SeatNumber = player.SeatNumber,
                                 HandIndex = h.HandIndex,
-                                Bet = h.Bet,
-                                InsuranceBet = h.InsuranceBet,
-                                Payout = h.Payout,                                  // gross returned for THIS hand
+                                Bet = h.Stake,
+                                InsuranceBet = h.InsuranceStake,
+                                Payout = h.GrossReturn,                             // rule-derived gross for THIS hand
                                 FinalHandValue = h.FinalValue,
                                 Bust = h.Bust,
                                 Blackjack = h.Blackjack,
-                                Outcome = h.Outcome,
+                                Outcome = h.OutcomeCode,
                                 WalletDebitTxId = player.GetHand(h.HandIndex).StakeTxId,
                                 WalletCreditTxId = hi == 0 && gross > 0m ? txId : null,  // credit is seat-level (:pay)
                                 BalanceBefore = hi == 0 ? start : (decimal?)null,
                                 BalanceAfter = hi == 0 ? newBalance : (decimal?)null
                             });
                         }
+
+                        // Tripwire row: the rule-derived payout disagreed with the engine mirror. Money is
+                        // correct (we credited the rule value); record a scannable settle_mismatch marker
+                        // (HandIndex -1, Payout 0 so Σ Payout stays reconcilable) for ops/reconciliation.
+                        if (payoutMismatch)
+                            participants.Add(new GameHandParticipant
+                            {
+                                UserId = uid,
+                                SeatNumber = player.SeatNumber,
+                                HandIndex = -1,
+                                Outcome = "settle_mismatch",
+                                Bet = 0m,
+                                Payout = 0m,
+                                BalanceBefore = start,
+                                BalanceAfter = newBalance,
+                                MetadataJson = JsonSerializer.Serialize(new { roundId, seat = player.SeatNumber, computed, mirrorDelta })
+                            });
                         statResults.Add(new RoundResult(uid, pre.Wagered, net));
                     }
                     catch (Exception ex)
@@ -953,7 +1036,9 @@ namespace Khela.Game.Managers
                             {
                                 UserId = uid,
                                 SeatNumber = player.SeatNumber,
+                                HandIndex = -2,                                   // aggregate marker (defensive path: no per-hand settlements), distinct from real hands (≥0) and the mismatch marker (-1)
                                 Bet = pre.Wagered,
+                                Payout = gross,                                   // owed gross, persisted so the sweeper can heal it
                                 FinalHandValue = pre.FinalValue,
                                 Bust = pre.Bust,
                                 Blackjack = pre.Blackjack,
@@ -971,8 +1056,9 @@ namespace Khela.Game.Managers
                                     UserId = uid,
                                     SeatNumber = player.SeatNumber,
                                     HandIndex = h.HandIndex,
-                                    Bet = h.Bet,
-                                    InsuranceBet = h.InsuranceBet,
+                                    Bet = h.Stake,
+                                    InsuranceBet = h.InsuranceStake,
+                                    Payout = h.GrossReturn,                       // owed gross, persisted so the sweeper can heal it
                                     FinalHandValue = h.FinalValue,
                                     Bust = h.Bust,
                                     Blackjack = h.Blackjack,
@@ -1055,6 +1141,24 @@ namespace Khela.Game.Managers
             var table = await GetTableAsync(tableId);       // authoritative re-read under the lock
             if (table == null || !table.RoundInProgress) return;
 
+            // INSURANCE phase: hold play (and settlement) until its own timer expires or everyone has decided,
+            // THEN start play. This MUST return before the settle-on-(-1) logic below, or the driver would
+            // settle the round during the insurance window (CurrentSeatNumber is -1 here too).
+            if (table.InsuranceExpiresAt.HasValue)
+            {
+                if (DateTimeOffset.UtcNow >= table.InsuranceExpiresAt.Value || AllInsuranceDecided(table))
+                {
+                    CloseInsurancePhase(table);   // dealer peek inside: -1 (settle) on dealer BJ, else first turn
+                    if (table.CurrentSeatNumber == -1)
+                    {
+                        await SettleInternalAsync(table, tableId);  // dealer blackjack → settle now, no player turns
+                        return;
+                    }
+                    await SaveTableAsync(tableId, table);
+                }
+                return;
+            }
+
             var changed = false;
 
             // Auto-stand a player whose turn timer expired, then advance to the next hand.
@@ -1080,6 +1184,22 @@ namespace Khela.Game.Managers
         {
             var ids = await redisService.GetDatabase().SetMembersAsync(LobbyIndexKey);
             return ids.Select(v => v.ToString()).ToList();
+        }
+
+        // DEV ONLY — when Blackjack:DevRigDealer is on (and we're in Development), rig EVERY deal so insurance
+        // is testable without re-arming: the dealer's up card is ALWAYS an Ace (insurance always offered), and
+        // the hole card cycles in blocks of 3 — 3 deals as a blackjack (Ace+King → insurance WINS), then 3 as a
+        // non-blackjack (Ace+Six → insurance LOSES), repeating. Flip the flag off to stop. Breaks
+        // provable-fairness for rigged hands; never enabled in prod (default false + Development-gated).
+        private void ApplyDevDealerRig(BlackjackTable table)
+        {
+            if (!env.IsDevelopment() || !config.GetValue("Blackjack:DevRigDealer", false)) return;
+
+            var cards = table.Game.Dealer.Hand.Cards;
+            if (cards.Count < 2) return;
+            cards[0] = new Card(Suit.Hearts, FaceValue.Ace, true);          // up = Ace → insurance always offered
+            bool blackjackBlock = ((table.RoundNonce - 1) / 3) % 2 == 0;    // 3 blackjacks, then 3 non-blackjacks
+            cards[1] = new Card(Suit.Spades, blackjackBlock ? FaceValue.King : FaceValue.Six, false);
         }
 
         private static void MarkNaturals(BlackjackTable table)
@@ -1136,6 +1256,74 @@ namespace Khela.Game.Managers
                     seat.Player = player;
                 }
             }
+        }
+
+        // After the deal: if the dealer shows an Ace and at least one player can still insure, open the
+        // INSURANCE phase (its OWN timer, no play turn yet). Otherwise start play immediately. Insurance
+        // decisions reset here so the early-close check is per-round.
+        private void BeginPlayOrInsurance(BlackjackTable table)
+        {
+            foreach (var p in table.Game.Players) p.InsuranceDecided = false;
+
+            bool dealerAce = table.Game.Dealer.Hand.Cards.Any(c => c.IsCardUp && c.FaceVal == CardGames.Platforms.FaceValue.Ace);
+            if (dealerAce && AnyInsuranceEligible(table))
+            {
+                table.InsuranceExpiresAt = DateTimeOffset.UtcNow.AddSeconds(insuranceDurationSeconds);
+                table.CurrentSeatNumber = -1;   // no play turn during the insurance phase
+                table.CurrentHandIndex = 0;
+                table.TurnExpiresAt = null;
+            }
+            else
+            {
+                table.InsuranceExpiresAt = null;
+                StartPlayOrPeek(table);   // no insurance window → dealer peek for blackjack, else start play
+            }
+        }
+
+        // A player who may still take insurance: in-round, main hand untouched (its 2 dealt cards, not done).
+        private static bool InsuranceEligible(Player p)
+            => p.InRound && p.Hands.Count > 0 && p.Hands[0].Hand.Cards.Count == 2 && !p.Hands[0].Done;
+
+        private static bool AnyInsuranceEligible(BlackjackTable table) => table.Game.Players.Any(InsuranceEligible);
+
+        // Every eligible player has insured or declined (an empty eligible set counts as decided).
+        private static bool AllInsuranceDecided(BlackjackTable table)
+            => table.Game.Players.Where(InsuranceEligible).All(p => p.InsuranceDecided);
+
+        private static void CloseInsurancePhase(BlackjackTable table)
+        {
+            table.InsuranceExpiresAt = null;
+            StartPlayOrPeek(table);   // dealer peek: settle on dealer blackjack, else start play
+        }
+
+        // Dealer "peek": if the dealer has a blackjack the round is already decided (insurance pays, everyone
+        // else loses) — skip player turns by leaving CurrentSeatNumber = -1 so settlement runs immediately.
+        // Otherwise start the first player's turn.
+        private static void StartPlayOrPeek(BlackjackTable table)
+        {
+            if (DealerHasBlackjack(table))
+            {
+                table.CurrentSeatNumber = -1;
+                table.CurrentHandIndex = 0;
+                table.TurnExpiresAt = null;
+            }
+            else
+            {
+                SetInitialTurn(table);
+            }
+        }
+
+        private static bool DealerHasBlackjack(BlackjackTable table)
+        {
+            var cards = table.Game.Dealer.Hand.Cards;
+            return cards.Count == 2 && table.Game.Dealer.Hand.GetSumOfHand() == 21;
+        }
+
+        // Close the insurance phase early once every eligible player has decided.
+        private static void MaybeCloseInsurance(BlackjackTable table)
+        {
+            if (table.InsuranceExpiresAt.HasValue && AllInsuranceDecided(table))
+                CloseInsurancePhase(table);
         }
 
         private static void SetInitialTurn(BlackjackTable table)
@@ -1278,6 +1466,11 @@ namespace Khela.Game.Managers
         public int CurrentHandIndex { get; set; } = 0;
 
         public DateTimeOffset? TurnExpiresAt { get; set; }
+
+        /// <summary>While set, the round is in its INSURANCE phase: cards are dealt, the dealer shows an Ace,
+        /// and every dealt player may insure until this expires (or all decide). No play turn runs until it
+        /// closes — the round-driver holds settlement during this window.</summary>
+        public DateTimeOffset? InsuranceExpiresAt { get; set; }
 
         // Current round (deal -> settle). RoundStartBalance maps seat -> wallet chips captured at
         // deal, used to reconcile the round's net result to the wallet at settle.

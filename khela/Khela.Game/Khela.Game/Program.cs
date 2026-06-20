@@ -151,7 +151,9 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddHostedService<BlackjackRoundDriver>();   // server round-driver: auto-stand on timeout + auto-settle
-builder.Services.AddSingleton<IRedisService , RedisService>(); 
+builder.Services.AddSingleton<SettlementReconciliationService>();      // one shared instance...
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconciliationService>());  // ...run as the hosted sweeper (no-op unless Reconciliation:Enabled) AND injectable for the on-demand debug endpoint
+builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();

@@ -21,6 +21,10 @@ namespace PlayCard.Game.Dtos
         public int MaxSeatsPerUser { get; set; }
         public bool RoundInProgress { get; set; }
 
+        /// <summary>Table stake bounds — for client-side bet validation (the server re-validates).</summary>
+        public decimal MinBet { get; set; }
+        public decimal MaxBet { get; set; }
+
         /// <summary>Seat whose turn it is (server seat number), or -1 when nobody is to act.</summary>
         public int CurrentSeatNumber { get; set; } = -1;
 
@@ -29,6 +33,9 @@ namespace PlayCard.Game.Dtos
 
         /// <summary>When the current turn auto-expires (UTC), or null when no turn is active.</summary>
         public DateTimeOffset? TurnExpiresAt { get; set; }
+
+        /// <summary>While set, the round is in its INSURANCE phase (its own countdown); play hasn't started.</summary>
+        public DateTimeOffset? InsuranceExpiresAt { get; set; }
 
         /// <summary>Id of the most recently settled hand — feeds GET /api/Blackjack/verify/{handId}.</summary>
         public string LastHandId { get; set; }
@@ -87,6 +94,8 @@ namespace PlayCard.Game.Dtos
         public int HandIndex { get; set; }
         public decimal Bet { get; set; }
         public decimal Insurance { get; set; }
+        /// <summary>Hand has finished acting (stood/bust/double/split-aces) — used to close the insurance window.</summary>
+        public bool Done { get; set; }
         public List<CardView> Cards { get; set; } = new List<CardView>();
         public int HandValue { get; set; }
     }

@@ -2,6 +2,13 @@
 
 *Last updated: 2026-06-09*
 
+> **⚠️ SUPERSEDED (2026-06-19).** This is an earlier draft. The current authoritative strategy doc
+> is **`docs/PROJECT_PLAN.md`** (updated 2026-06-19); the terse must-follow rules live in
+> **`/CLAUDE.md`**. The strategy below is still directionally correct, but its **§0 "Current state"
+> is stale** — the wallet is now wired into gameplay (debit-on-bet), naturals pay 3:2, the blackjack
+> vertical slice is playable, and the layout is `khela/Khela.Game` + `khela/Khela.Play` (not
+> `khela/PlayCards/*`). Kept for history; do not use for current status.
+
 > **The product:** a free-to-play social casino game (blackjack, poker, roulette
 > vs. AI / other players) using non-cashable in-game chips. Real money comes from
 > in-app purchases. A **separate, tradeable token** captures a slice of that

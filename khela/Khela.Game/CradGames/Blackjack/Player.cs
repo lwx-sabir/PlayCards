@@ -38,6 +38,11 @@ namespace CardGames.Blackjack.CardGames.Blackjack
         [JsonInclude]
         public bool InRound { get; set; }
 
+        // True once this player has insured OR declined during the insurance phase — lets the table close the
+        // insurance window early when everyone eligible has decided. Reset each deal.
+        [JsonInclude]
+        public bool InsuranceDecided { get; set; }
+
         public string Image { get; private set; } = string.Empty;
         public string Name { get; private set; } = string.Empty;
 

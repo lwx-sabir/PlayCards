@@ -56,5 +56,12 @@ namespace Khela.Game.Database.Models
         public decimal? BalanceAfter { get; set; }
 
         public string MetadataJson { get; set; }
+
+        /// <summary>
+        /// True once the reconciliation sweeper (Part B) has healed a stranded row — a <c>settle_failed</c>
+        /// (credit re-applied / stake refunded) entry. Normal settled rows stay false; the sweeper scans for
+        /// unresolved problem rows. <c>settle_mismatch</c> rows are left for human/ops review (already paid).
+        /// </summary>
+        public bool Resolved { get; set; }
     }
 }

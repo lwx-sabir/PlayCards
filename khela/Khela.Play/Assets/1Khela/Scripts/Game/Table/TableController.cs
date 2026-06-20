@@ -32,6 +32,8 @@ namespace PlayCard.Game.Table
         [SerializeField] private string debugTableId;
         [Tooltip("When testing standalone (no lobby), auto-take a seat so the table is playable.")]
         [SerializeField] private bool debugAutoJoin = true;
+        [Tooltip("Standalone testing: which seat to auto-take (1-based) to test per-seat cameras. 0 = first open seat.")]
+        [SerializeField] private int debugSeat = 0;
 
         /// <summary>Latest board, after caching. UI gates buttons off this.</summary>
         public event Action<BoardSnapshot> OnBoardChanged;
@@ -76,7 +78,7 @@ namespace PlayCard.Game.Table
             {
                 // Standalone dev path (no lobby): take a seat ourselves so the table is playable.
                 if (!fromLobby && debugAutoJoin)
-                    await Rest.JoinAsync(TableId, "Player");
+                    await Rest.JoinAsync(TableId, "Player", "", debugSeat > 0 ? debugSeat : (int?)null);
 
                 await _hub.ConnectAsync();
                 await _hub.JoinTableAsync(TableId);
@@ -138,7 +140,8 @@ namespace PlayCard.Game.Table
         public Task Stand()                     => Do(Rest.StandAsync(TableId, MySeat, CurrentHand));
         public Task DoubleDown()                => Do(Rest.DoubleAsync(TableId, MySeat, CurrentHand));
         public Task Split()                     => Do(Rest.SplitAsync(TableId, MySeat, CurrentHand));
-        public Task Insurance(decimal amount)   => Do(Rest.InsuranceAsync(TableId, MySeat, amount, CurrentHand));
+        public Task Insurance(decimal amount)   => Do(Rest.InsuranceAsync(TableId, MySeat, amount, 0)); // insurance is on the main hand (pre-split), and may be placed off-turn
+        public Task DeclineInsurance()          => Do(Rest.DeclineInsuranceAsync(TableId, MySeat));
         public Task DealerPlay()                => Do(Rest.DealerPlayAsync(TableId));
 
         public async Task Leave()

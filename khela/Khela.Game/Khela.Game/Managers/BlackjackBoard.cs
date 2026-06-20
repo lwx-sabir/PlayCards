@@ -17,9 +17,12 @@ namespace Khela.Game.Managers
             table.MaxPlayers,
             table.MaxSeatsPerUser,
             table.RoundInProgress,
+            table.MinBet,
+            table.MaxBet,
             table.CurrentSeatNumber,
             table.CurrentHandIndex,
             table.TurnExpiresAt,
+            table.InsuranceExpiresAt, // when set, the round is in its insurance phase (its own countdown)
             table.LastHandId, // id of the most recently settled hand — feeds GET /verify/{handId}
             table.LastResults, // per-seat outcome of the last settled round (drives the client result banner)
             // Commitment only — the server seed stays secret until reveal/verify.
@@ -57,6 +60,7 @@ namespace Khela.Game.Managers
                 HandIndex = idx,
                 h.Bet,
                 Insurance = h.InsuranceBet,
+                h.Done, // hand has finished acting (stood/bust/double/split-aces) — lets the client close the insurance window
                 Cards = h.Hand.Cards.Select(c => new { FaceVal = (int)c.FaceVal, Suit = (int)c.Suit, Value = CardValue(c), c.IsCardUp }),
                 HandValue = h.Hand.GetSumOfHand()
             }),

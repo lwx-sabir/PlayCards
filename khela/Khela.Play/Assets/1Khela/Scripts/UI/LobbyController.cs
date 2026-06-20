@@ -36,6 +36,9 @@ namespace PlayCard.UI
         [SerializeField] private Button refreshButton;
         [SerializeField] private TMP_Text titleText;
         [SerializeField] private TMP_Text statusText;
+        [Tooltip("HUD status/loading-spinner container — shown only while there's a message, hidden otherwise. " +
+                 "Falls back to the statusText's own GameObject if left empty.")]
+        [SerializeField] private GameObject statusRoot;
         [SerializeField] private TMP_Text balanceText;
 
         [Header("Filter")]
@@ -99,6 +102,7 @@ namespace PlayCard.UI
                 if (!cardPrefab || !cardParent) break;
                 var card = Instantiate(cardPrefab, cardParent);
                 card.Bind(summary);
+                card.OnStatus += SetStatus;   // card's join/loading feedback → HUD status
                 _cards.Add(card);
             }
 
@@ -121,7 +125,7 @@ namespace PlayCard.UI
         private void ClearCards()
         {
             foreach (var c in _cards)
-                if (c) Destroy(c.gameObject);
+                if (c) { c.OnStatus -= SetStatus; Destroy(c.gameObject); }
             _cards.Clear();
             _current = null;
         }
@@ -131,6 +135,13 @@ namespace PlayCard.UI
             if (balanceText && b != null) balanceText.text = $"{b.Chips:0}";
         }
 
-        private void SetStatus(string s) { if (statusText) statusText.text = s; }
+        // Show the HUD status/spinner only while there's a message; hide it when cleared.
+        private void SetStatus(string s)
+        {
+            bool has = !string.IsNullOrEmpty(s);
+            if (statusText && has) statusText.text = s;
+            if (statusRoot) statusRoot.SetActive(has);
+            else if (statusText) statusText.gameObject.SetActive(has);
+        }
     }
 }

@@ -91,9 +91,9 @@ namespace PlayCard.Game.Net
             => SendAsync<CreatedTable>(HttpMethod.Post, "/api/Blackjack/create", req);
 
         /// <summary>Server seats the player from their real wallet; the request balance is ignored.</summary>
-        public Task<ApiResult<bool>> JoinAsync(string tableId, string name, string image = "")
+        public Task<ApiResult<bool>> JoinAsync(string tableId, string name, string image = "", int? seatNumber = null)
             => SendOkAsync(HttpMethod.Post, $"/api/Blackjack/{tableId}/join",
-                new JoinTableRequest { Name = name, Image = image, Balance = 0 });
+                new JoinTableRequest { Name = name, Image = image, Balance = 0, SeatNumber = seatNumber });
 
         public Task<ApiResult<bool>> LeaveAsync(string tableId, int seatNumber)
             => SendOkAsync(HttpMethod.Post, $"/api/Blackjack/{tableId}/leave/{seatNumber}");
@@ -125,6 +125,10 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<BoardSnapshot>> InsuranceAsync(string tableId, int seatNumber, decimal amount, int handIndex = 0)
             => SendAsync<BoardSnapshot>(HttpMethod.Post, $"/api/Blackjack/{tableId}/insurance",
                 new InsuranceRequest { SeatNumber = seatNumber, Amount = amount, HandIndex = handIndex });
+
+        /// <summary>Decline insurance (the NO button) — marks you decided so the window can close early.</summary>
+        public Task<ApiResult<BoardSnapshot>> DeclineInsuranceAsync(string tableId, int seatNumber)
+            => SendAsync<BoardSnapshot>(HttpMethod.Post, $"/api/Blackjack/{tableId}/insurance/decline/{seatNumber}");
 
         /// <summary>Runs the dealer and settles; returns the final board (with the revealed hole card and LastHandId).</summary>
         public Task<ApiResult<BoardSnapshot>> DealerPlayAsync(string tableId)

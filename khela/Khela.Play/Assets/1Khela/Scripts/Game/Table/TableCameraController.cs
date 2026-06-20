@@ -6,8 +6,9 @@ namespace PlayCard.Game.Table
     /// <summary>
     /// Per-seat table camera. Each seat has a wide "table" pose (deal/play) and a close "bet" pose (zoomed on
     /// that seat's bet spot). The camera follows the LOCAL player's seat (<see cref="TableController.MySeat"/>):
-    /// while betting it eases to that seat's bet pose, during the round to its table pose; not seated → a
-    /// shared spectate pose. Author each pose as an empty Transform placed in the scene.
+    /// while betting it eases to that seat's bet pose, during the round to its table pose. If the player isn't
+    /// seated (MySeat == -1) or that seat isn't authored, it uses the spectate pose (falling back to seat 0's
+    /// table pose only if no spectate pose is set). Author each pose as an empty Transform in the scene.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public sealed class TableCameraController : MonoBehaviour
@@ -63,17 +64,29 @@ namespace PlayCard.Game.Table
             int seat = table.MySeat;                 // 1-based, or -1 if not seated
             bool betting = board != null && !board.RoundInProgress;
 
-            if (seat >= 1 && seats != null && seat <= seats.Length)
+            // Use the local player's seat pose. If they're NOT seated (MySeat == -1) or that seat isn't authored,
+            // fall back to the spectate pose — NOT seats[0], which would silently park everyone at the first seat
+            // (that was the "always goes left" bug).
+            SeatView? view = null;
+            if (seats != null && seat >= 1 && seat <= seats.Length)
+                view = seats[seat - 1];
+
+            if (view.HasValue)
             {
-                var v = seats[seat - 1];
+                var v = view.Value;
                 var pose = betting ? v.betPose : v.tablePose;
                 if (pose == null) pose = v.tablePose ?? v.betPose;   // fall back to whichever is set
                 if (pose != null) _target = pose;
                 _targetFov = betting ? betFov : tableFov;
             }
-            else
+            else if (spectatePose != null)
             {
-                if (spectatePose != null) _target = spectatePose;
+                _target = spectatePose;
+                _targetFov = tableFov;
+            }
+            else if (seats != null && seats.Length > 0 && seats[0].tablePose != null)
+            {
+                _target = seats[0].tablePose;        // last resort only when no spectate pose is set
                 _targetFov = tableFov;
             }
         }

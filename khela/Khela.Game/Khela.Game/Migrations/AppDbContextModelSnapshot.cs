@@ -442,6 +442,9 @@ namespace Khela.Game.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
 
+                    b.Property<bool>("Resolved")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<int>("SeatNumber")
                         .HasColumnType("int");
 

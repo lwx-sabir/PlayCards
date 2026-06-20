@@ -15,6 +15,8 @@ namespace PlayCard.Game.Wallet
         public static WalletManager Instance { get; private set; }
 
         public WalletBalances Balances { get; private set; }
+        /// <summary>Current Chips balance (0 if not yet fetched). Chips are the wagerable currency.</summary>
+        public decimal Chips => Balances?.Chips ?? 0m;
         public event Action<WalletBalances> OnBalancesChanged;
 
         private void Awake()
