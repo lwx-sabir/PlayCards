@@ -5,16 +5,20 @@ using UnityEngine;
 namespace PlayCard.UI
 {
     /// <summary>
-    /// Drives the per-seat <see cref="SeatPlate"/>s from the live board: on every board update it shows/hides each
-    /// plate and fills name + chips from that seat's occupant. Put on the HUD canvas; assign the TableController
-    /// and the plates (one per seat). Each plate follows its own world anchor — this just binds data + visibility.
+    /// Drives the seat banner cards from the live board. The logic is simple: HIDE the card for the LOCAL player's
+    /// own seat (you're the bottom HUD), and in every other seat's card show its occupant (or an empty
+    /// placeholder). Each <see cref="SeatPlate"/> handles staying glued to its chair as the camera moves.
     /// </summary>
     public sealed class SeatPlates : MonoBehaviour
     {
         [SerializeField] private TableController table;
+        [Tooltip("One card per seat, each with its Seat Number set.")]
         [SerializeField] private SeatPlate[] plates;
-        [Tooltip("Hide the plate over the local player's own seat (you already have your own HUD at the bottom).")]
-        [SerializeField] private bool hideLocalSeat;
+        [Tooltip("Hide the card for the local player's own seat (you're already shown by the bottom HUD).")]
+        [SerializeField] private bool hideLocalSeat = true;
+        [Tooltip("ON: a seat with no player is hidden. OFF: it shows the default card (frame/avatar) with the " +
+                 "name + chips hidden — an 'empty seat' placeholder.")]
+        [SerializeField] private bool hideEmptySeatCard;
 
         private void OnEnable()
         {
@@ -37,11 +41,13 @@ namespace PlayCard.UI
             {
                 if (plate == null) continue;
 
+                // Your own seat → no card (you're the bottom HUD).
                 if (hideLocalSeat && plate.SeatNumber == mySeat) { plate.Hide(); continue; }
 
                 var seat = FindSeat(board, plate.SeatNumber);
-                if (seat != null && seat.Occupied && seat.Player != null) plate.Show(seat.Player);
-                else plate.Hide();
+                if (seat != null && seat.Player != null) plate.Show(seat.Player);   // someone's sitting there
+                else if (hideEmptySeatCard) plate.Hide();                           // empty + hide
+                else plate.ShowEmpty();                                             // empty + show default card
             }
         }
 
