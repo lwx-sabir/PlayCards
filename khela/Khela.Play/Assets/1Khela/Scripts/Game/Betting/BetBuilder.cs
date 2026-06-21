@@ -38,7 +38,14 @@ namespace PlayCard.Game.Betting
             OnBetChanged?.Invoke(Total);
         }
 
-        private readonly List<long> _placed = new List<long>(); // placed chip values, for Undo
+        private readonly List<long> _placed = new List<long>();     // placed chip values, for Undo
+        private readonly List<long> _lastPlaced = new List<long>(); // chips of the last dealt bet, for Repeat
+
+        /// <summary>The exact chip values of the last dealt bet, for one-tap Repeat. Empty until the first deal.</summary>
+        public IReadOnlyList<long> LastPlaced => _lastPlaced;
+
+        /// <summary>Total amount of the last dealt bet (sum of <see cref="LastPlaced"/>); 0 until the first deal.</summary>
+        public long LastBet { get { long s = 0; for (int i = 0; i < _lastPlaced.Count; i++) s += _lastPlaced[i]; return s; } }
 
         public decimal MinBet => table != null && table.Board != null ? table.Board.MinBet : 0m;
         public decimal MaxBet => table != null && table.Board != null ? table.Board.MaxBet : 0m;
@@ -92,8 +99,10 @@ namespace PlayCard.Game.Betting
         private async Task DealRoutine()
         {
             var amount = Total;
+            _lastPlaced.Clear();
+            _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
             Clear();
-            await table.PlaceBet(amount);   // records the bet (debited at deal)
+            await table.PlaceBet(amount);    // records the bet (debited at deal)
             await table.Deal();
         }
     }

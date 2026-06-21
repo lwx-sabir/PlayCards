@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
 using UnityEngine;
@@ -6,28 +5,25 @@ using UnityEngine;
 namespace PlayCard.Game.Betting
 {
     /// <summary>
-    /// Builds the betting chip rail for the current table. On the first board (and whenever the table's
-    /// min/max bet changes) it asks the <see cref="ChipSet"/> for the denominations that fit [minBet, maxBet],
-    /// instantiates the matching colour-rank prefab for each, prints the value via <see cref="ChipView"/>, and
-    /// lays them in a centered row under <see cref="railAnchor"/>.
+    /// Drives the per-seat betting chip rails. There is ONE <see cref="ChipRail"/> per seat, each pre-placed with
+    /// its own slots for that seat's camera view. This picks the rail for the LOCAL player's seat and fills it
+    /// while betting, and clears every rail once the round is dealt — so the chips always sit correctly for
+    /// whichever seat you took (a single shared rail only ever lines up from one camera angle).
     ///
-    /// Put <see cref="railAnchor"/> (or this object) in <c>TableModeVisibility ▸ Hide In Play</c> so the chips
-    /// only show while betting. The spawned chips are dragged onto the bet spot by <see cref="ChipDragController"/>.
+    /// Chip values come from the <see cref="ChipSet"/> (minBet × multipliers, dropping any above the table max).
+    /// Bet-mode is read straight off the board (<c>!RoundInProgress</c>), so no extra visibility component is
+    /// needed — the rail is empty during a round and refilled when the betting window opens.
     /// </summary>
     public sealed class ChipRailSpawner : MonoBehaviour
     {
         [SerializeField] private TableController table;
         [SerializeField] private ChipSet chipSet;
-        [Tooltip("Parent the chips line up under. The row is laid along this transform's local +X, centered.")]
-        [SerializeField] private Transform railAnchor;
-        [Tooltip("Spacing between chips along the rail (local units).")]
-        [SerializeField] private float spacing = 0.12f;
-        [Tooltip("How many chips to show — the rule shows the lowest N denominations that fit the table.")]
-        [SerializeField] private int maxChips = 5;
+        [Tooltip("One rail per seat — element 0 = seat 1, element 1 = seat 2, … Each ChipRail holds that view's slots.")]
+        [SerializeField] private ChipRail[] railsBySeat;
 
-        private readonly List<GameObject> _spawned = new List<GameObject>();
         private decimal _min = -1m, _max = -1m;
-        private bool _built;
+        private int _activeSeat = -2;     // -2 = never evaluated (so the first board always refreshes)
+        private bool _betting;
 
         private void OnEnable()
         {
@@ -43,48 +39,48 @@ namespace PlayCard.Game.Betting
 
         private void OnBoard(BoardSnapshot board)
         {
-            if (board == null || chipSet == null || railAnchor == null) return;
-            if (_built && board.MinBet == _min && board.MaxBet == _max) return;   // unchanged → keep the rail
+            if (board == null || chipSet == null || railsBySeat == null) return;
+
+            int mySeat = table != null ? table.MySeat : -1;   // 1-based, -1 if not seated
+            bool betting = !board.RoundInProgress;            // chips only show during the betting window
+            bool stakesChanged = board.MinBet != _min || board.MaxBet != _max;
+
+            // Nothing that affects the rail changed → leave it as-is (don't rebuild every snapshot).
+            if (!stakesChanged && mySeat == _activeSeat && betting == _betting) return;
+
             _min = board.MinBet;
             _max = board.MaxBet;
-            _built = true;
-            Rebuild();
+            _activeSeat = mySeat;
+            _betting = betting;
+
+            Refresh();
         }
 
-        private void Rebuild()
+        private void Refresh()
         {
-            Clear();
-            var values = chipSet.Values(_min, _max);                       // minBet × multipliers, ≤ maxBet
-            if (values.Count > maxChips) values = values.GetRange(0, maxChips);
-            var prefabs = chipSet.LevelPrefabs;
-            float mid = (values.Count - 1) * 0.5f;
+            // Clear every rail, then fill only the local seat's rail while betting.
+            for (int i = 0; i < railsBySeat.Length; i++)
+                if (railsBySeat[i] != null) railsBySeat[i].Clear();
 
-            for (int i = 0; i < values.Count; i++)
+            if (!_betting) return;
+
+            int idx = _activeSeat - 1;
+            if (idx < 0 || idx >= railsBySeat.Length) return;   // not seated, or no rail authored for this seat
+            var rail = railsBySeat[idx];
+            if (rail == null) return;
+
+            var values = chipSet.Values(_min, _max);            // minBet × multipliers, ≤ maxBet
+            if (values.Count == 0)
             {
-                var prefab = (prefabs != null && i < prefabs.Count) ? prefabs[i] : null;
-                if (prefab == null) continue;   // not enough colour ranks authored for this many chips
-
-                var go = Instantiate(prefab, railAnchor);
-                go.transform.localPosition = new Vector3(spacing * (i - mid), 0f, 0f);
-                go.transform.localRotation = Quaternion.identity;
-
-                var chip = go.GetComponentInChildren<ChipView>();
-                if (chip != null) chip.SetValue(values[i]);
-
-                _spawned.Add(go);
+                Debug.LogWarning($"[ChipRailSpawner] no chips for [min={_min}, max={_max}] — min bet is 0 or every " +
+                                 "multiplier exceeds the max. Check the ChipSet multipliers.");
+                return;
             }
 
-            if (values.Count == 0)
-                Debug.LogWarning($"[ChipRailSpawner] no chips for [min={_min}, max={_max}] — min bet is 0 or every multiplier exceeds the max. Check the ChipSet multipliers.");
-            else if (values.Count < maxChips)
-                Debug.Log($"[ChipRailSpawner] showing {values.Count} chips (some multipliers × min={_min} exceed max={_max}).");
-        }
-
-        private void Clear()
-        {
-            for (int i = 0; i < _spawned.Count; i++)
-                if (_spawned[i] != null) Destroy(_spawned[i]);
-            _spawned.Clear();
+            rail.Spawn(values, chipSet.LevelPrefabs);
+            if (values.Count > rail.Capacity)
+                Debug.Log($"[ChipRailSpawner] seat {_activeSeat} rail has {rail.Capacity} templates but " +
+                          $"{values.Count} chips fit the table — place more templates to show them all.");
         }
     }
 }

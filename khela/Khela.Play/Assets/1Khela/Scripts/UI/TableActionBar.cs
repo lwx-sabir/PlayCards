@@ -1,4 +1,4 @@
-using System.Globalization;
+using PlayCard.Game.Betting;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
 using TMPro;
@@ -8,20 +8,28 @@ using UnityEngine.UI;
 namespace PlayCard.UI
 {
     /// <summary>
-    /// The in-table action bar: bet entry + Deal/Hit/Stand/Double/Split/Insurance/DealerPlay/Leave,
-    /// gated off the live board from <see cref="TableController"/>. Gating is UX only — the server
-    /// re-validates every action; this just disables obviously-unavailable moves. Every field is
-    /// optional (null-tolerant) so the Canvas can be wired up incrementally.
+    /// The in-table action bar: Deal/Hit/Stand/Double/Split/Insurance/DealerPlay/Leave, gated off the live board
+    /// from <see cref="TableController"/>. There is NO typed bet entry — the wager is built by dropping chips
+    /// (<see cref="BetBuilder"/> sums them on the bet spot) and DEAL sends that running total + deals in one tap.
+    /// The server still waits for the other seated players before the round runs. Gating is UX only (the server
+    /// re-validates every action); every field is optional (null-tolerant) so the Canvas can be wired incrementally.
     /// </summary>
     public sealed class TableActionBar : MonoBehaviour
     {
         [Header("Controller")]
         [SerializeField] private TableController table;
+        [Tooltip("Chip-bet accumulator. DEAL places its running total, then deals.")]
+        [SerializeField] private BetBuilder betBuilder;
 
         [Header("Betting")]
-        [SerializeField] private TMP_InputField betInput;
-        [SerializeField] private Button betButton;
         [SerializeField] private Button dealButton;
+        [Tooltip("Re-drops your last bet's chips and deals in one tap. Needs the BetRepeater.")]
+        [SerializeField] private Button repeatButton;
+        [Tooltip("Optional: the REPEAT button's label — shown as \"REPEAT 100K\" with the last bet amount.")]
+        [SerializeField] private TMP_Text repeatLabel;
+        [Tooltip("Clears the chip stack and zeroes the running bet.")]
+        [SerializeField] private Button clearButton;
+        [SerializeField] private BetRepeater betRepeater;
 
         [Header("Actions")]
         [SerializeField] private Button hitButton;
@@ -38,8 +46,9 @@ namespace PlayCard.UI
 
         private void Awake()
         {
-            Wire(betButton, PlaceBet);
-            Wire(dealButton, () => _ = DealFlow());
+            Wire(dealButton, Deal);
+            Wire(repeatButton, Repeat);
+            Wire(clearButton, ClearBet);
             Wire(hitButton, () => _ = table.Hit());
             Wire(standButton, () => _ = table.Stand());
             Wire(doubleButton, () => _ = table.DoubleDown());
@@ -51,25 +60,47 @@ namespace PlayCard.UI
 
         private void OnEnable()
         {
-            if (table == null) return;
-            table.OnBoardChanged += Refresh;
-            table.OnActionError += ShowError;
-            Refresh(table.Board);
+            if (table != null)
+            {
+                table.OnBoardChanged += Refresh;
+                table.OnActionError += ShowError;
+            }
+            if (betBuilder != null) betBuilder.OnBetChanged += OnBetChanged;
+            Refresh(table != null ? table.Board : null);
         }
 
         private void OnDisable()
         {
-            if (table == null) return;
-            table.OnBoardChanged -= Refresh;
-            table.OnActionError -= ShowError;
+            if (table != null)
+            {
+                table.OnBoardChanged -= Refresh;
+                table.OnActionError -= ShowError;
+            }
+            if (betBuilder != null) betBuilder.OnBetChanged -= OnBetChanged;
         }
 
-        private void PlaceBet()
+        // DEAL = place the chip bet + deal for this player, in one tap. The chips you dropped are the amount; the
+        // server keeps the round in the betting phase until the other seated players have dealt too.
+        private void Deal()
         {
-            var amount = ParseBet();
-            if (amount <= 0) { ShowError("Enter a bet amount."); return; }
             ClearError();
-            _ = table.PlaceBet(amount);
+            if (betBuilder == null) return;
+            if (!betBuilder.MeetsMinimum) { ShowError("Drop chips to set your bet."); return; }
+            betBuilder.Deal();   // PlaceBet(running total) → Deal
+        }
+
+        // REPEAT = re-drop the exact chips from your last bet onto the spot (physics), then deal — no rebuild.
+        private void Repeat()
+        {
+            ClearError();
+            if (betRepeater != null) betRepeater.Repeat();
+        }
+
+        // CLEAR = wipe the chip stack and zero the running bet.
+        private void ClearBet()
+        {
+            ClearError();
+            if (betBuilder != null) betBuilder.Clear();
         }
 
         private void PlaceInsurance()
@@ -78,32 +109,29 @@ namespace PlayCard.UI
             if (hand != null) _ = table.Insurance(hand.Bet / 2m);
         }
 
-        // DEAL does everything: place the bet from the bet field (if one isn't already down), then deal.
-        // No separate Bet button — one press starts the round. If a bet was pre-placed (e.g. a future chip
-        // tray), it skips straight to the deal.
-        private async System.Threading.Tasks.Task DealFlow()
-        {
-            ClearError();
-            decimal alreadyDown = MyCurrentHand()?.Bet ?? 0m;
-            if (alreadyDown <= 0m)
-            {
-                var amount = ParseBet();
-                if (amount <= 0m) { ShowError("Enter a bet."); return; }
-                await table.PlaceBet(amount);
-            }
-            await table.Deal();
-        }
+        // Re-gate DEAL as chips are dropped/cleared (MeetsMinimum changes off-board).
+        private void OnBetChanged(decimal total) => Refresh(table != null ? table.Board : null);
 
         private void Refresh(BoardSnapshot board)
         {
+            if (table == null) return;
+
             bool seated = table.MySeat > 0;
             bool inRound = board != null && board.RoundInProgress;
             bool myTurn = table.IsMyTurn;
             var hand = MyCurrentHand();
 
-            if (betInput != null) betInput.interactable = !inRound && seated;
-            Set(betButton, !inRound && seated);
-            Set(dealButton, !inRound && seated);
+            // DEAL is live only when seated, between rounds, and the dropped chips meet the table minimum.
+            Set(dealButton, !inRound && seated && betBuilder != null && betBuilder.MeetsMinimum);
+            // REPEAT is live between rounds once there's a remembered bet; CLEAR whenever there are chips down.
+            Set(repeatButton, !inRound && seated && betRepeater != null && betRepeater.CanRepeat);
+            Set(clearButton, !inRound && seated && betBuilder != null && betBuilder.Total > 0m);
+
+            if (repeatLabel != null)
+            {
+                long last = betBuilder != null ? betBuilder.LastBet : 0;
+                repeatLabel.text = last > 0 ? $"REPEAT {ChipView.Format(last)}" : "REPEAT";
+            }
 
             Set(hitButton, myTurn);
             Set(standButton, myTurn);
@@ -111,9 +139,9 @@ namespace PlayCard.UI
             Set(splitButton, myTurn && CanSplit(hand));
             Set(insuranceButton, myTurn && hand != null && hand.Insurance == 0 && DealerShowsAce(board));
 
-            // The server round-driver now auto-settles ~2s after everyone has acted (and auto-stands a
-            // player whose turn timer expired). This Dealer Play button is an optional "settle now"
-            // shortcut so the player needn't wait for the driver tick; shown once all hands are resolved.
+            // The server round-driver auto-settles ~2s after everyone has acted (and auto-stands a player whose
+            // turn timer expired). This Dealer Play button is an optional "settle now" shortcut, shown once all
+            // hands are resolved.
             Set(dealerPlayButton, inRound && board != null && board.CurrentSeatNumber == -1);
             Set(leaveButton, true);
 
@@ -165,12 +193,6 @@ namespace PlayCard.UI
             if (me?.Hands == null || me.Hands.Count == 0) return null;
             int idx = Mathf.Clamp(board.CurrentHandIndex, 0, me.Hands.Count - 1);
             return me.Hands[idx];
-        }
-
-        private decimal ParseBet()
-        {
-            if (betInput == null) return 0;
-            return decimal.TryParse(betInput.text, NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : 0;
         }
 
         private static bool CanSplit(HandView hand)
