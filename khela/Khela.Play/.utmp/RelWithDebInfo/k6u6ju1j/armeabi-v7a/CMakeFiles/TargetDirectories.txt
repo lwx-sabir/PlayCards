@@ -1,0 +1,5 @@
+D:/Projects/PlayCards/khela/Khela.Play/.utmp/RelWithDebInfo/k6u6ju1j/armeabi-v7a/CMakeFiles/edit_cache.dir
+D:/Projects/PlayCards/khela/Khela.Play/.utmp/RelWithDebInfo/k6u6ju1j/armeabi-v7a/CMakeFiles/rebuild_cache.dir
+D:/Projects/PlayCards/khela/Khela.Play/.utmp/RelWithDebInfo/k6u6ju1j/armeabi-v7a/GameActivity/CMakeFiles/game.dir
+D:/Projects/PlayCards/khela/Khela.Play/.utmp/RelWithDebInfo/k6u6ju1j/armeabi-v7a/GameActivity/CMakeFiles/edit_cache.dir
+D:/Projects/PlayCards/khela/Khela.Play/.utmp/RelWithDebInfo/k6u6ju1j/armeabi-v7a/GameActivity/CMakeFiles/rebuild_cache.dir

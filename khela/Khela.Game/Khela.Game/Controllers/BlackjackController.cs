@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Khela.Game.Managers;
 using Khela.Game.Database;
-using CardGames.Blackjack.CardGames.Blackjack;
+using CardGames.Blackjack;
 using CardGames.Platforms;
 using CardGames.Provable;
 using Khela.Common.Blackjack;
@@ -114,6 +114,43 @@ namespace Khela.Game.Controllers
                 var table = await tableManager.DealAsync(tableId);
                 if (table == null) return NotFound("Table not found or expired.");
                 return Ok(BlackjackBoard.Build(table));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>Seated keep-alive (~every 5s) so the reaper doesn't flag the player stalled. REST fallback for
+        /// the polling transport — same effect as the hub's Heartbeat. No-op if the caller isn't seated here.</summary>
+        [HttpPost("{tableId}/heartbeat")]
+        public async Task<IActionResult> Heartbeat(string tableId)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+
+            try
+            {
+                var table = await tableManager.RecordHeartbeatAsync(tableId, userId);
+                if (table == null) return NotFound("Table not found or expired.");
+                return Ok(BlackjackBoard.Build(table));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>Play a transient EMOTE at the table — broadcast to everyone seated (rate-limited; no board change).</summary>
+        [HttpPost("{tableId}/emote")]
+        public async Task<IActionResult> Emote(string tableId, [FromBody] EmoteRequest request)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+            try
+            {
+                var ok = await tableManager.SendEmoteAsync(tableId, userId, request?.EmoteId);
+                return ok ? Ok() : BadRequest(new { message = "Emote not sent (unknown id, not seated, or rate-limited)." });
             }
             catch (Exception ex)
             {

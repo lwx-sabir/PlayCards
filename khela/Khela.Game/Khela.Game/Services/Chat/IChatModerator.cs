@@ -42,4 +42,21 @@ namespace Khela.Game.Services.Chat
             return Task.FromResult(new ModerationResult(outcome, masked));
         }
     }
+
+    /// <summary>
+    /// SEAM for the future AI moderator — wired only when <c>Moderation:AiEnabled</c> is true (default false →
+    /// <see cref="BasicChatModerator"/>). Until the AI service exists it DELEGATES to the baseline rule-based
+    /// moderator, so flipping the flag on is always safe. Replace the TODO with the real AI call and fall back to
+    /// the baseline on error/timeout.
+    /// </summary>
+    public sealed class AiChatModerator : IChatModerator
+    {
+        private readonly BasicChatModerator _baseline = new();
+
+        public Task<ModerationResult> ModerateAsync(string body)
+        {
+            // TODO(AI): call the AI moderation service here; on error/timeout fall back to the baseline below.
+            return _baseline.ModerateAsync(body);
+        }
+    }
 }

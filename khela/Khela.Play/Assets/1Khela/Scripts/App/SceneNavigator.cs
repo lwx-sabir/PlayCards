@@ -15,10 +15,12 @@ namespace PlayCard.App
         public static void GoToHome() => SceneManager.LoadScene(Home);
         public static void GoToLobby() => SceneManager.LoadScene(Lobby);
 
-        /// <summary>Open a specific table — stashes its id for TableController to pick up after load.</summary>
-        public static void GoToTable(string tableId)
+        /// <summary>Open a specific table — stashes its id (and the picked seat, if any) for the Table scene to
+        /// pick up after load. <paramref name="seatNumber"/> 0 = unknown (auto-match / spectate).</summary>
+        public static void GoToTable(string tableId, int seatNumber = 0)
         {
             GameSession.TableId = tableId;
+            GameSession.SeatNumber = seatNumber;   // lets the Table scene resolve the local seat before the board
             SceneManager.LoadScene(Table);
         }
     }

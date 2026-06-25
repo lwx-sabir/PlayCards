@@ -85,6 +85,9 @@ namespace PlayCard.Game.Net
                 OnTableUpdated?.Invoke(res.Value);
         }
 
+        /// <summary>Seated keep-alive over REST (the polling transport has no socket to ping).</summary>
+        public Task HeartbeatAsync(string tableId) => BlackjackRestClient.Instance.HeartbeatAsync(tableId);
+
         private void StartPolling(string tableId)
         {
             StopPolling();

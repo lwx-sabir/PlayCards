@@ -11,6 +11,8 @@ using Khela.Game.Services.Chat;
 using Khela.Game.Services.Presence;
 using Khela.Game.Services.Friends;
 using Khela.Game.Services.Gifts;
+using Khela.Game.Services.Profile;
+using Khela.Game.Services.Reports;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore; 
@@ -18,8 +20,11 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using StackExchange.Redis;
 using System.Text;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.Authorization;
 
-var builder = WebApplication.CreateBuilder(args); 
+var builder = WebApplication.CreateBuilder(args);
  
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
  
@@ -92,7 +97,19 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization(); 
+// Admin authorization: a real, prod-safe gate. Admin:UserIds (AspNetUsers.Id GUIDs) are admins; Development is
+// open for convenience. Replaces the old per-endpoint dev-gates on the reports/reconciliation admin actions.
+var adminUserIds = builder.Configuration.GetSection("Admin:UserIds").Get<string[]>() ?? Array.Empty<string>();
+var adminDevOpen = builder.Environment.IsDevelopment();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Admin", policy => policy.RequireAssertion(ctx =>
+    {
+        if (adminDevOpen) return true;   // dev convenience; prod requires the allowlist
+        var id = ctx.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? ctx.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        return id != null && adminUserIds.Contains(id, StringComparer.OrdinalIgnoreCase);
+    }));
+});
 
 builder.Services.AddControllers();
 
@@ -157,12 +174,18 @@ builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
+builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
-builder.Services.AddSingleton<IChatModerator, BasicChatModerator>();
+if (builder.Configuration.GetValue("Moderation:AiEnabled", false))
+    builder.Services.AddSingleton<IChatModerator, AiChatModerator>();   // seam: present, off by default
+else
+    builder.Services.AddSingleton<IChatModerator, BasicChatModerator>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 builder.Services.AddScoped<IFriendsService, FriendsService>();
 builder.Services.AddScoped<IGiftService, GiftService>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
+builder.Services.AddScoped<IReportsService, ReportsService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

@@ -80,6 +80,18 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<WalletBalances>> GetWalletAsync()
             => SendAsync<WalletBalances>(HttpMethod.Get, "/api/wallet/balances");
 
+        /// <summary>The signed-in player's own full profile (GET /api/profile/me).</summary>
+        public Task<ApiResult<UserProfileData>> GetMyProfileAsync()
+            => SendAsync<UserProfileData>(HttpMethod.Get, "/api/profile/me");
+
+        /// <summary>Edit the caller's profile (PATCH /api/profile/me). Server moderates/validates — re-fetch after.</summary>
+        public Task<ApiResult<bool>> UpdateProfileAsync(ProfileEditRequest edit)
+            => SendOkAsync(new HttpMethod("PATCH"), "/api/profile/me", edit);
+
+        /// <summary>Another player's PUBLIC profile (GET /api/profile/{userId}). 404/null if blocked or not found.</summary>
+        public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)
+            => SendAsync<PublicProfileData>(HttpMethod.Get, $"/api/profile/{userId}");
+
         /// <summary>The blackjack table browser, optionally filtered by mode.</summary>
         public Task<ApiResult<List<BlackjackTableSummary>>> GetLobbyAsync(BlackjackMode? mode = null)
             => SendAsync<List<BlackjackTableSummary>>(HttpMethod.Get,
@@ -137,6 +149,10 @@ namespace PlayCard.Game.Net
         /// <summary>Fetches the current board — used to resync if the SignalR push was missed.</summary>
         public Task<ApiResult<BoardSnapshot>> GetBoardAsync(string tableId)
             => SendAsync<BoardSnapshot>(HttpMethod.Get, $"/api/Blackjack/{tableId}/board");
+
+        /// <summary>Seated keep-alive — tells the server we're still here so the reaper doesn't remove us.</summary>
+        public Task<ApiResult<bool>> HeartbeatAsync(string tableId)
+            => SendOkAsync(HttpMethod.Post, $"/api/Blackjack/{tableId}/heartbeat");
 
         // ---------- core ----------
 

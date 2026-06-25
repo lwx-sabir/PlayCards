@@ -105,6 +105,12 @@ namespace PlayCard.Game.Dtos
         public int SeatNumber { get; set; }
         public bool Occupied { get; set; }
         public PlayerView Player { get; set; }
+
+        /// <summary>Server says this seat's client is alive (heartbeat fresh). False ⇒ render "disconnected…".
+        /// Defaults true so a snapshot from an older server (no field) doesn't show everyone as disconnected.</summary>
+        public bool IsConnected { get; set; } = true;
+        /// <summary>No heartbeat past the server's StalledTimeout — auto-removal is imminent.</summary>
+        public bool IsStalled { get; set; }
     }
 
     public sealed class CardView

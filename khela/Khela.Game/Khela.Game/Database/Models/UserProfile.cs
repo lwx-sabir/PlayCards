@@ -42,6 +42,13 @@ namespace Khela.Game.Database.Models
         [MaxLength(64)]
         public string CountryFlagId { get; set; }  // optional cosmetic flag (may differ from Region)
 
+        // ---- Free-text blurbs (user-editable; moderated on write — see ProfileService) ----
+        [MaxLength(160)]
+        public string Bio { get; set; }            // "about me"
+
+        [MaxLength(80)]
+        public string StatusMessage { get; set; }  // short status line
+
         // ---- Region (denormalized so board writes/reads never join ApplicationUser) ----
         /// <summary>ISO-3166 alpha-2, UPPER. "ZZ" = unknown.</summary>
         [Required, MaxLength(2), Column(TypeName = "char(2)")]
@@ -49,8 +56,10 @@ namespace Khela.Game.Database.Models
 
         // ---- Progression ----
         [Required] public int  Level { get; set; } = 1;
-        [Required] public long Experience { get; set; } = 0;          // XP toward next level (resets on level-up)
+        [Required] public long Experience { get; set; } = 0;          // INTO-LEVEL XP (0..XpToNext); reset-with-carry on level-up by ProgressionService
         [Required] public long LifetimeExperience { get; set; } = 0;  // monotonic; safe XP-board source
+        [Required] public long DailyXp { get; set; } = 0;             // XP earned today (drives the daily cap)
+        public DateTime? DailyXpResetAt { get; set; }                 // UTC midnight after which DailyXp resets to 0
 
         // ---- VIP / loyalty ----
         [Required] public VipTier VipTier { get; set; } = VipTier.None;

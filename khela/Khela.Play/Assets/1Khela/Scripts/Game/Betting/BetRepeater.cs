@@ -31,6 +31,7 @@ namespace PlayCard.Game.Betting
         public void Repeat()
         {
             if (_running != null || !CanRepeat) return;
+            if (table != null && table.Board != null && table.Board.RoundInProgress) return;   // a round is already live
             var spot = LocalSpot();
             if (spot == null) return;
             _running = StartCoroutine(RepeatRoutine(spot));

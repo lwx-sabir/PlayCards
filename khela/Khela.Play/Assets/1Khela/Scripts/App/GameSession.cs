@@ -11,5 +11,11 @@ namespace PlayCard.App
 
         /// <summary>Game chosen on the Home carousel (e.g. "Blackjack") — the lobby + auto-match filter by it.</summary>
         public static string SelectedGame { get; set; }
+
+        /// <summary>Seat (1-based) the player picked in the lobby, so the Table scene resolves the local seat
+        /// INSTANTLY (camera + Leave) without waiting for the first board snapshot. 0 = unknown (auto-match or
+        /// spectate) → fall back to the board. Set by <see cref="SceneNavigator.GoToTable"/>; the board still wins
+        /// once it arrives and matches us.</summary>
+        public static int SeatNumber { get; set; }
     }
 }

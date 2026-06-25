@@ -2,7 +2,7 @@
 // ONLY in Properties/launchSettings.json (a dev-launch file that is never deployed) — two independent
 // guards, so it cannot be reached in production, while still working in any LOCAL build config (Debug or
 // Release). Two separate mistakes would be needed to expose this money-mutating endpoint.
-using CardGames.Blackjack.CardGames.Blackjack;
+using CardGames.Blackjack;
 using Khela.Common.Blackjack;
 using Khela.Game.Database.Models;
 using Khela.Game.Managers;

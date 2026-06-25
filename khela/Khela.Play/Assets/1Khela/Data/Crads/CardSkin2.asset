@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5c0a1b2c3d4e5f60718293a4b5c6d7e8, type: 3}
+  m_Name: CardSkin2
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Cards.CardSkin
+  displayName: Default
+  frontAtlas: {fileID: 2800000, guid: b781ac2a5d938af48bec0dfac942586d, type: 3}
+  columns: 13
+  rows: 5
+  rowOrderTopToBottom: 03000000010000000200000000000000
+  invertV: 1
+  back: {fileID: 2800000, guid: a6064367164d5674c89659954e155235, type: 3}
+  baseMapProperty: _BaseMap
+  baseMapStProperty: _BaseMap_ST

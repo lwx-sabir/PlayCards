@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
 
-namespace CardGames.Blackjack.CardGames.Blackjack
+namespace CardGames.Blackjack
 {
     public class Player
     {

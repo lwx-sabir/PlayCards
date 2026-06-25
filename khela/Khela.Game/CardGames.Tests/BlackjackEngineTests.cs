@@ -2,10 +2,6 @@ using System.Collections.Generic;
 using System.Text;
 using CardGames.Platforms;
 using CardGames.Blackjack;
-// NOTE: Player / BlackJackGame live in the DOUBLED namespace `CardGames.Blackjack.CardGames.Blackjack`
-// (a known wart — CLAUDE.md flags removing the doubled `namespace CardGames.Blackjack`). Referenced
-// as-is here so the tests track the real type locations; collapse this import when that cleanup lands.
-using CardGames.Blackjack.CardGames.Blackjack;
 using Xunit;
 
 namespace CardGames.Tests

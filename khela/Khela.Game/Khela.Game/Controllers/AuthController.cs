@@ -1,6 +1,7 @@
 ﻿using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
+using Khela.Game.Services.Chat;
 using Khela.Game.Services.Wallet;
 using Khela.Common.Auth;
 using Microsoft.AspNetCore.Identity; 
@@ -19,6 +20,7 @@ namespace Khela.Game.Controllers
         private readonly JwtSettings _jwtSettings;
         private readonly AppDbContext _dbContext;
         private readonly IWalletService _wallet;
+        private readonly IChatModerator _moderator;
 
         public AuthController(
             UserManager<ApplicationUser> userManager,
@@ -26,7 +28,8 @@ namespace Khela.Game.Controllers
             ITokenService tokenService,
             JwtSettings jwtSettings,
             AppDbContext dbContext,
-            IWalletService wallet)
+            IWalletService wallet,
+            IChatModerator moderator)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -34,6 +37,7 @@ namespace Khela.Game.Controllers
             _jwtSettings = jwtSettings;
             _dbContext = dbContext;
             _wallet = wallet;
+            _moderator = moderator;
         }
 
         // ================= Register =================
@@ -199,11 +203,12 @@ namespace Khela.Game.Controllers
                 {
                     var region = (user.CountryCode ?? "").Trim().ToUpperInvariant();
                     if (region.Length != 2) region = "ZZ";
+                    var displayName = await SafeDisplayNameAsync(user.UserName!);
                     _dbContext.UserProfiles.Add(new UserProfile
                     {
                         UserId = userGuid,
-                        DisplayName = user.UserName!,
-                        DisplayNameNormalized = user.UserName!.ToUpperInvariant(),
+                        DisplayName = displayName,
+                        DisplayNameNormalized = displayName.ToUpperInvariant(),
                         Region = region
                     });
                     await _dbContext.SaveChangesAsync();
@@ -220,6 +225,22 @@ namespace Khela.Game.Controllers
                 // Never fail auth over bootstrap — it's idempotent and re-runs on next login.
                 Console.Error.WriteLine($"[AuthController] profile/starter bootstrap failed for {user.Id}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Moderates the chosen username at profile creation so offensive/PII names never enter the system or get
+        /// broadcast in chat/leaderboards. If it isn't fully clean, fall back to a neutral generated name rather
+        /// than failing auth (this bootstrap is best-effort + idempotent).
+        /// </summary>
+        private async Task<string> SafeDisplayNameAsync(string requested)
+        {
+            if (!string.IsNullOrWhiteSpace(requested))
+            {
+                var mod = await _moderator.ModerateAsync(requested);
+                if (mod.Outcome == ModerationOutcome.Approved)
+                    return mod.Text.Length <= 32 ? mod.Text : mod.Text.Substring(0, 32);
+            }
+            return "Player" + Guid.NewGuid().ToString("N").Substring(0, 6);
         }
 
         private async Task LinkDeviceToUserAsync(string deviceId, string userId)

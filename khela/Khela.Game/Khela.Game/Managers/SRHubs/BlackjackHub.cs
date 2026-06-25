@@ -1,4 +1,4 @@
-﻿using CardGames.Blackjack.CardGames.Blackjack;
+﻿using CardGames.Blackjack;
 using CardGames.Platforms;
 using Khela.Game.Managers;
 using Microsoft.AspNetCore.Authorization;
@@ -48,6 +48,25 @@ namespace Khela.Game.Managers.SRHubs
             {
                 await Clients.Caller.SendAsync("TableUpdated", board);
             }
+        }
+
+        /// <summary>
+        /// Keep-alive from a seated client (~every 5s). Stamps the caller's seat heartbeat so the reaper never
+        /// flags an active player stalled. No board push — the visible board is unchanged.
+        /// </summary>
+        public async Task Heartbeat(string tableId)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return;
+            await _tableManager.RecordHeartbeatAsync(tableId, userId);
+        }
+
+        /// <summary>Play a transient emote at the table (broadcast to the group; rate-limited; no board change).</summary>
+        public async Task SendEmote(string tableId, string emoteId)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return;
+            await _tableManager.SendEmoteAsync(tableId, userId, emoteId);
         }
 
         /// <summary>

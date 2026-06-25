@@ -1,5 +1,5 @@
 using CardGames.Platforms;
-using CardGames.Blackjack.CardGames.Blackjack;
+using CardGames.Blackjack;
 using Xunit;
 
 namespace CardGames.Tests

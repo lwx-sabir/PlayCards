@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: CardSkin
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Cards.CardSkin
   displayName: Default
-  frontAtlas: {fileID: 2800000, guid: ff83833fa79f4224b9f3748dea740bbf, type: 3}
+  frontAtlas: {fileID: 2800000, guid: e4edf25e53d7795408fddea2777fce8d, type: 3}
   columns: 13
   rows: 5
   rowOrderTopToBottom: 03000000010000000200000000000000

@@ -9,8 +9,6 @@ using System.Threading.Tasks;
 
 namespace CardGames.Blackjack
 { 
-    namespace CardGames.Blackjack
-    {
         public class BlackJackGame
         {
             #region Fields / Properties
@@ -132,5 +130,4 @@ namespace CardGames.Blackjack
              
             #endregion
         }
-    } 
 }

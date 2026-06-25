@@ -119,8 +119,10 @@ namespace Khela.Game.Services.Gifts
                             // Idempotent on the gift's correlation id — a retried claim never double-credits.
                             // CreditAsync commits in its own transaction; we persist THIS gift's status right
                             // after, so a mid-loop failure can never leave a credited gift marked Sent.
+                            // This is a PLAYER-to-player gift, so the whole amount lands in the wallet's tainted
+                            // (gifted) portion — it spends last and accrues ZERO progression (Progression Spec §6).
                             await _wallet.CreditAsync(userId.ToString(), gift.Currency, gift.Amount, TransactionType.Bonus,
-                                gift.CorrelationId, new WalletContext { Description = "Gift claim" });
+                                gift.CorrelationId, new WalletContext { Description = "Gift claim", CreditGiftedAmount = gift.Amount });
                             gift.Status = GiftStatus.Claimed;
                             gift.ClaimedAt = now;
                             claimed++;

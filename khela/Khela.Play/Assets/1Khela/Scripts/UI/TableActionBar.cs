@@ -195,8 +195,14 @@ namespace PlayCard.UI
             return me.Hands[idx];
         }
 
+        // Mirror the server's CanSplitPair (Player.cs): a pair splits on equal BLACKJACK value — 10/J/Q/K all = 10,
+        // Ace = 11 — NOT same rank, so K+Q is splittable. The server re-validates; this is the UX gate only.
+        private static int SplitValue(int faceVal)
+            => faceVal == 14 ? 11 : (faceVal >= 11 && faceVal <= 13 ? 10 : faceVal);   // Ace=14→11, J/Q/K→10, else pip
+
         private static bool CanSplit(HandView hand)
-            => hand != null && hand.Cards.Count == 2 && hand.Cards[0].FaceVal == hand.Cards[1].FaceVal;
+            => hand != null && hand.Cards != null && hand.Cards.Count == 2
+               && SplitValue(hand.Cards[0].FaceVal) == SplitValue(hand.Cards[1].FaceVal);
 
         private static bool DealerShowsAce(BoardSnapshot board)
         {

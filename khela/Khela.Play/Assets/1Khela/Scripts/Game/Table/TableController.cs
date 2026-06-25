@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using PlayCard.Account;
 using PlayCard.App;
@@ -35,6 +36,11 @@ namespace PlayCard.Game.Table
         [Tooltip("Standalone testing: which seat to auto-take (1-based) to test per-seat cameras. 0 = first open seat.")]
         [SerializeField] private int debugSeat = 0;
 
+        [Header("Heartbeat")]
+        [Tooltip("Seconds between seated keep-alive pings. Keep WELL below the server's Table:StalledTimeoutSeconds (30s) " +
+                 "so a missed ping or two doesn't get us reaped.")]
+        [SerializeField] private float heartbeatSeconds = 5f;
+
         /// <summary>Latest board, after caching. UI gates buttons off this.</summary>
         public event Action<BoardSnapshot> OnBoardChanged;
         /// <summary>A server action was rejected; arg is the server's message.</summary>
@@ -46,16 +52,26 @@ namespace PlayCard.Game.Table
         public string TableId { get; private set; }
 
         private IBlackjackHubClient _hub;
+        private CancellationTokenSource _heartbeatCts;
         private static BlackjackRestClient Rest => BlackjackRestClient.Instance;
 
-        /// <summary>This player's seat in the latest board (-1 if not seated), matched by user id.</summary>
+        /// <summary>
+        /// This player's seat (-1 if not seated). Board-authoritative once a snapshot arrives and matches us by
+        /// user id; until then (or if the live channel is down, e.g. SignalR on IL2CPP) it falls back to the seat
+        /// picked in the lobby (<see cref="GameSession.SeatNumber"/>) — so the camera + seat-aware UI resolve
+        /// instantly and <see cref="Leave"/> actually releases the seat instead of leaking it in Redis.
+        /// </summary>
         public int MySeat
         {
             get
             {
                 var uid = AccountManager.Instance != null ? AccountManager.Instance.UserId : null;
-                if (Board?.Seats == null || string.IsNullOrEmpty(uid)) return -1;
-                return Board.Seats.FirstOrDefault(s => s.Player != null && s.Player.Id == uid)?.SeatNumber ?? -1;
+                if (Board?.Seats != null && !string.IsNullOrEmpty(uid))
+                {
+                    var seat = Board.Seats.FirstOrDefault(s => s.Player != null && s.Player.Id == uid)?.SeatNumber ?? -1;
+                    if (seat > 0) return seat;   // board confirmed our seat
+                }
+                return GameSession.SeatNumber > 0 ? GameSession.SeatNumber : -1;   // lobby-picked fallback
             }
         }
 
@@ -78,11 +94,16 @@ namespace PlayCard.Game.Table
             {
                 // Standalone dev path (no lobby): take a seat ourselves so the table is playable.
                 if (!fromLobby && debugAutoJoin)
+                {
                     await Rest.JoinAsync(TableId, "Player", "", debugSeat > 0 ? debugSeat : (int?)null);
+                    GameSession.SeatNumber = debugSeat;   // so MySeat resolves locally in standalone too (0 = let the board decide)
+                }
 
                 await _hub.ConnectAsync();
                 await _hub.JoinTableAsync(TableId);
                 await RefreshAsync();
+
+                StartHeartbeat();   // keep our seat alive so the server's stalled-player reaper doesn't remove us
             }
             catch (Exception ex)
             {
@@ -93,6 +114,7 @@ namespace PlayCard.Game.Table
 
         private void OnDestroy()
         {
+            StopHeartbeat();
             if (_hub == null) return;
             _hub.OnTableUpdated -= HandleBoard;
             _hub.OnConnected -= HandleConnected;
@@ -146,6 +168,7 @@ namespace PlayCard.Game.Table
 
         public async Task Leave()
         {
+            StopHeartbeat();   // we're giving up the seat — stop pinging
             try
             {
                 if (MySeat > 0) await Rest.LeaveAsync(TableId, MySeat);
@@ -157,6 +180,44 @@ namespace PlayCard.Game.Table
 
         /// <summary>Force an immediate board refresh (re-push for SignalR / fetch for polling).</summary>
         public Task RefreshAsync() => _hub != null ? _hub.RequestBoardAsync(TableId) : Task.CompletedTask;
+
+        // ---- seated keep-alive (feeds the server's stalled-player reaper) ----
+
+        private void StartHeartbeat()
+        {
+            StopHeartbeat();
+            _heartbeatCts = new CancellationTokenSource();
+            _ = HeartbeatLoopAsync(_heartbeatCts.Token);
+        }
+
+        private void StopHeartbeat()
+        {
+            if (_heartbeatCts == null) return;
+            _heartbeatCts.Cancel();
+            _heartbeatCts.Dispose();
+            _heartbeatCts = null;
+        }
+
+        // Ping the server every ~5s while we hold a seat so the reaper doesn't drop us during a long think or a
+        // brief blip. Routes through the hub interface: a hub call on the live transport, a REST call on polling.
+        // Fire-and-forget — a failed ping is logged and simply retried next tick. Started on the main thread, so
+        // the awaited hub/REST continuations resume there too.
+        private async Task HeartbeatLoopAsync(CancellationToken ct)
+        {
+            var delayMs = Mathf.Max(1000, (int)(heartbeatSeconds * 1000));
+            while (!ct.IsCancellationRequested)
+            {
+                try { await Task.Delay(delayMs, ct); }
+                catch (TaskCanceledException) { return; }
+                if (ct.IsCancellationRequested) return;
+
+                if (MySeat > 0 && _hub != null)
+                {
+                    try { await _hub.HeartbeatAsync(TableId); }
+                    catch (Exception ex) { Debug.LogWarning($"[TableController] heartbeat failed: {ex.Message}"); }
+                }
+            }
+        }
 
         private int CurrentHand => Board?.CurrentHandIndex ?? 0;
 

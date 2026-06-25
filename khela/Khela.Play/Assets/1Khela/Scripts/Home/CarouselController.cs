@@ -46,6 +46,7 @@ namespace PlayCard.Home
         private int _index;        // unbounded; wraps via modulo so the ring is infinite
         private float _pos, _vel, _dragStartX, _dragStartPos;
         private bool _dragging;
+        private bool _needsApply;   // first Apply() is deferred to the first Update — see OnEnable
 
         public ICarouselItem Current
         {
@@ -60,7 +61,11 @@ namespace PlayCard.Home
             {
                 if (prevButton) prevButton.onClick.AddListener(Prev);
                 if (nextButton) nextButton.onClick.AddListener(Next);
-                Apply();
+                // Defer the first Apply() to the first Update. Items hide themselves in their OWN Awake
+                // (GameMode.SetSelected(false)); since Awake/OnEnable order between us and the items isn't
+                // guaranteed, applying NOW can be undone by an item that initialises after us — leaving the centred
+                // item hidden until the next selection change (a swipe). The first Update runs AFTER every Awake.
+                _needsApply = true;
             }
         }
 
@@ -99,6 +104,7 @@ namespace PlayCard.Home
 
             if (Application.isPlaying)
             {
+                if (_needsApply) { _needsApply = false; Apply(); }   // assert the centred item now all items have initialised
                 HandleSwipe();
                 if (!_dragging)
                     _pos = Mathf.SmoothDamp(_pos, _index, ref _vel, slideSmoothTime);

@@ -27,6 +27,15 @@ namespace Khela.Game.Services.Wallet
 
         /// <summary>Free-form JSON for additional structured metadata.</summary>
         public string MetadataJson { get; set; }
+
+        /// <summary>
+        /// For a CREDIT only: how much of the credited amount is TAINTED (added to the wallet's gifted
+        /// portion); the remainder is clean/earned. Null/0 = the whole credit is earned — the default for
+        /// winnings, IAP, house bonuses and level rewards. Set to the full amount for a player-to-player gift
+        /// claim, or to <c>gross × giftedStakeRatio</c> for a bet payout so a win keeps the stake's gifted
+        /// fraction and can't launder gifted chips clean. Ignored for debits (which always spend earned first).
+        /// </summary>
+        public decimal? CreditGiftedAmount { get; set; }
     }
 
     /// <summary>

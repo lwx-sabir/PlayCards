@@ -39,6 +39,16 @@ namespace Khela.Game.Database.Models
         [Precision(18, 4)]
         public decimal PendingBalance { get; set; } = 0m;  // Optional for in-progress bets
 
+        // Tainted portion of Balance: chips received from another PLAYER's gift (Progression Spec §6).
+        // The clean/earned balance is the remainder (Balance - GiftedBalance) and is what accrues progression.
+        // INVARIANT: 0 <= GiftedBalance <= Balance, maintained on every WalletService.ApplyAsync. Bets spend
+        // EARNED first; a winning payout credits back the same gifted fraction as its stake, so gifted chips
+        // stay tainted through wins (they can only leave by being wagered-and-lost or spent). Defaults 0, so
+        // every existing chip is automatically earned — no backfill needed.
+        [Precision(18, 4)]
+        [Required]
+        public decimal GiftedBalance { get; set; } = 0m;
+
         [Required]
         public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 

@@ -47,5 +47,8 @@ namespace Khela.Game.Database
         public DbSet<Gift> Gifts { get; set; }
 
         public DbSet<ChatMessage> ChatMessages { get; set; }
+
+        // --- Reports (AddProfileBlurbsAndReports migration) ---
+        public DbSet<Report> Reports { get; set; }
     }
 }

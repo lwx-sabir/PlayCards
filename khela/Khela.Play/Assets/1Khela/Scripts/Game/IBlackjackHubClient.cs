@@ -38,5 +38,9 @@ namespace PlayCard.Game
 
         /// <summary>Ask the server to re-send the current board snapshot.</summary>
         Task RequestBoardAsync(string tableId);
+
+        /// <summary>Seated keep-alive (~every 5s) so the server doesn't reap us as stalled. On the live transport
+        /// this is a hub call; on the polling fallback it hits the REST heartbeat endpoint.</summary>
+        Task HeartbeatAsync(string tableId);
     }
 }

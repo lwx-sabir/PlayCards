@@ -18,6 +18,9 @@ namespace Khela.Game.Services.Friends
         Task<IReadOnlyList<FriendDto>> GetPendingAsync(Guid userId);
         Task<IReadOnlyList<FriendDto>> SearchAsync(Guid userId, string query, int limit = 20);
         Task<IReadOnlyList<FriendDto>> RecentPlayersAsync(Guid userId, int limit = 20);
+
+        /// <summary>True if A and B have a Blocked edge in either direction (shared block-aware filter).</summary>
+        Task<bool> IsBlockedBetweenAsync(Guid a, Guid b);
     }
 
     /// <summary>
@@ -165,7 +168,8 @@ namespace Khela.Game.Services.Friends
                 .Select(p => p.UserId).Take(limit).ToListAsync();
             ids.AddRange(byName);
 
-            return await ToDtosAsync(ids.Distinct().Take(limit).ToList(), -1);
+            var candidates = ids.Distinct().Take(limit).ToList();
+            return await ToDtosAsync(await ExcludeBlockedAsync(userId, candidates), -1);
         }
 
         public async Task<IReadOnlyList<FriendDto>> RecentPlayersAsync(Guid userId, int limit = 20)
@@ -185,7 +189,28 @@ namespace Khela.Game.Services.Friends
                 .Take(limit)
                 .ToListAsync();
 
-            return await ToDtosAsync(otherIds, -1);
+            return await ToDtosAsync(await ExcludeBlockedAsync(userId, otherIds), -1);
+        }
+
+        /// <inheritdoc/>
+        public Task<bool> IsBlockedBetweenAsync(Guid a, Guid b)
+            => _db.Friendships.AsNoTracking().AnyAsync(f =>
+                f.Status == FriendshipStatus.Blocked &&
+                ((f.RequesterId == a && f.AddresseeId == b) ||
+                 (f.RequesterId == b && f.AddresseeId == a)));
+
+        // Shared block-aware filter for the discovery lists: drop any id with a Blocked edge to userId in either
+        // direction. One batched query instead of N per-pair checks.
+        private async Task<List<Guid>> ExcludeBlockedAsync(Guid userId, List<Guid> ids)
+        {
+            if (ids.Count == 0) return ids;
+            var blocked = (await _db.Friendships.AsNoTracking()
+                .Where(f => f.Status == FriendshipStatus.Blocked &&
+                    ((f.RequesterId == userId && ids.Contains(f.AddresseeId)) ||
+                     (f.AddresseeId == userId && ids.Contains(f.RequesterId))))
+                .Select(f => f.RequesterId == userId ? f.AddresseeId : f.RequesterId)
+                .ToListAsync()).ToHashSet();
+            return blocked.Count == 0 ? ids : ids.Where(id => !blocked.Contains(id)).ToList();
         }
 
         private async Task<IReadOnlyList<FriendDto>> ToDtosAsync(List<Guid> userIds, int status)

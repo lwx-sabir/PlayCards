@@ -1,6 +1,7 @@
 using Khela.Common.Social;
 using Khela.Game.Services.Chat;
 using Khela.Game.Services.Presence;
+using Khela.Game.Services.Profile;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
@@ -19,11 +20,13 @@ namespace Khela.Game.Managers.SRHubs
     {
         private readonly IChatService _chat;
         private readonly IPresenceService _presence;
+        private readonly IProfileService _profiles;
 
-        public ChatHub(IChatService chat, IPresenceService presence)
+        public ChatHub(IChatService chat, IPresenceService presence, IProfileService profiles)
         {
             _chat = chat;
             _presence = presence;
+            _profiles = profiles;
         }
 
         public override async Task OnConnectedAsync()
@@ -34,7 +37,12 @@ namespace Khela.Game.Managers.SRHubs
 
         public override async Task OnDisconnectedAsync(Exception exception)
         {
-            if (TryUser(out var uid)) await _presence.MarkOfflineAsync(uid, Context.ConnectionId);
+            if (TryUser(out var uid))
+            {
+                await _presence.MarkOfflineAsync(uid, Context.ConnectionId);
+                // Only the user's LAST connection dropping flips them offline — stamp LastSeenAt at that point.
+                if (!await _presence.IsOnlineAsync(uid)) await _profiles.SetLastSeenAsync(uid);
+            }
             await base.OnDisconnectedAsync(exception);
         }
 

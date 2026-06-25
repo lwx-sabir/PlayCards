@@ -3,12 +3,13 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 3
-  tags: []
+  tags:
+  - Avatar_3d
   layers:
   - Default
   - TransparentFX
   - Ignore Raycast
-  - 
+  - Avatar
   - Water
   - UI
   - Chip

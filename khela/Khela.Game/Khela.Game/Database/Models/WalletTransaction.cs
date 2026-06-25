@@ -37,6 +37,13 @@ namespace Khela.Game.Database.Models
         [Required]
         public decimal Amount { get; set; }
 
+        // Tainted slice of this movement (signed; the earned slice is Amount - GiftedDelta). Lets progression
+        // read exactly how much of a bet was drawn from EARNED chips. Defaults 0 = fully earned; historical
+        // rows are 0 (treated as earned).
+        [Precision(18, 4)]
+        [Required]
+        public decimal GiftedDelta { get; set; } = 0m;
+
         [Required]
         public TransactionType Type { get; set; }
 
@@ -76,6 +83,14 @@ namespace Khela.Game.Database.Models
 
         [Precision(18, 4)]
         public decimal? BalanceAfter { get; set; }
+
+        // Per-row snapshot of the tainted slice (mirrors BalanceBefore/After) for dispute/audit — so a settle
+        // dispute can read the gifted balance at the moment of the movement without summing GiftedDelta rows.
+        [Precision(18, 4)]
+        public decimal? GiftedBalanceBefore { get; set; }
+
+        [Precision(18, 4)]
+        public decimal? GiftedBalanceAfter { get; set; }
 
         public string MetadataJson { get; set; }
     }

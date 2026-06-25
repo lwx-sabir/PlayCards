@@ -88,6 +88,55 @@ namespace Khela.Game.Tests
             await c.PostAsync($"/api/blackjack/{a}/dealerPlay", null);
         }
 
+        [Fact]
+        public async Task StalledPlayer_AutoStandsSettlesAndFreesSeat()
+        {
+            using var c = NewClient();
+            if (!await ServerUpAsync(c)) { Skip("backend not reachable"); return; }
+
+            await RegisterAsync(c);
+            var table = await CreateTableAsync(c);
+            await JoinAsync(c, table);
+            await BetAsync(c, table, 1000m);
+            await EnsureOk(await c.PostAsync($"/api/blackjack/{table}/deal", null));
+            Assert.Equal(9000m, await ChipsAsync(c));            // stake debited at deal (debit-on-bet)
+
+            // Now go SILENT — never send a heartbeat (this HttpClient runs no keep-alive loop). The server's
+            // stalled-player reaper must, after Table:StalledTimeoutSeconds, auto-stand the hand, SETTLE it
+            // normally, and FREE the seat — without stranding or double-paying the already-debited stake.
+            // Tune the backend low (Table__StalledTimeoutSeconds=6) for a fast run; default 30s needs ~40s budget.
+            var budgetSec = int.TryParse(Environment.GetEnvironmentVariable("KHELA_STALLED_WAIT"), out var b) ? b : 50;
+
+            bool settled = false, freed = false;
+            var deadline = DateTime.UtcNow.AddSeconds(budgetSec);
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(2000);
+                using var doc = await EnsureOk(await c.GetAsync($"/api/blackjack/{table}/board"));
+                var root = doc.RootElement;
+
+                // Settled? LastResults carrying our seat proves the round was SETTLED (not silently dropped),
+                // so the debited stake was reconciled through the normal wallet path.
+                settled = root.TryGetProperty("lastResults", out var lr) && lr.ValueKind == JsonValueKind.Array
+                          && lr.EnumerateArray().Any(r => r.GetProperty("seatNumber").GetInt32() == 1);
+
+                // Freed? The reaper removed the seat after settle.
+                var seat1 = root.GetProperty("seats").EnumerateArray()
+                                .First(s => s.GetProperty("seatNumber").GetInt32() == 1);
+                freed = !seat1.GetProperty("occupied").GetBoolean();
+
+                if (settled && freed) break;
+            }
+
+            var final = await ChipsAsync(c);
+            Assert.True(settled, "Stalled hand must SETTLE (LastResults carries seat 1) — the stake must never be stranded.");
+            Assert.True(freed, "The reaper must FREE the seat after settlement.");
+            // Single 1000 stake from 10000 → loss 9000 / push 10000 / win 11000 / natural 11500. Anything else
+            // means a double-pay or a lost stake.
+            Assert.Contains(final, new[] { 9000m, 10000m, 11000m, 11500m });
+            _out.WriteLine($"Stalled player reaped cleanly: settled={settled}, seatFreed={freed}, final={final}.");
+        }
+
         // ---------- helpers ----------
 
         private static HttpClient NewClient() => new() { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(20) };

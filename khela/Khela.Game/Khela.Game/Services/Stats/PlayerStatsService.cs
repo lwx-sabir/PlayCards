@@ -6,8 +6,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Khela.Game.Services.Stats
 {
-    /// <summary>Per-participant net result of one settled round, fed to the stats roll-up.</summary>
-    public readonly record struct RoundResult(Guid UserId, decimal Wagered, decimal Net);
+    /// <summary>Per-participant net result of one settled round, fed to the stats roll-up. <c>CleanWager</c>
+    /// is the EARNED (non-gifted), insurance-excluded stake — the basis for progression XP (System A).</summary>
+    public readonly record struct RoundResult(Guid UserId, decimal Wagered, decimal Net, decimal CleanWager, long GrantedXp);
 
     public interface IPlayerStatsService
     {
@@ -24,10 +25,6 @@ namespace Khela.Game.Services.Stats
     /// </summary>
     public sealed class PlayerStatsService : IPlayerStatsService
     {
-        private const long XpPerRound = 10;
-        private const long XpPerWin   = 10;
-        private const long XpPerLevel = 1000;
-
         private readonly AppDbContext _db;
         private readonly ILeaderboardService _leaderboard;
 
@@ -58,7 +55,7 @@ namespace Khela.Game.Services.Stats
                 }
 
                 bool win = r.Net > 0m, loss = r.Net < 0m;
-                long xp = XpPerRound + (win ? XpPerWin : 0);
+                long xp = r.GrantedXp;   // progression-granted XP (System A) — single owner; mirror it to per-game + leaderboard
 
                 // ---- per-game (UserGameStats) ----
                 stats.GamesPlayed++;
@@ -105,9 +102,9 @@ namespace Khela.Game.Services.Stats
                     profile.TotalWon += win ? r.Net : 0m;
                     profile.NetProfit += r.Net;
                     if (win && r.Net > profile.BiggestWin) profile.BiggestWin = r.Net;
-                    profile.Experience += xp;
-                    profile.LifetimeExperience += xp;
-                    profile.Level = 1 + (int)(profile.LifetimeExperience / XpPerLevel);
+                    // XP/Level moved to ProgressionService (System A) — it is the SOLE writer of
+                    // Experience/LifetimeExperience/Level. PlayerStatsService only mirrors the granted XP to
+                    // UserGameStats.ExperienceEarned + the XP leaderboard below.
                     profile.LastPlayedGameType = gameType;
                     profile.LastPlayedAt = now;
                     profile.UpdatedAt = now;

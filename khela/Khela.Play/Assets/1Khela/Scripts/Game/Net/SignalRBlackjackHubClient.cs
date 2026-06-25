@@ -84,6 +84,7 @@ namespace PlayCard.Game.Net
         public Task JoinTableAsync(string tableId)   => Invoke("JoinTable", tableId);
         public Task LeaveTableAsync(string tableId)  => Invoke("LeaveTable", tableId);
         public Task RequestBoardAsync(string tableId) => Invoke("RequestBoard", tableId);
+        public Task HeartbeatAsync(string tableId)    => Invoke("Heartbeat", tableId);
 
         private async Task Invoke(string method, string tableId)
         {

@@ -19,7 +19,7 @@ namespace Khela.Game.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
+    [Authorize(Policy = "Admin")]
     public class ReconciliationController : ControllerBase
     {
         private readonly AppDbContext db;
@@ -41,7 +41,6 @@ namespace Khela.Game.Controllers
         [HttpGet("status")]
         public async Task<IActionResult> Status()
         {
-            if (!env.IsDevelopment()) return NotFound();
             return Ok(new
             {
                 enabled = config.GetValue("Reconciliation:Enabled", false),
@@ -58,8 +57,6 @@ namespace Khela.Game.Controllers
         [HttpGet("unresolved")]
         public async Task<IActionResult> Unresolved()
         {
-            if (!env.IsDevelopment()) return NotFound(); // TODO: gate behind an Admin role before prod
-
             var items = await db.GameHandParticipants
                 .Where(p => !p.Resolved && (p.Outcome == "settle_failed" || p.Outcome == "settle_mismatch"))
                 .OrderBy(p => p.HandId)
@@ -96,7 +93,6 @@ namespace Khela.Game.Controllers
         [HttpPost("run")]
         public async Task<IActionResult> Run()
         {
-            if (!env.IsDevelopment()) return NotFound();
             var summary = await sweeper.RunPassAsync(HttpContext.RequestAborted);
             return Ok(summary);
         }
@@ -109,7 +105,6 @@ namespace Khela.Game.Controllers
         [HttpPost("resolve/{participantId}")]
         public async Task<IActionResult> Resolve(Guid participantId)
         {
-            if (!env.IsDevelopment()) return NotFound();
             var row = await db.GameHandParticipants.FirstOrDefaultAsync(p => p.ParticipantId == participantId);
             if (row == null) return NotFound(new { message = "participant not found" });
             if (row.Outcome != "settle_mismatch")

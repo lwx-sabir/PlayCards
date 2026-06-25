@@ -133,7 +133,16 @@ namespace Khela.Game.Managers
                 var userId = any.p.UserId.ToString();
                 try
                 {
-                    var cx = new WalletContext { TableId = any.TableId, RoundId = roundId, Description = $"Reconcile payout round {roundId} seat {seat}" };
+                    // Mirror settle's proportional payout: credit back the stake's gifted fraction so a
+                    // reconciled win keeps its taint (no laundering). Read the seat's Bet ledger for the round.
+                    var stakeRows = await db.WalletTransactions.AsNoTracking()
+                        .Where(t => t.Type == TransactionType.Bet && t.RoundId == roundId
+                                    && t.CorrelationId != null && t.CorrelationId.StartsWith($"bjr:{roundId}:{seat}:"))
+                        .Select(t => new { t.Amount, t.GiftedDelta }).ToListAsync(ct);
+                    var totalStaked = stakeRows.Sum(t => -t.Amount);
+                    var giftedStaked = stakeRows.Sum(t => -t.GiftedDelta);
+                    var giftedCredit = totalStaked > 0m ? Math.Round(owed * (giftedStaked / totalStaked), 4) : 0m;
+                    var cx = new WalletContext { TableId = any.TableId, RoundId = roundId, Description = $"Reconcile payout round {roundId} seat {seat}", CreditGiftedAmount = giftedCredit };
                     // Same :pay id as settle → a duplicate is a safe no-op (wallet's unique correlation index).
                     var txn = await wallet.CreditAsync(userId, CurrencyType.Chips, owed, TransactionType.Win, $"bjr:{roundId}:{seat}:pay", cx);
                     var txIdStr = txn.TransactionId.ToString();
@@ -200,9 +209,10 @@ namespace Khela.Game.Managers
                     var walletId = seatTxns.First().WalletId;
                     var pw = await db.PlayerWallets.FirstOrDefaultAsync(w => w.WalletId == walletId, ct);
                     if (pw == null) continue;
+                    var giftedStaked = seatTxns.Sum(t => -t.GiftedDelta);   // restore the exact tainted slice that was debited
                     try
                     {
-                        var cx = new WalletContext { TableId = seatTxns.First().TableId, RoundId = roundId, Description = $"Reconcile refund round {roundId} seat {seat}" };
+                        var cx = new WalletContext { TableId = seatTxns.First().TableId, RoundId = roundId, Description = $"Reconcile refund round {roundId} seat {seat}", CreditGiftedAmount = giftedStaked };
                         await wallet.CreditAsync(pw.UserId.ToString(), CurrencyType.Chips, staked, TransactionType.Refund, $"bjr:{roundId}:{seat}:reconrf", cx);
                         summary.Refunds++;
                         _logger.LogWarning("Reconciled orphan stake: round {RoundId} seat {Seat} refunded {Staked}.", roundId, seat, staked);

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace CardGames.Blackjack.CardGames.Blackjack
+namespace CardGames.Blackjack
 {
     /// <summary>Main-hand outcome of a settled blackjack hand.</summary>
     public enum HandOutcome { Blackjack, Win, Push, Lose, Bust }

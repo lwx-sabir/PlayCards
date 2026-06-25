@@ -1,5 +1,5 @@
 using System.Linq;
-using CardGames.Blackjack.CardGames.Blackjack;
+using CardGames.Blackjack;
 using CardGames.Platforms;
 
 namespace Khela.Game.Managers
@@ -73,7 +73,9 @@ namespace Khela.Game.Managers
         {
             s.SeatNumber,
             Occupied = s.Player != null,
-            Player = s.Player == null ? null : ToPlayerDto(s.Player)
+            Player = s.Player == null ? null : ToPlayerDto(s.Player),
+            s.IsConnected,   // false ⇒ client shows "disconnected…" for this seat
+            s.IsStalled      // no heartbeat past StalledTimeout — removal imminent
         };
     }
 }

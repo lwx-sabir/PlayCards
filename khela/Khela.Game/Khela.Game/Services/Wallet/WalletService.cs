@@ -117,18 +117,29 @@ namespace Khela.Game.Services.Wallet
                 throw new WalletLockedException(walletId);
 
             var before = locked.Balance;
+            var giftedBefore = locked.GiftedBalance;
             var after = before + signedAmount;
             if (after < 0m)
                 throw new InsufficientFundsException(walletId, currency, before, -signedAmount);
 
+            // Track the TAINTED (gifted) slice of the balance; the earned balance is the remainder.
+            //  Debit  → spend EARNED first (= Balance - GiftedBalance); only dip into gifted once earned runs out.
+            //  Credit → clean by default; the caller pins the tainted slice via WalletContext.CreditGiftedAmount
+            //           (a player gift = full amount; a bet payout = gross × giftedStakeRatio so winnings keep
+            //           the stake's gifted fraction and gifted chips can't be laundered clean).
+            // The arithmetic lives in WalletBuckets so it's unit-testable without the DB/lock/transaction.
+            var giftedDelta = WalletBuckets.GiftedDelta(locked.Balance, locked.GiftedBalance, signedAmount, context?.CreditGiftedAmount);
+
             var now = DateTime.UtcNow;
             locked.Balance = after;
+            locked.GiftedBalance += giftedDelta;   // stays in [0, Balance] by construction
             locked.LastUpdated = now;
 
             var txn = new WalletTransaction
             {
                 WalletId = walletId,
                 Amount = signedAmount,            // signed delta: BalanceBefore + Amount == BalanceAfter
+                GiftedDelta = giftedDelta,        // tainted slice of Amount; earned slice = Amount - GiftedDelta
                 Type = type,
                 Status = TransactionStatus.Completed,
                 GameId = context?.GameId,
@@ -139,6 +150,8 @@ namespace Khela.Game.Services.Wallet
                 RoundId = context?.RoundId,
                 BalanceBefore = before,
                 BalanceAfter = after,
+                GiftedBalanceBefore = giftedBefore,
+                GiftedBalanceAfter = giftedBefore + giftedDelta,
                 MetadataJson = context?.MetadataJson,
                 CreatedAt = now,
                 CompletedAt = now

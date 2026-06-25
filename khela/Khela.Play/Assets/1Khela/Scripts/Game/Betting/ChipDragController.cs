@@ -70,6 +70,7 @@ namespace PlayCard.Game.Betting
                 var spot = hit.collider.GetComponentInParent<BetSpot>();
                 if (spot != null && builder != null && builder.CanPlace(_chip.Value))
                 {
+                    ChipSheen.Remove(_ghost);   // matte it the instant it lands on the spot — before the stack/physics
                     builder.Add(_chip.Value);
                     spot.Stack(_ghost);   // the ghost becomes the chip sitting on the bet spot
                     _ghost = null;

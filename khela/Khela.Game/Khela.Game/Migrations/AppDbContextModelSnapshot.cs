@@ -829,6 +829,10 @@ namespace Khela.Game.Migrations
                     b.Property<int>("Currency")
                         .HasColumnType("int");
 
+                    b.Property<decimal>("GiftedBalance")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
                     b.Property<bool>("IsLocked")
                         .HasColumnType("tinyint(1)");
 
@@ -853,6 +857,67 @@ namespace Khela.Game.Migrations
                         .IsUnique();
 
                     b.ToTable("PlayerWallets");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.Report", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("ActionNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("varchar(1000)");
+
+                    b.Property<string>("ContextSnapshot")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<int>("Reason")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ReportedUserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid>("ReporterUserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid?>("ResolvedByAdminId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("TargetMessageId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<int>("TargetType")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReportedUserId", "Status");
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("Reports");
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.StoreItem", b =>
@@ -1043,6 +1108,10 @@ namespace Khela.Game.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("decimal(18,4)");
 
+                    b.Property<string>("Bio")
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)");
+
                     b.Property<string>("CountryFlagId")
                         .HasMaxLength(64)
                         .HasColumnType("varchar(64)");
@@ -1055,6 +1124,12 @@ namespace Khela.Game.Migrations
 
                     b.Property<int>("CurrentWinStreak")
                         .HasColumnType("int");
+
+                    b.Property<long>("DailyXp")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("DailyXpResetAt")
+                        .HasColumnType("datetime(6)");
 
                     b.Property<int?>("DefaultGame")
                         .HasColumnType("int");
@@ -1124,6 +1199,10 @@ namespace Khela.Game.Migrations
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("StatusMessage")
+                        .HasMaxLength(80)
+                        .HasColumnType("varchar(80)");
 
                     b.Property<decimal>("TotalWagered")
                         .HasPrecision(28, 4)
@@ -1198,6 +1277,18 @@ namespace Khela.Game.Migrations
 
                     b.Property<Guid?>("GameId")
                         .HasColumnType("char(36)");
+
+                    b.Property<decimal?>("GiftedBalanceAfter")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal?>("GiftedBalanceBefore")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("GiftedDelta")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
 
                     b.Property<string>("MetadataJson")
                         .HasColumnType("longtext");

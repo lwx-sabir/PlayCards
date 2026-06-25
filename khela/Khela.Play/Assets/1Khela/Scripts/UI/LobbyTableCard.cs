@@ -144,7 +144,7 @@ namespace PlayCard.UI
             var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, "Player", "", seatNumber);
             if (res.Ok)
             {
-                SceneNavigator.GoToTable(_tableId);
+                SceneNavigator.GoToTable(_tableId, seatNumber);   // carry the chosen seat so the table resolves it instantly
             }
             else
             {

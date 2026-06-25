@@ -26,6 +26,9 @@ namespace PlayCard.Game.Table
 
         [Tooltip("One entry per seat — element 0 = seat 1, element 1 = seat 2, …")]
         [SerializeField] private SeatView[] seats;
+        [Tooltip("Where the camera STARTS on entering the table (e.g. a dealer close-up), before it eases to the " +
+                 "local player's seat. Falls back to spectatePose / seat 1 if unset.")]
+        [SerializeField] private Transform entryPose;
         [Tooltip("Used when not seated (spectating) or before a seat is known.")]
         [SerializeField] private Transform spectatePose;
 
@@ -43,7 +46,9 @@ namespace PlayCard.Game.Table
         private void Awake()
         {
             _cam = GetComponent<Camera>();
-            _target = spectatePose != null ? spectatePose : (seats != null && seats.Length > 0 ? seats[0].tablePose : null);
+            _target = entryPose != null ? entryPose
+                    : spectatePose != null ? spectatePose
+                    : (seats != null && seats.Length > 0 ? seats[0].tablePose : null);
             _targetFov = tableFov;
             if (_target != null) transform.SetPositionAndRotation(_target.position, _target.rotation);
             if (_cam) _cam.fieldOfView = tableFov;
@@ -51,7 +56,11 @@ namespace PlayCard.Game.Table
 
         private void OnEnable()
         {
-            if (table != null) table.OnBoardChanged += OnBoard;
+            if (table == null) return;
+            table.OnBoardChanged += OnBoard;
+            // Ease to the local player's seat immediately (resolved from the lobby pick) — don't wait for the first
+            // board, so the camera glides entry-pose → seat instead of sitting stuck if the live channel is slow/down.
+            OnBoard(table.Board);
         }
 
         private void OnDisable()
@@ -62,7 +71,11 @@ namespace PlayCard.Game.Table
         private void OnBoard(BoardSnapshot board)
         {
             int seat = table.MySeat;                 // 1-based, or -1 if not seated
+            // Close in (bet pose + bet fov) both while BETTING and while it's the local player's TURN, so acting on
+            // your hand gets the same focused framing as placing a bet; wide table pose otherwise.
             bool betting = board != null && !board.RoundInProgress;
+            bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat;
+            bool close = betting || myTurn;
 
             // Use the local player's seat pose. If they're NOT seated (MySeat == -1) or that seat isn't authored,
             // fall back to the spectate pose — NOT seats[0], which would silently park everyone at the first seat
@@ -74,10 +87,10 @@ namespace PlayCard.Game.Table
             if (view.HasValue)
             {
                 var v = view.Value;
-                var pose = betting ? v.betPose : v.tablePose;
+                var pose = close ? v.betPose : v.tablePose;
                 if (pose == null) pose = v.tablePose ?? v.betPose;   // fall back to whichever is set
                 if (pose != null) _target = pose;
-                _targetFov = betting ? betFov : tableFov;
+                _targetFov = close ? betFov : tableFov;
             }
             else if (spectatePose != null)
             {

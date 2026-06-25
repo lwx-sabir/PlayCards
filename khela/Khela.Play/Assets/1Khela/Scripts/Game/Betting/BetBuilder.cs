@@ -40,6 +40,7 @@ namespace PlayCard.Game.Betting
 
         private readonly List<long> _placed = new List<long>();     // placed chip values, for Undo
         private readonly List<long> _lastPlaced = new List<long>(); // chips of the last dealt bet, for Repeat
+        private bool _dealing;                                        // a deal is in flight — drop re-entrant DEAL taps
 
         /// <summary>The exact chip values of the last dealt bet, for one-tap Repeat. Empty until the first deal.</summary>
         public IReadOnlyList<long> LastPlaced => _lastPlaced;
@@ -89,21 +90,29 @@ namespace PlayCard.Game.Betting
             Notify();
         }
 
-        /// <summary>Place the accumulated bet and deal, then clear (hook the DEAL button). No-op below the min.</summary>
+        /// <summary>Place the accumulated bet and deal, then clear (hook the DEAL button). No-op below the min,
+        /// while a deal is already in flight, or while a round is already running — so rapid/queued DEAL taps
+        /// (e.g. after a lag spike) can't fire several rounds back-to-back.</summary>
         public void Deal()
         {
-            if (!MeetsMinimum || table == null) return;
+            if (_dealing || !MeetsMinimum || table == null) return;
+            if (table.Board != null && table.Board.RoundInProgress) return;   // a round is already live
             _ = DealRoutine();
         }
 
         private async Task DealRoutine()
         {
-            var amount = Total;
-            _lastPlaced.Clear();
-            _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
-            Clear();
-            await table.PlaceBet(amount);    // records the bet (debited at deal)
-            await table.Deal();
+            _dealing = true;
+            try
+            {
+                var amount = Total;
+                _lastPlaced.Clear();
+                _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
+                Clear();
+                await table.PlaceBet(amount);    // records the bet (debited at deal)
+                await table.Deal();
+            }
+            finally { _dealing = false; }
         }
     }
 }

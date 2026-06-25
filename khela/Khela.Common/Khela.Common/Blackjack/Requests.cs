@@ -41,4 +41,10 @@
         public decimal Amount { get; set; }
         public int HandIndex { get; set; } = 0;
     }
+
+    public class EmoteRequest
+    {
+        /// <summary>Catalog id of the emote to play (the client maps id → visual). Validated server-side.</summary>
+        public string EmoteId { get; set; } = string.Empty;
+    }
 }

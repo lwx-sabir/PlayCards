@@ -70,6 +70,8 @@ namespace PlayCard.Game.Betting
             if (chip == null) return;
             if (_box == null) _box = GetComponent<BoxCollider>();
 
+            ChipSheen.Remove(chip);   // it's a copy of a rail chip — drop the rail glint once it settles into the bet
+
             // Re-enable the chip's collider as a convex solid (legal for a dynamic Rigidbody).
             SetLayerRecursive(chip, physicsLayer);
             foreach (var c in chip.GetComponentsInChildren<Collider>(true))

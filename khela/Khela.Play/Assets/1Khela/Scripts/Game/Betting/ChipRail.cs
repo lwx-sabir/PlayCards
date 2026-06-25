@@ -19,6 +19,9 @@ namespace PlayCard.Game.Betting
         [Tooltip("Template chips for this seat's view, low → high (cheapest first). MARKERS ONLY — hidden at " +
                  "runtime; the real chips spawn onto them. The spawned colour comes from the ChipSet, not these.")]
         [SerializeField] private ChipView[] chips;
+        [Tooltip("Additive glint OVERLAY material (shader Khela/ChipSheen) layered onto the spawned rail chips only. " +
+                 "Leave empty for no shine. The chip's own material is left untouched.")]
+        [SerializeField] private Material sheenOverlay;
 
         private struct Slot { public Transform parent; public Vector3 pos; public Quaternion rot; public Vector3 scale; }
 
@@ -72,6 +75,8 @@ namespace PlayCard.Game.Betting
 
                 var chip = go.GetComponentInChildren<ChipView>();
                 if (chip != null) chip.SetValue(values[i]);
+
+                if (sheenOverlay != null) ChipSheen.Apply(go, sheenOverlay);   // layer the glint overlay on this rail chip only
 
                 _spawned.Add(go);
             }
