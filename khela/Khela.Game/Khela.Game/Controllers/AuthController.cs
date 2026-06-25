@@ -222,8 +222,9 @@ namespace Khela.Game.Controllers
             }
             catch (Exception ex)
             {
-                // Never fail auth over bootstrap — it's idempotent and re-runs on next login.
-                Console.Error.WriteLine($"[AuthController] profile/starter bootstrap failed for {user.Id}: {ex.Message}");
+                // Never fail auth over bootstrap — it's idempotent and re-runs on next login. Log the FULL
+                // exception (type + inner SQL error + stack) so a swallowed bootstrap failure is diagnosable.
+                Console.Error.WriteLine($"[AuthController] profile/starter bootstrap FAILED for {user.Id}:\n{ex}");
             }
         }
 
@@ -234,13 +235,31 @@ namespace Khela.Game.Controllers
         /// </summary>
         private async Task<string> SafeDisplayNameAsync(string requested)
         {
+            string candidate;
             if (!string.IsNullOrWhiteSpace(requested))
             {
                 var mod = await _moderator.ModerateAsync(requested);
-                if (mod.Outcome == ModerationOutcome.Approved)
-                    return mod.Text.Length <= 32 ? mod.Text : mod.Text.Substring(0, 32);
+                candidate = mod.Outcome == ModerationOutcome.Approved
+                    ? (mod.Text.Length <= 32 ? mod.Text : mod.Text.Substring(0, 32))
+                    : "Player" + Guid.NewGuid().ToString("N").Substring(0, 6);
             }
-            return "Player" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            else
+            {
+                candidate = "Player" + Guid.NewGuid().ToString("N").Substring(0, 6);
+            }
+
+            // Enforce the UNIQUE DisplayNameNormalized index BEFORE the insert: if the name (case-folded) is
+            // already taken — e.g. two long device/test names truncated to the same 32 chars — append a short
+            // discriminator until it's free. Without this the profile INSERT throws a duplicate-key the bootstrap
+            // swallows, leaving an account with NO profile (every /api/profile/me then 404s).
+            var normalized = candidate.ToUpperInvariant();
+            for (int i = 0; i < 6 && await _dbContext.UserProfiles.AnyAsync(p => p.DisplayNameNormalized == normalized); i++)
+            {
+                var stem = candidate.Length <= 27 ? candidate : candidate.Substring(0, 27);   // keep <= 32 after suffix
+                candidate = stem + "_" + Guid.NewGuid().ToString("N").Substring(0, 4);
+                normalized = candidate.ToUpperInvariant();
+            }
+            return candidate;
         }
 
         private async Task LinkDeviceToUserAsync(string deviceId, string userId)

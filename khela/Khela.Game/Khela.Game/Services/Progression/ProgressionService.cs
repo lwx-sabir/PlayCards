@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Khela.Common.Progression;
 using Khela.Game.Database;
@@ -48,7 +49,9 @@ namespace Khela.Game.Services.Progression
             _db = db; _wallet = wallet; _redis = redis; _logger = logger;
             _cfg = new ProgressionConfig
             {
+                Enabled = config.GetValue("Progression:Enabled", true),
                 XpChipsPerPoint = config.GetValue("Progression:XpChipsPerPoint", 10m),
+                MaxWagerPerBet = config.GetValue("Progression:MaxWagerPerBet", 0m),
                 MinBetEarly = config.GetValue("Progression:MinBetEarly", 1000m),
                 MinBetLate = config.GetValue("Progression:MinBetLate", 5000m),
                 EarlyMaxLevel = config.GetValue("Progression:EarlyMaxLevel", 3),
@@ -64,54 +67,69 @@ namespace Khela.Game.Services.Progression
 
         public async Task<long> AccrueForRoundAsync(Guid userId, decimal cleanWager, bool win, string roundId)
         {
-            if (string.IsNullOrEmpty(roundId)) return 0;
+            if (!_cfg.Enabled || string.IsNullOrEmpty(roundId)) return 0;   // game-extension layer off → no XP
 
             // Idempotency: the Experience/Level mutation is += (not idempotent), so gate it durably per
-            // (round, user). SET-NX FIRST — we favour no-double over no-loss here, because double XP would
-            // also double the level-up CHIP rewards. The settle roll-up already runs once per round under
-            // bjr:settled:{roundId}; this key protects against a settle retry after that 1h guard lapses.
+            // (round, user). SET-NX FIRST — favour no-double over no-loss (double XP would double the level-up
+            // CHIP rewards on a crash). The settle roll-up already runs once per round under bjr:settled:{round};
+            // this key protects against a settle retry after that 1h guard lapses.
             var idemKey = $"xpacc:{roundId}:{userId}";
-            var fresh = await _redis.GetDatabase().StringSetAsync(idemKey, "1", TimeSpan.FromDays(30), When.NotExists);
-            if (!fresh) return 0;
+            if (!await _redis.GetDatabase().StringSetAsync(idemKey, "1", TimeSpan.FromDays(30), When.NotExists))
+                return 0;
 
             var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
             if (profile == null) return 0;
 
-            var now = DateTime.UtcNow;
-            // Daily cap window — lazy reset on the first accrual after midnight (no background job needed).
-            if (profile.DailyXpResetAt == null || now >= profile.DailyXpResetAt)
+            // Apply under OPTIMISTIC CONCURRENCY. UserProfile carries a RowVersion, so a SAME-USER multi-table
+            // concurrent settle races this row: one SaveChanges throws DbUpdateConcurrencyException. Reload the
+            // latest row and re-apply from its fresh values — safe because level rewards are idempotent per
+            // (user,level), so a retry can never double-pay chips. Without this, the conflict would be swallowed
+            // AFTER xpacc is set and the round's XP + rewards would be lost forever.
+            for (int attempt = 1; ; attempt++)
             {
-                profile.DailyXp = 0;
-                profile.DailyXpResetAt = now.Date.AddDays(1);   // next UTC midnight
+                var now = DateTime.UtcNow;
+                // Daily-cap window — lazy reset on the first accrual after midnight (no background job needed).
+                if (profile.DailyXpResetAt == null || now >= profile.DailyXpResetAt)
+                {
+                    profile.DailyXp = 0;
+                    profile.DailyXpResetAt = now.Date.AddDays(1);   // next UTC midnight
+                }
+
+                var cap = await GetDailyXpCapAsync();
+                var rawXp = ProgressionMath.RawXp(cleanWager, profile.Level, win, _cfg);
+                var grantedXp = Math.Min(rawXp, Math.Max(0, cap - profile.DailyXp));   // excess over the cap DISCARDED
+                profile.DailyXp += grantedXp;
+
+                List<int> crossed = null;
+                if (grantedXp > 0)
+                {
+                    var (exp, level, cl) = ProgressionMath.ApplyLevelUps(
+                        profile.Experience, profile.Level, grantedXp, _cfg.XpBase, _cfg.XpExp);
+                    profile.Experience = exp;                  // into-level counter (carries the remainder)
+                    profile.Level = level;
+                    profile.LifetimeExperience += grantedXp;   // monotonic (XP-board source)
+                    crossed = cl;
+                }
+                profile.UpdatedAt = now;
+
+                try
+                {
+                    await _db.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException) when (attempt < 4)
+                {
+                    await _db.Entry(profile).ReloadAsync();   // overwrite with the committed DB values; loop recomputes
+                    continue;
+                }
+
+                // Credit rewards AFTER the level is durably persisted. Idempotent per (user,level), so a crash
+                // between save and credit self-heals on retry and a re-climbed level never pays twice.
+                if (crossed != null)
+                    foreach (var lvl in crossed)
+                        await CreditLevelRewardsAsync(userId, lvl);
+
+                return grantedXp;
             }
-
-            var cap = await GetDailyXpCapAsync();
-            var rawXp = ProgressionMath.RawXp(cleanWager, profile.Level, win, _cfg);
-            var remaining = Math.Max(0, cap - profile.DailyXp);
-            var grantedXp = Math.Min(rawXp, remaining);   // excess over the cap is DISCARDED (not banked)
-            profile.DailyXp += grantedXp;
-
-            if (grantedXp <= 0)
-            {
-                await _db.SaveChangesAsync();   // still persist the daily-cap reset
-                return 0;
-            }
-
-            var (exp, level, crossed) = ProgressionMath.ApplyLevelUps(
-                profile.Experience, profile.Level, grantedXp, _cfg.XpBase, _cfg.XpExp);
-            profile.Experience = exp;                  // into-level counter (carries the remainder)
-            profile.Level = level;
-            profile.LifetimeExperience += grantedXp;   // monotonic (XP-board source)
-            profile.UpdatedAt = now;
-            await _db.SaveChangesAsync();
-
-            // Credit rewards AFTER the level is durably persisted. Each is idempotent on its own wallet
-            // correlation id, so a crash between save and credit self-heals on retry, and reaching a level
-            // twice (e.g. a de-level then re-climb) can never pay it twice.
-            foreach (var lvl in crossed)
-                await CreditLevelRewardsAsync(userId, lvl);
-
-            return grantedXp;
         }
 
         private async Task CreditLevelRewardsAsync(Guid userId, int level)

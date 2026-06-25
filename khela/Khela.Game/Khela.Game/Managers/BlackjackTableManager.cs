@@ -39,6 +39,7 @@ namespace Khela.Game.Managers
         private readonly int disconnectGraceSeconds;    // no heartbeat for this long ⇒ show "disconnected…"
         private readonly int emoteCooldownMs;           // per-user emote anti-spam cooldown
         private readonly HashSet<string> emoteIds;      // allowed emote catalog ids (empty ⇒ safe-token guard)
+        private readonly bool progressionEnabled;       // master switch for the game-extension layer (gifted-taint + XP)
         private readonly IConfiguration config;
         private readonly IWebHostEnvironment env;
         private const int DefaultMaxPlayers = 5;
@@ -60,6 +61,7 @@ namespace Khela.Game.Managers
             this.emoteCooldownMs = config.GetValue("Emotes:CooldownMs", 1500);
             this.emoteIds = new HashSet<string>(
                 config.GetSection("Emotes:Ids").Get<string[]>() ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.progressionEnabled = config.GetValue("Progression:Enabled", true);
         }
 
         // ---- Wallet integration (this manager is a singleton; resolve the scoped wallet per op) ----
@@ -145,7 +147,7 @@ namespace Khela.Game.Managers
         /// insurance and give the EARNED stake that is the progression XP basis (System A). All sums are
         /// positive magnitudes.
         /// </summary>
-        private async Task<(decimal TotalStake, decimal GiftedStake, decimal MainStake, decimal MainGiftedStake)> GetSeatStakeSplitAsync(string userId, string roundId)
+        private async Task<(decimal TotalStake, decimal GiftedStake, decimal MainStake, decimal MainGiftedStake)> GetSeatStakeSplitAsync(string userId, string roundId, int seat)
         {
             if (!Guid.TryParse(userId, out var uid) || string.IsNullOrEmpty(roundId))
                 return (0m, 0m, 0m, 0m);
@@ -156,8 +158,14 @@ namespace Khela.Game.Managers
                 .FirstOrDefaultAsync(w => w.UserId == uid && w.Currency == CurrencyType.Chips);
             if (wallet == null) return (0m, 0m, 0m, 0m);
 
+            // SEAT-scoped: a user holding >1 seat in a round must NOT pool both seats' stakes — that would let a
+            // gifted seat's winnings inherit an earned seat's clean ratio (laundering). Stake corr ids encode
+            // :{seat}:, so filter to THIS seat's Bet rows only (matches the reconciliation predicate, so settle
+            // and recon can never diverge on the taint ratio).
+            var prefix = $"bjr:{roundId}:{seat}:";
             var rows = await db.WalletTransactions.AsNoTracking()
-                .Where(t => t.WalletId == wallet.WalletId && t.Type == TransactionType.Bet && t.RoundId == roundId)
+                .Where(t => t.WalletId == wallet.WalletId && t.Type == TransactionType.Bet && t.RoundId == roundId
+                            && t.CorrelationId != null && t.CorrelationId.StartsWith(prefix))
                 .Select(t => new { t.Amount, t.GiftedDelta, t.CorrelationId })
                 .ToListAsync();
 
@@ -1027,6 +1035,7 @@ namespace Khela.Game.Managers
             var splitIndex = player.Split(handIndex);        // appends at newHandIndex
             player.GetHand(splitIndex).StakeTxId = spTx;     // the split stake funded the NEW hand
             player.SetBalance(splitWalletAfter);
+            RigResplitForDev(player, handIndex, splitIndex); // DEV: make the result re-splittable (no-op unless armed)
             LogAction(table, HandActionType.Split, seatNumber, userId, amount: splitExtra,
                 handValueAfter: player.GetHand(handIndex).Hand.GetSumOfHand());
 
@@ -1164,14 +1173,18 @@ namespace Khela.Game.Managers
                         Blackjack = pre.Blackjack
                     });
 
-                    // Split the seat's stake into clean/gifted from the Bet ledger (the GiftedDelta primitive),
-                    // so the payout keeps the stake's gifted fraction (no laundering on a win/push) and the XP
-                    // basis is the EARNED, insurance-excluded stake (System A / progression).
-                    var stakeSplit = await GetSeatStakeSplitAsync(player.Id, roundId);
-                    var giftedCredit = stakeSplit.TotalStake > 0m
-                        ? Math.Round(gross * (stakeSplit.GiftedStake / stakeSplit.TotalStake), 4)
-                        : 0m;
-                    var cleanWager = stakeSplit.MainStake - stakeSplit.MainGiftedStake;
+                    // Game-extension layer (gifted-taint + XP): when OFF, the wallet is a pure ledger and there is
+                    // no XP, so skip the split entirely. When ON, scope to THIS seat (no cross-seat pooling) so the
+                    // payout keeps the stake's gifted fraction and the XP basis is the EARNED, insurance-excluded stake.
+                    decimal giftedCredit = 0m, cleanWager = 0m;
+                    if (progressionEnabled)
+                    {
+                        var stakeSplit = await GetSeatStakeSplitAsync(player.Id, roundId, player.SeatNumber);
+                        giftedCredit = stakeSplit.TotalStake > 0m
+                            ? Math.Round(gross * (stakeSplit.GiftedStake / stakeSplit.TotalStake), 4)
+                            : 0m;
+                        cleanWager = stakeSplit.MainStake - stakeSplit.MainGiftedStake;
+                    }
 
                     try
                     {
@@ -1228,8 +1241,6 @@ namespace Khela.Game.Managers
                                 BalanceAfter = newBalance,
                                 MetadataJson = JsonSerializer.Serialize(new { roundId, seat = player.SeatNumber, computed, mirrorDelta })
                             });
-                        var grantedXp = await AccrueProgressionAsync(uid, cleanWager, net > 0m, roundId);
-                        statResults.Add(new RoundResult(uid, pre.Wagered, net, cleanWager, grantedXp));
                     }
                     catch (Exception ex)
                     {
@@ -1279,17 +1290,26 @@ namespace Khela.Game.Managers
                             }
                         }
                     }
+
+                    // Progression XP + the stats roll-up run whether or not the payout credit succeeded — a
+                    // settle_failed seat is still money-healed by reconciliation and it DID play the round.
+                    // Accrual is idempotent + best-effort; stats record games/net regardless. Gated by the flag.
+                    long grantedXp = progressionEnabled
+                        ? await AccrueProgressionAsync(uid, cleanWager, net > 0m, roundId)
+                        : 0L;
+                    statResults.Add(new RoundResult(uid, pre.Wagered, net, cleanWager, grantedXp));
                 }
 
-                // The money credits above are idempotent (per-seat :pay key), but the stats roll-up and the
-                // audit insert are NOT — run them at most once per round, even if the settling claim's TTL
-                // lapsed mid-settle and a retry re-entered.
-                if (await redisService.GetDatabase().StringSetAsync(
-                        $"bjr:settled:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
-                {
+                // The money credits above are idempotent (per-seat :pay key), but PersistHand and RecordStats
+                // are NOT. Each owns its OWN at-most-once guard so a crash between them only re-runs the
+                // UNFINISHED one — under the old single guard, completing the audit then crashing would skip the
+                // retry's stats forever. (Cleaner long-term: a DB unique index on GameHandHeader.RoundId makes
+                // the audit insert idempotent so its guard could be claimed AFTER success instead of before.)
+                var settleRdb = redisService.GetDatabase();
+                if (await settleRdb.StringSetAsync($"bjr:audited:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
                     await PersistHandAsync(table, roundId, participants);
+                if (await settleRdb.StringSetAsync($"bjr:stats:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
                     await RecordStatsAsync(statResults);
-                }
             }
             finally
             {
@@ -1522,6 +1542,22 @@ namespace Khela.Game.Managers
                 if (cards == null || cards.Count < 2) continue;
                 cards[0] = new Card(Suit.Hearts, rank, true);
                 cards[1] = new Card(Suit.Spades, rank, true);   // same rank, different suit → a splittable pair
+            }
+        }
+
+        // DEV ONLY — when Blackjack:DevRigResplit is on, force the two hands produced by a split back into a
+        // fresh splittable 8-pair (and un-lock them), so the RE-split funding path (B2: every split must be
+        // charged, never a free hand) can be exercised deterministically in a smoke test. Never enabled in prod.
+        private void RigResplitForDev(Player player, int handA, int handB)
+        {
+            if (!env.IsDevelopment() || !config.GetValue("Blackjack:DevRigResplit", false)) return;
+            foreach (var hi in new[] { handA, handB })
+            {
+                var hand = player.GetHand(hi);
+                hand.Hand.Cards.Clear();
+                hand.Hand.Cards.Add(new Card(Suit.Hearts, FaceValue.Eight, true));
+                hand.Hand.Cards.Add(new Card(Suit.Spades, FaceValue.Eight, true));
+                hand.Done = false;
             }
         }
 

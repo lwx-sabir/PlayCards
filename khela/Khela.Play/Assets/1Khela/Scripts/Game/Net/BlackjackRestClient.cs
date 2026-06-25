@@ -84,6 +84,10 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<UserProfileData>> GetMyProfileAsync()
             => SendAsync<UserProfileData>(HttpMethod.Get, "/api/profile/me");
 
+        /// <summary>The caller's live level / into-level XP for the profile XP bar (GET /api/progression/me).</summary>
+        public Task<ApiResult<ProgressionData>> GetProgressionAsync()
+            => SendAsync<ProgressionData>(HttpMethod.Get, "/api/progression/me");
+
         /// <summary>Edit the caller's profile (PATCH /api/profile/me). Server moderates/validates — re-fetch after.</summary>
         public Task<ApiResult<bool>> UpdateProfileAsync(ProfileEditRequest edit)
             => SendOkAsync(new HttpMethod("PATCH"), "/api/profile/me", edit);

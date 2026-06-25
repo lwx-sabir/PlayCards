@@ -29,6 +29,21 @@ namespace PlayCard.UI
     /// </summary>
     public class ProfilePanelBinder : MonoBehaviour
     {
+        [Header("Controls")]
+        [Tooltip("Optional close button — wired in code to hide the panel on click.")]
+        [SerializeField] private Button closeButton;
+        [Tooltip("Object to deactivate on close. Leave empty to close THIS object (the panel root the binder sits on).")]
+        [SerializeField] private GameObject panelRoot;
+
+        [Header("3D avatar stage (toggled with the panel)")]
+        [Tooltip("The AvatarStage root (the off-scene camera + model). Its AvatarCamera renders continuously, so " +
+                 "it's disabled while the panel is closed and re-enabled on open — THIS is what stops the render " +
+                 "texture from lingering after Back.")]
+        [SerializeField] private GameObject avatarStageRoot;
+        [Tooltip("Optional: the RawImage object that displays the render, if it isn't already a child that hides " +
+                 "with the panel. Toggled with the panel so no stale frame shows through.")]
+        [SerializeField] private GameObject avatarVisual;
+
         [Header("Identity")]
         [SerializeField] private TMP_Text nameText;
         [Tooltip("Optional 2D portrait. The 3D avatar is driven separately by AvatarStage.")]
@@ -49,15 +64,12 @@ namespace PlayCard.UI
         [SerializeField] private GameObject loyaltyChip;
         [SerializeField] private TMP_Text loyaltyText;
 
-        [Header("XP bar (interim — leave OFF until server exposes into-level XP)")]
-        [Tooltip("Optional fill (Image set to Filled). Only driven when 'Use Interim XP Fill' is on.")]
-        [SerializeField] private Image xpFillImage;
-        [Tooltip("OFF by default. The server does NOT yet expose into-level XP, so a correct fill can't be " +
-                 "derived. Turning this on uses (Experience % xpPerLevelInterim) — a STOPGAP that duplicates a " +
-                 "server constant and rides the non-resetting Experience field. Leave off until MyProfileDto " +
-                 "exposes ExperienceIntoLevel / ExperienceForNextLevel.")]
-        [SerializeField] private bool useInterimXpFill = false;
-        [SerializeField] private long xpPerLevelInterim = 1000;
+        [Header("XP bar (bound to GET /api/progression/me)")]
+        [Tooltip("XP bar Slider. The binder sets Min=0, Max=XpToNext, Value=Xp each refresh, so the max tracks " +
+                 "the per-level requirement automatically — you don't pre-set it.")]
+        [SerializeField] private Slider xpSlider;
+        [Tooltip("Optional 'Xp / XpToNext' label.")]
+        [SerializeField] private TMP_Text xpProgressText;
 
         [Header("Currency (WalletManager — not on the profile)")]
         [SerializeField] private TMP_Text chipsText;
@@ -93,6 +105,9 @@ namespace PlayCard.UI
 
         private void OnEnable()
         {
+            if (closeButton != null) closeButton.onClick.AddListener(Close);
+            SetAvatarVisible(true);   // panel opened → start the avatar stage
+
             var pm = ProfileManager.Instance;
             if (pm != null)
             {
@@ -114,6 +129,9 @@ namespace PlayCard.UI
 
         private void OnDisable()
         {
+            if (closeButton != null) closeButton.onClick.RemoveListener(Close);
+            SetAvatarVisible(false);  // panel closed → stop the avatar stage so its RT can't linger
+
             var pm = ProfileManager.Instance;
             if (pm != null) pm.OnProfileChanged -= HandleProfileChanged;
             var wm = WalletManager.Instance;
@@ -123,6 +141,18 @@ namespace PlayCard.UI
         /// <summary>Manually re-pull profile + wallet from the server (e.g. a refresh button).</summary>
         public void Refresh() => RequestRefresh();
 
+        /// <summary>Hide the panel — the assigned <see cref="panelRoot"/>, or this object if none is set.</summary>
+        public void Close() => (panelRoot != null ? panelRoot : gameObject).SetActive(false);
+
+        // Start/stop the 3D avatar stage with the panel. The AvatarCamera renders every frame into its render
+        // texture regardless of the RawImage, so disabling the stage root on close is what actually stops the
+        // texture from lingering after Back; re-enabling on open brings it back live.
+        private void SetAvatarVisible(bool on)
+        {
+            if (avatarStageRoot != null) avatarStageRoot.SetActive(on);
+            if (avatarVisual != null) avatarVisual.SetActive(on);
+        }
+
         private async void RequestRefresh()
         {
             try
@@ -131,6 +161,14 @@ namespace PlayCard.UI
                 if (pm != null) await pm.EnsureLoadedAsync();
                 var wm = WalletManager.Instance;
                 if (wm != null) await wm.RefreshAsync();
+
+                // The XP bar has no manager/cache — pull it straight from the server on each open.
+                var prog = await BlackjackRestClient.Instance.GetProgressionAsync();
+                // TEMP DIAGNOSTIC — remove once the panel binds: prints profile-load + name + progression result.
+                var pmLog = ProfileManager.Instance;
+                Debug.Log($"[ProfilePanelBinder] profile loaded={pmLog?.IsLoaded} name='{pmLog?.DisplayName}' | " +
+                          $"prog ok={prog.Ok} status={prog.Status} xp={prog.Value?.Xp}/{prog.Value?.XpToNext} err='{prog.Error}'");
+                if (prog.Ok && prog.Value != null) RenderProgression(prog.Value);
             }
             catch (Exception e)
             {
@@ -169,8 +207,6 @@ namespace PlayCard.UI
             SetActiveSafe(loyaltyChip, loyalty > 0);  // inert until loyalty is awarded
             SetText(loyaltyText, loyalty.ToString(moneyFormat));
 
-            UpdateXpBar(pm.Experience);
-
             // --- Lifetime stats (Stats is never null) ---
             var s = pm.Stats;
             SetText(gamesPlayedText, s.GamesPlayed.ToString(moneyFormat));
@@ -203,11 +239,19 @@ namespace PlayCard.UI
             SetText(tokensText, tokens.ToString(moneyFormat));
         }
 
-        private void UpdateXpBar(long experience)
+        private void RenderProgression(ProgressionData p)
         {
-            if (xpFillImage == null || !useInterimXpFill) return;   // leave the authored bar untouched
-            long per = xpPerLevelInterim > 0 ? xpPerLevelInterim : 1000;
-            xpFillImage.fillAmount = Mathf.Clamp01((experience % per) / (float)per);
+            if (p == null) return;
+            if (xpSlider != null)
+            {
+                // Drive the slider with RAW values so its max tracks the per-level XpToNext (150, 450, 850, …);
+                // the fill image inside the slider follows value/max automatically.
+                xpSlider.minValue = 0f;
+                xpSlider.maxValue = p.XpToNext > 0 ? p.XpToNext : 1f;
+                xpSlider.value = p.Xp;
+            }
+            SetText(xpProgressText, $"{p.Xp:#,0} / {p.XpToNext:#,0}");
+            SetText(levelText, p.Level.ToString());   // progression is the XP-authoritative level
         }
 
         /// <summary>

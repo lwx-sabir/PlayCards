@@ -64,7 +64,7 @@ namespace Khela.Game.Services.Profile
                 CountryFlagId = p.CountryFlagId,
                 Region = p.Region,
                 Level = p.Level,
-                Experience = p.Experience,
+                Experience = p.LifetimeExperience,   // profile "total XP" = lifetime; the into-level bar comes from ProgressionDto
                 VipTier = (int)p.VipTier,
                 LoyaltyPoints = p.LoyaltyPoints,
                 Bio = p.Bio,

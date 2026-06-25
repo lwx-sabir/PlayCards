@@ -14,10 +14,21 @@ namespace PlayCard.UI
     {
         [SerializeField] private TMP_Text balanceText;
         [SerializeField] private Button playButton;
+        [Tooltip("Opens the user-profile panel on click.")]
+        [SerializeField] private Button profileButton;
+        [Tooltip("The UserProfile panel GameObject to show — its ProfilePanelBinder fetches + paints on enable.")]
+        [SerializeField] private GameObject profilePanel;
 
         private void Awake()
         {
             if (playButton != null) playButton.onClick.AddListener(SceneNavigator.GoToLobby);
+            if (profileButton != null) profileButton.onClick.AddListener(OpenProfile);
+        }
+
+        /// <summary>Show the user-profile panel; its ProfilePanelBinder fetches + repaints when it enables.</summary>
+        private void OpenProfile()
+        {
+            if (profilePanel != null) profilePanel.SetActive(true);
         }
 
         private void OnEnable()

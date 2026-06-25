@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Khela.Game.Services.Wallet
@@ -12,11 +13,17 @@ namespace Khela.Game.Services.Wallet
     {
         private readonly AppDbContext _db;
         private readonly ILogger<WalletService> _logger;
+        private readonly bool _trackGiftedChips;
 
-        public WalletService(AppDbContext db, ILogger<WalletService> logger)
+        public WalletService(AppDbContext db, ILogger<WalletService> logger, IConfiguration config = null)
         {
             _db = db;
             _logger = logger;
+            // The gifted-chip taint is a GAME-LAYER extension (it exists only to deny progression XP to gifted
+            // chips). When the progression layer is off, the wallet runs as a pure ledger and never touches the
+            // gifted sub-balance — the real-money path is byte-for-byte the original behaviour. A null config
+            // (unit tests that construct WalletService directly) defaults the layer ON.
+            _trackGiftedChips = config?.GetValue("Progression:Enabled", true) ?? true;
         }
 
         /// <summary>Static counterpart to <see cref="IsWagerable"/> for use without an instance.</summary>
@@ -128,7 +135,10 @@ namespace Khela.Game.Services.Wallet
             //           (a player gift = full amount; a bet payout = gross × giftedStakeRatio so winnings keep
             //           the stake's gifted fraction and gifted chips can't be laundered clean).
             // The arithmetic lives in WalletBuckets so it's unit-testable without the DB/lock/transaction.
-            var giftedDelta = WalletBuckets.GiftedDelta(locked.Balance, locked.GiftedBalance, signedAmount, context?.CreditGiftedAmount);
+            // GATED: when the game layer is off, the wallet is a pure ledger — the gifted slice stays 0/untouched.
+            var giftedDelta = _trackGiftedChips
+                ? WalletBuckets.GiftedDelta(locked.Balance, locked.GiftedBalance, signedAmount, context?.CreditGiftedAmount)
+                : 0m;
 
             var now = DateTime.UtcNow;
             locked.Balance = after;

@@ -6,7 +6,9 @@ namespace Khela.Game.Services.Progression
     /// <summary>Tunable progression knobs (Progression Spec System A), bound from the "Progression" config section.</summary>
     public sealed class ProgressionConfig
     {
+        public bool Enabled { get; init; } = true;                  // master switch for the game-extension layer (gifted-taint + XP)
         public decimal XpChipsPerPoint { get; init; } = 10m;        // chips of clean wager per 1 XP
+        public decimal MaxWagerPerBet { get; init; } = 0m;          // cap on XP-eligible wager per round (0 = uncapped)
         public decimal MinBetEarly { get; init; } = 1000m;          // full-XP floor at level <= EarlyMaxLevel
         public decimal MinBetLate { get; init; } = 5000m;           // full-XP floor above EarlyMaxLevel
         public int EarlyMaxLevel { get; init; } = 3;
@@ -42,8 +44,10 @@ namespace Khela.Game.Services.Progression
             if (cleanWager <= 0m || c.XpChipsPerPoint <= 0m) return 0;
             if (level < 1) level = 1;
             var floorBet = level <= c.EarlyMaxLevel ? c.MinBetEarly : c.MinBetLate;
-            var mult = cleanWager >= floorBet ? 1m : c.SubFloorXpMultiplier;
-            var baseXp = (long)Math.Floor(Math.Floor(cleanWager / c.XpChipsPerPoint) * mult);
+            var mult = cleanWager >= floorBet ? 1m : c.SubFloorXpMultiplier;   // floor test on the REAL wager
+            // Cap the XP-eligible wager per round so one huge stake can't grant outsized XP (0 = uncapped).
+            var eligible = c.MaxWagerPerBet > 0m ? Math.Min(cleanWager, c.MaxWagerPerBet) : cleanWager;
+            var baseXp = (long)Math.Floor(Math.Floor(eligible / c.XpChipsPerPoint) * mult);
             var winBonus = win ? (long)Math.Floor(baseXp * c.WinXpBonus) : 0;
             return baseXp + winBonus;
         }

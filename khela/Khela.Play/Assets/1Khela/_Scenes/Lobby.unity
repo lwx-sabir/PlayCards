@@ -533,7 +533,7 @@ GameObject:
   - component: {fileID: 34989538}
   - component: {fileID: 34989537}
   m_Layer: 5
-  m_Name: Button_Settings
+  m_Name: Button_Home
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -8669,12 +8669,12 @@ MonoBehaviour:
   joinButton: {fileID: 256793496758672355}
   betRangeText: {fileID: 842586004740417675}
   membersText: {fileID: 3859964736108122500}
-  backButton: {fileID: 0}
+  backButton: {fileID: 34989537}
   refreshButton: {fileID: 0}
   titleText: {fileID: 0}
   statusText: {fileID: 8993652759525428795}
   statusRoot: {fileID: 8993652759578212077}
-  balanceText: {fileID: 0}
+  balanceText: {fileID: 199829468}
   mode: 0
 --- !u!1 &686543945
 GameObject:

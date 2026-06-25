@@ -137,6 +137,43 @@ namespace Khela.Game.Tests
             _out.WriteLine($"Stalled player reaped cleanly: settled={settled}, seatFreed={freed}, final={final}.");
         }
 
+        [Fact]
+        public async Task ReSplit_ChargesEveryHand_NoFreeUnfundedHand()
+        {
+            // Exercises the B2 fix: every split (including a RE-split of the same hand) must debit its stake.
+            // Needs both dev rigs armed on the server: Blackjack__DevPlayerRigPair=true (forces an opening pair)
+            // AND Blackjack__DevRigResplit=true (forces the split result back to a splittable pair). Skips cleanly
+            // if the server is down or a rig isn't armed.
+            using var c = NewClient();
+            if (!await ServerUpAsync(c)) { Skip("backend not reachable"); return; }
+
+            await RegisterAsync(c);
+            var table = await CreateTableAsync(c);
+            await JoinAsync(c, table);
+            await BetAsync(c, table, 1000m);
+            await EnsureOk(await c.PostAsync($"/api/blackjack/{table}/deal", null));
+            Assert.Equal(9000m, await ChipsAsync(c));                            // initial stake debited at deal
+
+            // Close any insurance window (no-op unless the dealer shows an Ace) so split is allowed.
+            await c.PostAsync($"/api/blackjack/{table}/insurance/decline/1", null);
+
+            var split1 = await c.PostAsync($"/api/blackjack/{table}/split/1?handIndex=0", null);
+            if (!split1.IsSuccessStatusCode) { Skip("DevPlayerRigPair not armed (split rejected — opening hand isn't a pair)"); return; }
+            Assert.Equal(8000m, await ChipsAsync(c));                            // *** split stake funded ***
+
+            var split2 = await c.PostAsync($"/api/blackjack/{table}/split/1?handIndex=0", null);
+            if (!split2.IsSuccessStatusCode) { Skip("DevRigResplit not armed (re-split rejected)"); return; }
+            // With the B2 bug the re-split reused the `sp{handIndex}` correlation id, the wallet treated the 2nd
+            // debit as an idempotent duplicate and SKIPPED it → a free unfunded hand (balance would stay 8000).
+            // Funded correctly (sp{newHandIndex}) → 7000.
+            Assert.Equal(7000m, await ChipsAsync(c));                            // *** RE-split stake funded (the fix) ***
+            _out.WriteLine("Re-split funded: 10000 → 9000 (deal) → 8000 (split) → 7000 (re-split). No free hand.");
+
+            // Tidy: stand every hand then settle so the run leaves no chips in limbo.
+            for (int h = 0; h < 3; h++) await c.PostAsync($"/api/blackjack/{table}/stand/1?handIndex={h}", null);
+            await c.PostAsync($"/api/blackjack/{table}/dealerPlay", null);
+        }
+
         // ---------- helpers ----------
 
         private static HttpClient NewClient() => new() { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(20) };

@@ -23,6 +23,7 @@ namespace PlayCard.Game.Betting
         [SerializeField] private float dropInterval = 0.1f;
 
         private Coroutine _running;
+        private bool _dealing;   // true from the deal-tap until the server confirms the round started — blocks a double re-bet
 
         /// <summary>True if there's a remembered bet to repeat.</summary>
         public bool CanRepeat => builder != null && builder.LastPlaced.Count > 0;
@@ -30,7 +31,7 @@ namespace PlayCard.Game.Betting
         /// <summary>Re-drop the last bet's chips onto the local spot, then deal.</summary>
         public void Repeat()
         {
-            if (_running != null || !CanRepeat) return;
+            if (_running != null || _dealing || !CanRepeat) return;   // already re-betting/dealing → ignore the double-tap
             if (table != null && table.Board != null && table.Board.RoundInProgress) return;   // a round is already live
             var spot = LocalSpot();
             if (spot == null) return;
@@ -41,6 +42,7 @@ namespace PlayCard.Game.Betting
         public void Clear()
         {
             if (_running != null) { StopCoroutine(_running); _running = null; }
+            _dealing = false;
             if (builder != null) builder.Clear();
         }
 
@@ -71,8 +73,20 @@ namespace PlayCard.Game.Betting
                 yield return new WaitForSeconds(dropInterval);
             }
 
+            // Bridge the re-entry guard across the deal's network gap: after Deal() the round isn't "in progress"
+            // until the server replies, and during THAT window a second tap would re-drop a phantom stack + re-bet.
+            // Hold _dealing until the board confirms the round started (or a short timeout if the deal never lands).
+            _dealing = true;
             _running = null;
             builder.Deal();   // place the running total + deal
+
+            float t = 0f;
+            while (t < 3f && (table == null || table.Board == null || !table.Board.RoundInProgress))
+            {
+                t += Time.deltaTime;
+                yield return null;
+            }
+            _dealing = false;
         }
 
         private BetSpot LocalSpot()

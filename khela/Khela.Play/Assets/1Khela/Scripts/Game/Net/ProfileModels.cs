@@ -99,4 +99,16 @@ namespace PlayCard.Game.Net
         public string Bio { get; set; }
         public string StatusMessage { get; set; }
     }
+
+    /// <summary>
+    /// Client mirror of the server's ProgressionDto (GET /api/progression/me) — the live XP-bar state.
+    /// <see cref="Xp"/> is INTO-LEVEL progress, so the bar fill = Xp / XpToNext.
+    /// </summary>
+    public sealed class ProgressionData
+    {
+        public int Level { get; set; } = 1;
+        public long Xp { get; set; }                // into-level XP (0..XpToNext)
+        public long XpToNext { get; set; }          // XP needed to reach the next level (bar denominator)
+        public long DailyXpRemaining { get; set; }  // XP still earnable today before the cap
+    }
 }
