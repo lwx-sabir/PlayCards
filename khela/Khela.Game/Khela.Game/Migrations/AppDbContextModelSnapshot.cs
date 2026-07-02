@@ -813,6 +813,257 @@ namespace Khela.Game.Migrations
                     b.ToTable("LeaderboardSeasons");
                 });
 
+            modelBuilder.Entity("Khela.Game.Database.Models.LoyaltyRedemption", b =>
+                {
+                    b.Property<Guid>("LoyaltyRedemptionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("ChipAmount")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<bool>("ChipsCredited")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long>("CostLp")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("varchar(80)");
+
+                    b.Property<string>("ItemId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<bool>("LpDeducted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("LoyaltyRedemptionId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("LoyaltyRedemptions");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyMission", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("AssignedDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("MissionId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<long>("Progress")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "AssignedDate");
+
+                    b.HasIndex("UserId", "MissionId", "AssignedDate")
+                        .IsUnique();
+
+                    b.ToTable("PlayerDailyMissions");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyMissionBundle", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("AssignedDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ClaimedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "AssignedDate")
+                        .IsUnique();
+
+                    b.ToTable("PlayerDailyMissionBundles");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyStat", b =>
+                {
+                    b.Property<Guid>("PlayerDailyStatId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("BiggestSingleWin")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("ChipsWon")
+                        .HasPrecision(28, 4)
+                        .HasColumnType("decimal(28,4)");
+
+                    b.Property<int>("GameType")
+                        .HasColumnType("int");
+
+                    b.Property<long>("GamesPlayed")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("GamesWon")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("NetProfit")
+                        .HasPrecision(28, 4)
+                        .HasColumnType("decimal(28,4)");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("char(2)");
+
+                    b.Property<DateTime>("StatDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Wagered")
+                        .HasPrecision(28, 4)
+                        .HasColumnType("decimal(28,4)");
+
+                    b.Property<long>("Xp")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PlayerDailyStatId");
+
+                    b.HasIndex("StatDate");
+
+                    b.HasIndex("GameType", "StatDate");
+
+                    b.HasIndex("UserId", "GameType", "StatDate")
+                        .IsUnique();
+
+                    b.ToTable("PlayerDailyStats");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerReward", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Currency")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(96)
+                        .HasColumnType("varchar(96)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "Status");
+
+                    b.ToTable("PlayerRewards");
+                });
+
             modelBuilder.Entity("Khela.Game.Database.Models.PlayerWallet", b =>
                 {
                     b.Property<Guid>("WalletId")
@@ -920,6 +1171,44 @@ namespace Khela.Game.Migrations
                     b.ToTable("Reports");
                 });
 
+            modelBuilder.Entity("Khela.Game.Database.Models.StatusPointsLedger", b =>
+                {
+                    b.Property<Guid>("StatusPointsLedgerId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("PeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<long>("Sp")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("SpendUsd")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("StatusPointsLedgerId");
+
+                    b.HasIndex("UserId", "PeriodStart")
+                        .IsUnique();
+
+                    b.ToTable("StatusPointsLedger");
+                });
+
             modelBuilder.Entity("Khela.Game.Database.Models.StoreItem", b =>
                 {
                     b.Property<Guid>("ItemId")
@@ -1022,6 +1311,9 @@ namespace Khela.Game.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("timestamp(6)");
 
+                    b.Property<string>("StatCountersJson")
+                        .HasColumnType("json");
+
                     b.Property<decimal>("TotalWagered")
                         .HasPrecision(28, 4)
                         .HasColumnType("decimal(28,4)");
@@ -1034,7 +1326,13 @@ namespace Khela.Game.Migrations
 
                     b.HasKey("UserGameStatsId");
 
+                    b.HasIndex("GameType", "BiggestSingleWin");
+
                     b.HasIndex("GameType", "ChipsWon");
+
+                    b.HasIndex("GameType", "ExperienceEarned");
+
+                    b.HasIndex("GameType", "LongestWinStreak");
 
                     b.HasIndex("GameType", "NetProfit");
 
@@ -1096,6 +1394,9 @@ namespace Khela.Game.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)");
 
+                    b.Property<string>("AvatarConfig")
+                        .HasColumnType("text");
+
                     b.Property<string>("AvatarFrameId")
                         .HasMaxLength(128)
                         .HasColumnType("varchar(128)");
@@ -1103,6 +1404,9 @@ namespace Khela.Game.Migrations
                     b.Property<string>("AvatarId")
                         .HasMaxLength(256)
                         .HasColumnType("varchar(256)");
+
+                    b.Property<DateTime?>("BadgeLitUntil")
+                        .HasColumnType("datetime(6)");
 
                     b.Property<decimal>("BiggestWin")
                         .HasPrecision(18, 4)
@@ -1124,6 +1428,12 @@ namespace Khela.Game.Migrations
 
                     b.Property<int>("CurrentWinStreak")
                         .HasColumnType("int");
+
+                    b.Property<long>("DailySpFromWager")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("DailySpResetAt")
+                        .HasColumnType("datetime(6)");
 
                     b.Property<long>("DailyXp")
                         .HasColumnType("bigint");
@@ -1156,6 +1466,9 @@ namespace Khela.Game.Migrations
                     b.Property<long>("GamesWon")
                         .HasColumnType("bigint");
 
+                    b.Property<bool>("HideVipBadge")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<DateTime?>("LastPlayedAt")
                         .HasColumnType("datetime(6)");
 
@@ -1172,6 +1485,9 @@ namespace Khela.Game.Migrations
                         .HasColumnType("bigint");
 
                     b.Property<long>("LifetimeLoyaltyPoints")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LifetimeStatusPoints")
                         .HasColumnType("bigint");
 
                     b.Property<int>("LongestLoseStreak")
@@ -1217,6 +1533,15 @@ namespace Khela.Game.Migrations
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("char(36)");
+
+                    b.Property<int>("VipLevel")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("VipLevelMaintainedThrough")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long>("VipLevelProgress")
+                        .HasColumnType("bigint");
 
                     b.Property<int>("VipTier")
                         .HasColumnType("int");

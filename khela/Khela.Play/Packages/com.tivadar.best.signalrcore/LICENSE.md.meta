@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 60cd19aeac481874e824e4cfdfd47275
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/LICENSE.md
+  uploadId: 884732

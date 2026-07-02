@@ -13,16 +13,23 @@ namespace PlayCard.UI
     public sealed class HomeView : MonoBehaviour
     {
         [SerializeField] private TMP_Text balanceText;
+        [Tooltip("Optional — the Kash balance text (premium currency).")]
+        [SerializeField] private TMP_Text kashText;
         [SerializeField] private Button playButton;
         [Tooltip("Opens the user-profile panel on click.")]
         [SerializeField] private Button profileButton;
         [Tooltip("The UserProfile panel GameObject to show — its ProfilePanelBinder fetches + paints on enable.")]
         [SerializeField] private GameObject profilePanel;
+        [Tooltip("Opens the daily rewards / missions panel on click.")]
+        [SerializeField] private Button rewardsButton;
+        [Tooltip("The Rewards_Daily / Missions panel to show — its binders fetch + paint on enable.")]
+        [SerializeField] private GameObject rewardsPanel;
 
         private void Awake()
         {
             if (playButton != null) playButton.onClick.AddListener(SceneNavigator.GoToLobby);
             if (profileButton != null) profileButton.onClick.AddListener(OpenProfile);
+            if (rewardsButton != null) rewardsButton.onClick.AddListener(OpenRewards);
         }
 
         /// <summary>Show the user-profile panel; its ProfilePanelBinder fetches + repaints when it enables.</summary>
@@ -31,10 +38,19 @@ namespace PlayCard.UI
             if (profilePanel != null) profilePanel.SetActive(true);
         }
 
+        /// <summary>Show the daily rewards / missions panel; its binders fetch + repaint when it enables.</summary>
+        private void OpenRewards()
+        {
+            if (rewardsPanel != null) rewardsPanel.SetActive(true);
+        }
+
         private void OnEnable()
         {
             if (WalletManager.Instance != null)
+            {
                 WalletManager.Instance.OnBalancesChanged += ShowBalance;
+                if (WalletManager.Instance.Balances != null) ShowBalance(WalletManager.Instance.Balances);   // paint cached first — no stale frame on (re)enter
+            }
 
             if (AccountManager.Instance != null)
             {
@@ -60,7 +76,9 @@ namespace PlayCard.UI
 
         private void ShowBalance(WalletBalances b)
         {
-            if (balanceText != null && b != null) balanceText.text = $"{b.Chips:0}";
+            if (b == null) return;
+            if (balanceText != null) balanceText.text = $"{b.Chips:0}";
+            if (kashText != null) kashText.text = $"{b.Kash:0}";
         }
     }
 }

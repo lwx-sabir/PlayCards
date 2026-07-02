@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: c0ab98c124722024cbcbb73a4933a31c
+AssemblyDefinitionImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Runtime/com.Tivadar.Best.SignalR.asmdef
+  uploadId: 884732

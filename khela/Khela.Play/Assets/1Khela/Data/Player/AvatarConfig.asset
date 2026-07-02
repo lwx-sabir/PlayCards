@@ -1,0 +1,733 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 20154a6dcae10cb4187286582653b64a, type: 3}
+  m_Name: AvatarConfig
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Avatar.AvatarConfig
+  roster:
+  - id: Base/1DefaultMale
+    displayName: Default Male
+    gender: 0
+    displayPrefab: {fileID: 2985020092061462015, guid: 099fa05b08d496f41b561bf40c428c72, type: 3}
+  - id: Base/1DefaultFemale
+    displayName: Default Female
+    gender: 1
+    displayPrefab: {fileID: 3468962442110142838, guid: cd063e7e88215be4682eb0c26a955e51, type: 3}
+  male:
+    gender: 0
+    baseId: Base/1DefaultMale
+    shapes:
+    - key: BodyType
+      label: Body Type (gender)
+      kind: 0
+      category: 0
+      axis: 
+      min: 100
+      max: 100
+      def: 100
+      deformRisk: 0
+      locked: 1
+    - key: Chest
+      label: Chest
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 10
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Weight
+      label: Weight
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 80
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Belly
+      label: Belly
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 70
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Muscle
+      label: Muscle
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NeckThickness
+      label: Neck Thickness
+      kind: 0
+      category: 0
+      axis: 
+      min: 60
+      max: 100
+      def: 100
+      deformRisk: 0
+      locked: 0
+    - key: BodyType
+      label: Face Masculinity
+      kind: 0
+      category: 1
+      axis: 
+      min: 40
+      max: 100
+      def: 50
+      deformRisk: 0
+      locked: 0
+    - key: Weight
+      label: Face Weight
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 70
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Muscle
+      label: Face Muscle
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 70
+      def: 50
+      deformRisk: 0
+      locked: 0
+    - key: Squareness
+      label: Jaw Squareness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Sharpness
+      label: Jaw Sharpness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 100
+      deformRisk: 0
+      locked: 0
+    - key: LashLength
+      label: Lash Length
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 60
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: BrowsThickness
+      label: Brow Thickness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseBridgeCurve
+      label: Nose Bridge
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseWidth
+      label: Nose Width
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseTiltDown
+      label: Nose Tilt Down
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseTiltUp
+      label: Nose Tilt Up
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: MouthWide
+      label: Mouth Width
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: MouthThin
+      label: Lip Thinness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: EyesOuterCornersLow
+      label: Eye Corner Down
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 25
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EyesOuterCornersHigh
+      label: Eye Corner Up
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 25
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EyesSquare
+      label: Eye Squareness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 20
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EarsElf
+      label: Ear Point
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 20
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EarAngle
+      label: Ear Angle
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 45
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: root
+      label: Height / Scale
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.97
+      max: 1.06
+      def: 1.05
+      deformRisk: 0
+      locked: 0
+    - key: spine_04
+      label: Torso
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.95
+      max: 1.08
+      def: 1.06
+      deformRisk: 0
+      locked: 0
+    - key: clavicle_l
+      label: Shoulder Width
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.97
+      max: 1.12
+      def: 1.009
+      deformRisk: 0
+      locked: 0
+    - key: shoulder_twist_l
+      label: Shoulders
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.25
+      def: 1.206
+      deformRisk: 0
+      locked: 0
+    - key: upperarm_twist_02_l
+      label: Upper Arm
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.95
+      max: 1.2
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: lowerarm_twist_02_l
+      label: Forearm / Biceps
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.22
+      def: 1.2
+      deformRisk: 0
+      locked: 0
+    - key: thigh_twist_01_l
+      label: Thigh
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.9
+      max: 1.15
+      def: 0.922
+      deformRisk: 0
+      locked: 0
+    - key: calf_twist_01_l
+      label: Calf
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.25
+      def: 1.212
+      deformRisk: 0
+      locked: 0
+    - key: head
+      label: Head Size
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.95
+      max: 1.05
+      def: 0.975
+      deformRisk: 0
+      locked: 0
+    - key: eyeRoot_l
+      label: Eye Width
+      kind: 2
+      category: 2
+      axis: x
+      min: 0.88
+      max: 1
+      def: 0.934
+      deformRisk: 1
+      locked: 0
+    - key: eyeRoot_l
+      label: Eye Height
+      kind: 2
+      category: 2
+      axis: y
+      min: 0.85
+      max: 1
+      def: 0.949
+      deformRisk: 1
+      locked: 0
+  female:
+    gender: 1
+    baseId: Base/1DefaultFemale
+    shapes:
+    - key: BodyType
+      label: Body Type (gender)
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 0
+      def: 0
+      deformRisk: 0
+      locked: 1
+    - key: Chest
+      label: Chest
+      kind: 0
+      category: 0
+      axis: 
+      min: 30
+      max: 100
+      def: 75
+      deformRisk: 0
+      locked: 0
+    - key: Weight
+      label: Weight
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 80
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Belly
+      label: Belly
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 60
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Muscle
+      label: Muscle
+      kind: 0
+      category: 0
+      axis: 
+      min: 0
+      max: 80
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NeckThickness
+      label: Neck Thickness
+      kind: 0
+      category: 0
+      axis: 
+      min: 55
+      max: 100
+      def: 100
+      deformRisk: 0
+      locked: 0
+    - key: BodyType
+      label: Face Femininity
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 40
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Weight
+      label: Face Weight
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 70
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Muscle
+      label: Face Muscle
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 50
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Squareness
+      label: Jaw Squareness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 70
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: Sharpness
+      label: Jaw Sharpness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: LashLength
+      label: Lash Length
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 100
+      deformRisk: 0
+      locked: 0
+    - key: BrowsThickness
+      label: Brow Thickness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 90
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseBridgeCurve
+      label: Nose Bridge
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseWidth
+      label: Nose Width
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 90
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseTiltDown
+      label: Nose Tilt Down
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: NoseTiltUp
+      label: Nose Tilt Up
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: MouthWide
+      label: Mouth Width
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: MouthThin
+      label: Lip Thinness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 100
+      def: 0
+      deformRisk: 0
+      locked: 0
+    - key: EyesOuterCornersLow
+      label: Eye Corner Down
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 25
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EyesOuterCornersHigh
+      label: Eye Corner Up
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 30
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EyesSquare
+      label: Eye Squareness
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 20
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EarsElf
+      label: Ear Point
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 20
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: EarAngle
+      label: Ear Angle
+      kind: 0
+      category: 1
+      axis: 
+      min: 0
+      max: 45
+      def: 0
+      deformRisk: 1
+      locked: 0
+    - key: root
+      label: Height / Scale
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.96
+      max: 1.04
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: spine_04
+      label: Torso
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.9
+      max: 1.03
+      def: 0.955
+      deformRisk: 0
+      locked: 0
+    - key: clavicle_l
+      label: Shoulder Width
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.95
+      max: 1.02
+      def: 0.978
+      deformRisk: 0
+      locked: 0
+    - key: shoulder_twist_l
+      label: Shoulders
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.8
+      max: 1.08
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: upperarm_twist_02_l
+      label: Upper Arm
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.95
+      max: 1.22
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: lowerarm_twist_02_l
+      label: Forearm
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.2
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: thigh_twist_01_l
+      label: Thigh
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.15
+      def: 1.103
+      deformRisk: 0
+      locked: 0
+    - key: calf_twist_01_l
+      label: Calf
+      kind: 1
+      category: 2
+      axis: 
+      min: 1
+      max: 1.25
+      def: 1.219
+      deformRisk: 0
+      locked: 0
+    - key: head
+      label: Head Size
+      kind: 1
+      category: 2
+      axis: 
+      min: 0.96
+      max: 1.04
+      def: 1
+      deformRisk: 0
+      locked: 0
+    - key: eyeRoot_l
+      label: Eye Width
+      kind: 2
+      category: 2
+      axis: x
+      min: 0.95
+      max: 1.05
+      def: 1
+      deformRisk: 1
+      locked: 0
+    - key: eyeRoot_l
+      label: Eye Height
+      kind: 2
+      category: 2
+      axis: y
+      min: 0.9
+      max: 1.12
+      def: 1
+      deformRisk: 1
+      locked: 0
+  slots: []
+  palettes: []

@@ -1,0 +1,28 @@
+@{
+    ViewData["Title"] = "Create account";
+    Layout = "_AuthLayout";
+}
+
+<div class="auth-card">
+    <div class="auth-brand">
+        <div class="brand-logo">K</div>
+        <h1>Create admin account</h1>
+        <p>Register access to the Khela console</p>
+    </div>
+
+    <form asp-controller="Account" asp-action="Register" method="post">
+        <div asp-validation-summary="All" class="form-error"></div>
+
+        <div class="field">
+            <label>Email</label>
+            <input name="email" type="email" class="input" placeholder="you@@khela.gg" autofocus required />
+        </div>
+        <div class="field">
+            <label>Password</label>
+            <input name="password" type="password" class="input" placeholder="6+ chars, with upper, lower &amp; a digit" required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Create account</button>
+    </form>
+
+    <div class="auth-foot">Already have an account? <a asp-controller="Account" asp-action="Login">Sign in</a></div>
+</div>

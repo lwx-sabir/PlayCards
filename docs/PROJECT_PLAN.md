@@ -1,6 +1,6 @@
 # Khela World — Master Project Plan
 
-*Owner: Reza · Last updated: 2026-06-19*
+*Owner: Reza · Last updated: 2026-06-26*
 
 This is the full plan and reasoning for the game project. The terse, must-follow
 rules live in `/CLAUDE.md` (read automatically by Claude Code); this document is the
@@ -126,6 +126,8 @@ promises, lawyer review before any sale.
 - `khela/Khela.Common` — DTOs shared between backend and Unity client.
 - `khela/Khela.Play` — Unity client (URP, fully 3D). Namespaces `PlayCard.*`; assets under
   `Assets/1Khela`. *(Layout flattened ~2026-06; the old `khela/PlayCards/*` nesting is gone.)*
+- `khela/Khela.Game/Khela.Web` — ASP.NET Core MVC **admin/ops dashboard** (separate app, shared
+  `AppDbContext` + Redis; cookie-Identity admin gate). Ops tooling, not gameplay. See `docs/ADMIN_DASHBOARD.md`.
 
 ### Networking
 - **Actions** (bet/hit/stand/deal/double/split) → **REST** (`BlackjackController`).
@@ -160,6 +162,22 @@ players are **seated from their real wallet**; a **`BlackjackRoundDriver`** (2s 
 expired turns + auto-settles. Per-hand settle audit (`GameHandParticipant.HandIndex`), move-by-move
 `GameHandActions`, and the provably-fair shuffle persist. Phase-1 **leaderboards, profiles, and
 social/gifts/chat/presence** are also built.
+
+**Done (ops — admin dashboard, 2026-06-26):** `Khela.Web` — a dark-themed ASP.NET Core MVC admin console
+(cookie-Identity admin gate, shared `AppDbContext` + Redis). Live modules: a real-data **Dashboard** (player /
+economy / system-alert stats via read-only JSON APIs + a static loader), a **Settings** page whose Casino *and*
+Game knobs are runtime-tunable (admin edits a Redis `khela:settings` hash that `ProgressionService` +
+`BlackjackTableManager` overlay onto appsettings — live, no restart), and a read-only **Wallets & Ledger** audit
+viewer over `WalletTransactions`. Remaining modules (Players, Reports, Leaderboards, Game Tables) are placeholders.
+See `docs/ADMIN_DASHBOARD.md`.
+
+**Done (leaderboards + per-game stats, 2026-06-27):** leaderboards **rebuilt to plain SQL** — all-time from
+`UserGameStats` (per-game) / `UserProfile` (cross-game), windowed (daily/weekly/monthly) from a new `PlayerDailyStat`
+daily rollup (upserted on settle, pruned 90d); `LeaderboardController` serves `/api/leaderboard?game&metric&period&scope&top`
++ `/boards` with self-rank (Global/Friends/Country). Overall board = **XP only** (farm-proof — never chip-balance/net-profit).
+Profile endpoints now return **per-game stats** (`perGame[]`: per-game win-rate / biggest-win / streak / XP / last-played /
+started-playing). The old Redis ZSET/seal/archive path is retired (dead write still fires — remove later). Migration
+`AddPlayerDailyStats` applied; 44/44 tests green; endpoints smoke-verified vs real data. See `docs/LEADERBOARD.md`.
 
 **Done (client):** the blackjack vertical slice is **assembled + playable** — Boot → Home
 (config-driven carousel) → Lobby (table browser) → Table, with device-guest auth, REST action

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "95791701464",
+    "project_id": "khela-786",
+    "storage_bucket": "khela-786.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:95791701464:android:dec7febf516303b10026ad",
+        "android_client_info": {
+          "package_name": "com.casuallabinteractive.khela"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCyzkkydkbmKe7U7ymE_QwHFhwpfOYCCTQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

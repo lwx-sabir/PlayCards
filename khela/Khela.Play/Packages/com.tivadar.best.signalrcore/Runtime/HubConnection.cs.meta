@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: bd7c5ce4f2cd7564fb99cc91350cc301
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Runtime/HubConnection.cs
+  uploadId: 884732

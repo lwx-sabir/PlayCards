@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 8dafa2d528dae86439401543e7741b82
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/package.json
+  uploadId: 884732

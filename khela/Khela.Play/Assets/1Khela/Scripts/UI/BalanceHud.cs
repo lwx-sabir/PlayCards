@@ -12,7 +12,7 @@ namespace PlayCard.UI
     /// </summary>
     public sealed class BalanceHud : MonoBehaviour
     {
-        public enum Currency { Chips, Coins, Gems, Tokens }
+        public enum Currency { Chips, Coins, Gems, Tokens, Kash }
 
         [SerializeField] private TMP_Text label;
         [SerializeField] private Currency currency = Currency.Chips;
@@ -44,6 +44,7 @@ namespace PlayCard.UI
                 Currency.Coins => b.Coins,
                 Currency.Gems => b.Gems,
                 Currency.Tokens => b.Tokens,
+                Currency.Kash => b.Kash,
                 _ => b.Chips,
             };
             label.text = v.ToString(format);

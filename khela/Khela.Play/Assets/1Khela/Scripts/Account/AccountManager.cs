@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net.Http;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks; 
+using System.Threading.Tasks;
+using Best.HTTP;
 using PlayCard.Core;
 using UnityEngine;
 using Khela.Common;
@@ -46,7 +47,6 @@ namespace PlayCard.Account
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
-        private readonly HttpClient _httpClient = new HttpClient();
         private AuthSave _authSave = new AuthSave();
 
         private void Awake()
@@ -63,6 +63,8 @@ namespace PlayCard.Account
             SaveController.Init(autoSaveIntervalSeconds: autoSaveIntervalSeconds);
             SaveController.Register(_authSave);
 
+            KhelaAnalytics.LogAppOpen();
+
             // Fire-and-forget async init
             _ = InitializeAsync();
         }
@@ -74,6 +76,8 @@ namespace PlayCard.Account
 
             if (TokenIsValid())
             {
+                KhelaAnalytics.SetUserId(_authSave.UserId);
+                KhelaAnalytics.LogLogin("cached_device_guest");
                 IsReady = true;
                 OnReady?.Invoke();
                 return;
@@ -150,10 +154,11 @@ namespace PlayCard.Account
             if (response == null) return false;
 
             CacheAuth(response);
+            KhelaAnalytics.LogLogin("register_device_guest");
             return true;
         }
 
-        private async Task<bool> TryLoginAsync()
+        private async Task<bool> TryLoginAsync(bool logAnalytics = true)
         {
             var request = new LoginRequest
             {
@@ -166,12 +171,14 @@ namespace PlayCard.Account
             if (response == null) return false;
 
             CacheAuth(response);
+            if (logAnalytics)
+                KhelaAnalytics.LogLogin("login_device_guest");
             return true;
         }
 
         public async Task<bool> RefreshTokenAsync()
         {
-            var success = await TryLoginAsync();
+            var success = await TryLoginAsync(logAnalytics: false);
             if (success)
             {
                 OnTokenRefreshed?.Invoke();
@@ -187,6 +194,7 @@ namespace PlayCard.Account
             _authSave.ExpiresAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + auth.ExpiresIn;
             SaveController.MarkDirty();
             SaveController.Save();
+            KhelaAnalytics.SetUserId(_authSave.UserId);
         }
 
         /// <summary>
@@ -283,24 +291,24 @@ namespace PlayCard.Account
 
         private async Task<T> PostJsonAsync<T>(string endpoint, object payload, bool expectResponseBody = true) where T : class
         {
+            var url = $"{ResolveBaseUrl()}{endpoint}";
             try
             {
-                var url = $"{ResolveBaseUrl()}{endpoint}";
                 var json = JsonSerializer.Serialize(payload, JsonOpts);
-                using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var response = await _httpClient.PostAsync(url, content);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errBody = await response.Content.ReadAsStringAsync();
-                    Debug.LogWarning($"[AccountManager] POST {url} failed: {(int)response.StatusCode} {response.ReasonPhrase} — {errBody}");
-                    return null;
-                }
+                var req = new HTTPRequest(new Uri(url), HTTPMethods.Post);
+                req.SetHeader("Content-Type", "application/json; charset=utf-8");
+                req.UploadSettings.UploadStream = new MemoryStream(Encoding.UTF8.GetBytes(json));
 
+                // Best HTTP throws AsyncHTTPException on any non-2xx (and on network/timeout); 2xx returns the response.
+                var response = await req.GetHTTPResponseAsync();
                 if (!expectResponseBody)
                     return Activator.CreateInstance<T>();
-
-                var body = await response.Content.ReadAsStringAsync();
-                return JsonSerializer.Deserialize<T>(body, JsonOpts);
+                return JsonSerializer.Deserialize<T>(response.DataAsText, JsonOpts);
+            }
+            catch (AsyncHTTPException hex)
+            {
+                Debug.LogWarning($"[AccountManager] POST {url} failed: {hex.StatusCode} — {hex.Content}");
+                return null;
             }
             catch (Exception ex)
             {
@@ -326,7 +334,6 @@ namespace PlayCard.Account
         private void OnDestroy()
         {
             SaveController.Save(true);
-            _httpClient.Dispose();
         }
     }
 

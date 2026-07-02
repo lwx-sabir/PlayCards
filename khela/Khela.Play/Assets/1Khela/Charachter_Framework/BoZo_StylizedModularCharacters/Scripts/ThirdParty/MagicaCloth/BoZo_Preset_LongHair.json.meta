@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 7a48aa77c193938478a831b72b365172
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Scripts/ThirdParty/MagicaCloth/BoZo_Preset_LongHair.json
+  uploadId: 941986

@@ -65,15 +65,33 @@ namespace PlayCard.Game.Betting
             if (!_betting) return;
 
             int idx = _activeSeat - 1;
-            if (idx < 0 || idx >= railsBySeat.Length) return;   // not seated, or no rail authored for this seat
+            if (idx < 0 || idx >= railsBySeat.Length)
+            {
+                Debug.LogWarning($"[ChipRailSpawner] no rail filled — MySeat={_activeSeat} (idx {idx}) is outside " +
+                                 $"railsBySeat[0..{railsBySeat.Length}). Either you're not seated (seat unresolved) or no " +
+                                 "rail element was authored for this seat. railsBySeat[0]=seat 1, [1]=seat 2, …");
+                return;
+            }
             var rail = railsBySeat[idx];
-            if (rail == null) return;
+            if (rail == null)
+            {
+                Debug.LogWarning($"[ChipRailSpawner] railsBySeat[{idx}] (seat {_activeSeat}) is NOT assigned — drop the " +
+                                 "ChipRail for this seat into that slot.");
+                return;
+            }
+            if (chipSet.LevelPrefabs == null || chipSet.LevelPrefabs.Count == 0)
+            {
+                Debug.LogWarning("[ChipRailSpawner] the ChipSet has no Level Prefabs — assign the chip prefabs " +
+                                 "(low→high) on the ChipSet asset, or no chips can spawn.");
+                return;
+            }
 
             var values = chipSet.Values(_min, _max);            // minBet × multipliers, ≤ maxBet
             if (values.Count == 0)
             {
                 Debug.LogWarning($"[ChipRailSpawner] no chips for [min={_min}, max={_max}] — min bet is 0 or every " +
-                                 "multiplier exceeds the max. Check the ChipSet multipliers.");
+                                 "multiplier exceeds the max. If min/max are 0 the table data is stale (reseed the lobby); " +
+                                 "otherwise check the ChipSet multipliers.");
                 return;
             }
 

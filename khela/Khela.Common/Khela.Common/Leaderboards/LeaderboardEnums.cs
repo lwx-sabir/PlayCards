@@ -51,15 +51,18 @@ namespace Khela.Common.Leaderboards
         Daily   = 4
     }
 
-    /// <summary>VIP/loyalty ladder. Shared so the Unity client renders the badge/frame.</summary>
+    /// <summary>VIP/loyalty ladder (Progression Spec §3). Shared so the Unity client renders the badge/frame.
+    /// Bronze = floor (no badge, granted at the level gate); Silver+ are the earned VIP badges.
+    /// Append-only: never reuse/renumber a value. (The old unused "Elite=6" was renamed to the §3 ladder.)</summary>
     public enum VipTier
     {
-        None     = 0,
-        Bronze   = 1,
-        Silver   = 2,
-        Gold     = 3,
-        Platinum = 4,
-        Diamond  = 5,
-        Elite    = 6
+        None         = 0,   // unranked (below the VIP entry level)
+        Bronze       = 1,   // floor — no badge
+        Silver       = 2,
+        Gold         = 3,
+        Platinum     = 4,
+        Diamond      = 5,
+        RoyalDiamond = 6,
+        BlackDiamond = 7
     }
 }

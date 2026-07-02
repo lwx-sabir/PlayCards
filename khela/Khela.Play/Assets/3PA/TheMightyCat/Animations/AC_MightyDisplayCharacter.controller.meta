@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 09a48dae29a954679abc936e4d2b5c0f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 311361
+  packageName: Poker Blackjack and Card Games Animation Pack
+  packageVersion: 1.0
+  assetPath: Assets/TheMightyCat/Animations/AC_MightyDisplayCharacter.controller
+  uploadId: 892868

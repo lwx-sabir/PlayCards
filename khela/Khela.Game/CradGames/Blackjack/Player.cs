@@ -129,6 +129,7 @@ namespace CardGames.Blackjack
             var hitResult = Hit(handIndex);
 
             handState.Done = true;
+            handState.IsDoubled = true;
 
             return new DoubleDownResult
             {
@@ -278,6 +279,16 @@ namespace CardGames.Blackjack
 
         [JsonInclude]
         public bool Done { get; set; }
+
+        /// <summary>True once this hand was doubled down (stake doubled + exactly one card drawn). Feeds the
+        /// "doubles" lifetime stat.</summary>
+        [JsonInclude]
+        public bool IsDoubled { get; set; }
+
+        /// <summary>True if the OPENING hand was dealt a splittable pair. Set at DEAL (a later hit/split changes the
+        /// cards) and only ever on hand 0 — a split reuses hand 0, so this flag survives it. Feeds "pairs dealt".</summary>
+        [JsonInclude]
+        public bool WasDealtPair { get; set; }
 
         /// <summary>
         /// Wallet transaction id(s) of the stake debit(s) that funded THIS hand — the deal/split stake, with a

@@ -1,0 +1,21 @@
+fileFormatVersion: 2
+guid: 26f065195d7e3d448a4e78fdb2ec2bcc
+ScriptedImporter:
+  internalIDToNameTable: []
+  externalObjects: {}
+  serializedVersion: 2
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+  script: {fileID: 11500000, guid: 8404be70184654265930450def6a9037, type: 3}
+  generateWrapperCode: 0
+  wrapperCodePath: 
+  wrapperClassName: 
+  wrapperCodeNamespace: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Scripts/BoZo_CharacterCreatorInputs.inputactions
+  uploadId: 941986

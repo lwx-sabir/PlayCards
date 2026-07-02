@@ -9,6 +9,11 @@ unexpected pending migration.*
 Scope = exactly these five items. (Chat content-moderation + emotes are a separate doc:
 `CHAT_SPEC.md`. Achievements/badges/extra gifts are in `SOCIAL_BACKLOG.md`.)
 
+> **Status (2026-06-27): all 5 built + applied.** Since then the profile read API was extended with
+> **per-game stats** — `GET /api/profile/me` & `/{userId}` now return `perGame[]` (one `GameStatsDto` per game
+> played, from `UserGameStats`) plus a field-extended `stats` aggregate (the "All" tab). Details +
+> field→UI mapping live in **`docs/LEADERBOARD.md`**.
+
 ---
 
 ## 1. ProfileController — read/edit profiles (the #1 gap)

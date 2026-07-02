@@ -1,0 +1,162 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &8662843887539373271
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8319074518241025645}
+  - component: {fileID: 8429035701743384987}
+  m_Layer: 0
+  m_Name: BSMC_Overall_Overall
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8319074518241025645
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8662843887539373271}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 7436820066161823310}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8429035701743384987
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8662843887539373271}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: Overall
+  OutfitIcon: {fileID: 21300000, guid: 11a86753e10f9dd4eaa1847ef4dd8d96, type: 3}
+  ColorChannels:
+  - Shirt
+  - Overalls
+  - Buckles
+  - Shirt Cuffs
+  - Legs Cuffs
+  TextureCatagory: 
+  supportDecals: 0
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: 70da74ce935284d419fd8fcf6f8f3306, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 0
+  defaultColors: []
+  tags:
+  - CoverShoulders
+  - CoverUpperArms
+  - CoverBack
+  - CoverStomach
+  - CoverHips
+  - CoverUpperLegs
+  optionalPieces: []
+  additionalBones: []
+  LinkedColorSets: []
+  IncompatibleSets: []
+  HideTypes:
+  - {fileID: 11400000, guid: 6708e088db9d4b14caa291b19c953b71, type: 2}
+  - {fileID: 11400000, guid: 8b51e8ff650f1344ba44bbb2b9eb83e6, type: 2}
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 0}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  decalDatas: []
+  editMode: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+--- !u!1001 &6971111595454753189
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 8319074518241025645}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+      propertyPath: m_Name
+      value: BSMC_Outfit_Overall_Overall
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+--- !u!4 &7436820066161823310 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 9f3d82b2a09311041a4567540ba6cc2f, type: 3}
+  m_PrefabInstance: {fileID: 6971111595454753189}
+  m_PrefabAsset: {fileID: 0}

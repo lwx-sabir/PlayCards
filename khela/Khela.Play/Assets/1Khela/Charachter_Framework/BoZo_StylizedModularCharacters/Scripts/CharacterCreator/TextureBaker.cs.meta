@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: de46db712b7b9354abc9944df3df1b4b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Scripts/CharacterCreator/TextureBaker.cs
+  uploadId: 941986

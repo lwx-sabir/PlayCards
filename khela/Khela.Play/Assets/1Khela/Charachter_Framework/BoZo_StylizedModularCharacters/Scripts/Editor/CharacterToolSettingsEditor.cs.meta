@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: b5e6fb8135b6a0a41984335c5a04c9ee
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Scripts/Editor/CharacterToolSettingsEditor.cs
+  uploadId: 941986

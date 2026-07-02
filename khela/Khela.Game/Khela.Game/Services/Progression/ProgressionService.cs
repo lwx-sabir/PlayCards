@@ -5,6 +5,7 @@ using Khela.Common.Progression;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Services.Redis;
+using Khela.Game.Services.Rewards;
 using Khela.Game.Services.Wallet;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -22,6 +23,15 @@ namespace Khela.Game.Services.Progression
         /// </summary>
         Task<long> AccrueForRoundAsync(Guid userId, decimal cleanWager, bool win, string roundId);
 
+        /// <summary>
+        /// Grant a FLAT XP amount from any NON-wager source (daily login, quests, gifts, admin, …). Reuses the same
+        /// daily-cap + auto level-up + level/milestone-reward path as round accrual, so the level rises automatically.
+        /// Idempotent on <paramref name="idemKey"/> — the caller supplies a key unique within <paramref name="source"/>
+        /// (e.g. source "dailylogin", idemKey "{userId}:{yyyy-MM-dd}"). Subject to the daily XP cap. Returns the XP
+        /// actually granted (post-cap; 0 if duplicate, capped out, non-positive, or the layer is disabled).
+        /// </summary>
+        Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey);
+
         /// <summary>The caller's live level/XP state for the profile bar.</summary>
         Task<ProgressionDto> GetMyProgressionAsync(Guid userId);
     }
@@ -35,18 +45,18 @@ namespace Khela.Game.Services.Progression
     /// </summary>
     public sealed class ProgressionService : IProgressionService
     {
-        private const string DailyCapRedisKey = "progression:dailyXpCap";
+        private const string SettingsHashKey = "khela:settings";   // admin runtime overrides (dashboard SettingsController)
 
         private readonly AppDbContext _db;
-        private readonly IWalletService _wallet;
+        private readonly IRewardService _rewards;
         private readonly IRedisService _redis;
         private readonly ILogger<ProgressionService> _logger;
         private readonly ProgressionConfig _cfg;
 
-        public ProgressionService(AppDbContext db, IWalletService wallet, IRedisService redis,
+        public ProgressionService(AppDbContext db, IRewardService rewards, IRedisService redis,
             IConfiguration config, ILogger<ProgressionService> logger)
         {
-            _db = db; _wallet = wallet; _redis = redis; _logger = logger;
+            _db = db; _rewards = rewards; _redis = redis; _logger = logger;
             _cfg = new ProgressionConfig
             {
                 Enabled = config.GetValue("Progression:Enabled", true),
@@ -60,31 +70,50 @@ namespace Khela.Game.Services.Progression
                 DailyXpCap = config.GetValue("Progression:DailyXpCap", 150_000L),
                 XpBase = config.GetValue("Progression:XpBase", 150L),
                 XpExp = config.GetValue("Progression:XpExp", 1.6),
-                LvlupBase = config.GetValue("Progression:LvlupBase", 10_000L),
+                LvlupBase = config.GetValue("Progression:LvlupBase", 100L),
                 MilestoneEveryLevels = config.GetValue("Progression:MilestoneEveryLevels", 10),
             };
         }
 
-        public async Task<long> AccrueForRoundAsync(Guid userId, decimal cleanWager, bool win, string roundId)
+        public Task<long> AccrueForRoundAsync(Guid userId, decimal cleanWager, bool win, string roundId)
         {
-            if (!_cfg.Enabled || string.IsNullOrEmpty(roundId)) return 0;   // game-extension layer off → no XP
+            if (!_cfg.Enabled || string.IsNullOrEmpty(roundId)) return Task.FromResult(0L);   // game-extension layer off → no XP
+            // Wager XP is computed from the round's clean (earned, non-gifted) stake + the player's CURRENT level
+            // (recomputed each attempt so an optimistic-concurrency reload uses the fresh level for the min-bet tier).
+            return ApplyXpAsync(userId, $"xpacc:{roundId}:{userId}",
+                (p, cfg) => ProgressionMath.RawXp(cleanWager, p.Level, win, cfg));
+        }
 
-            // Idempotency: the Experience/Level mutation is += (not idempotent), so gate it durably per
-            // (round, user). SET-NX FIRST — favour no-double over no-loss (double XP would double the level-up
-            // CHIP rewards on a crash). The settle roll-up already runs once per round under bjr:settled:{round};
-            // this key protects against a settle retry after that 1h guard lapses.
-            var idemKey = $"xpacc:{roundId}:{userId}";
+        public Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey)
+        {
+            // Flat XP from any non-wager source (daily login, quests, gifts, admin). Same cap + auto level-up +
+            // reward path as round accrual. Caller supplies an idemKey unique within the source.
+            if (!_cfg.Enabled || amount <= 0 || string.IsNullOrEmpty(idemKey)) return Task.FromResult(0L);
+            return ApplyXpAsync(userId, $"xpgrant:{source}:{idemKey}", (_, _) => amount);
+        }
+
+        /// <summary>
+        /// The single XP-apply core, shared by wager accrual + flat grants. Durably idempotent on <paramref name="idemKey"/>
+        /// (SET-NX FIRST — favour no-double over no-loss, since the Experience/Level mutation is += and a retry would
+        /// double the level-up CHIP rewards). <paramref name="rawXp"/> yields the pre-cap XP from the current profile +
+        /// effective config; it is re-evaluated on each optimistic-concurrency attempt so a reload uses fresh values.
+        /// Applies the daily cap (excess discarded), auto level-ups with carry-over, then idempotent per-(user,level) rewards.
+        /// </summary>
+        private async Task<long> ApplyXpAsync(Guid userId, string idemKey, Func<UserProfile, ProgressionConfig, long> rawXp)
+        {
             if (!await _redis.GetDatabase().StringSetAsync(idemKey, "1", TimeSpan.FromDays(30), When.NotExists))
                 return 0;
 
             var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
             if (profile == null) return 0;
 
-            // Apply under OPTIMISTIC CONCURRENCY. UserProfile carries a RowVersion, so a SAME-USER multi-table
-            // concurrent settle races this row: one SaveChanges throws DbUpdateConcurrencyException. Reload the
-            // latest row and re-apply from its fresh values — safe because level rewards are idempotent per
-            // (user,level), so a retry can never double-pay chips. Without this, the conflict would be swallowed
-            // AFTER xpacc is set and the round's XP + rewards would be lost forever.
+            // Effective config = appsettings base + admin runtime overrides (Redis), read ONCE so a saved dashboard
+            // change applies on the next grant. A bad/missing override falls back to appsettings.
+            var cfg = await EffectiveCfgAsync();
+
+            // OPTIMISTIC CONCURRENCY: UserProfile carries a RowVersion, so a same-user concurrent write races this row
+            // and one SaveChanges throws DbUpdateConcurrencyException. Reload + re-apply from fresh values — safe
+            // because level rewards are idempotent per (user,level), so a retry can never double-pay chips.
             for (int attempt = 1; ; attempt++)
             {
                 var now = DateTime.UtcNow;
@@ -95,16 +124,15 @@ namespace Khela.Game.Services.Progression
                     profile.DailyXpResetAt = now.Date.AddDays(1);   // next UTC midnight
                 }
 
-                var cap = await GetDailyXpCapAsync();
-                var rawXp = ProgressionMath.RawXp(cleanWager, profile.Level, win, _cfg);
-                var grantedXp = Math.Min(rawXp, Math.Max(0, cap - profile.DailyXp));   // excess over the cap DISCARDED
+                var raw = Math.Max(0, rawXp(profile, cfg));
+                var grantedXp = Math.Min(raw, Math.Max(0, cfg.DailyXpCap - profile.DailyXp));   // excess over the cap DISCARDED
                 profile.DailyXp += grantedXp;
 
                 List<int> crossed = null;
                 if (grantedXp > 0)
                 {
                     var (exp, level, cl) = ProgressionMath.ApplyLevelUps(
-                        profile.Experience, profile.Level, grantedXp, _cfg.XpBase, _cfg.XpExp);
+                        profile.Experience, profile.Level, grantedXp, cfg.XpBase, cfg.XpExp);
                     profile.Experience = exp;                  // into-level counter (carries the remainder)
                     profile.Level = level;
                     profile.LifetimeExperience += grantedXp;   // monotonic (XP-board source)
@@ -122,33 +150,34 @@ namespace Khela.Game.Services.Progression
                     continue;
                 }
 
-                // Credit rewards AFTER the level is durably persisted. Idempotent per (user,level), so a crash
-                // between save and credit self-heals on retry and a re-climbed level never pays twice.
+                // ENQUEUE level rewards AFTER the level is durably persisted — they land in the player's CLAIMABLE
+                // inbox (PlayerRewards), NOT the wallet; the player collects them by tapping. Idempotent per
+                // (user,level), so a crash/retry never enqueues twice and a re-climbed level never re-grants.
                 if (crossed != null)
                     foreach (var lvl in crossed)
-                        await CreditLevelRewardsAsync(userId, lvl);
+                        await GrantLevelRewardsAsync(userId, lvl, cfg);
 
                 return grantedXp;
             }
         }
 
-        private async Task CreditLevelRewardsAsync(Guid userId, int level)
+        private async Task GrantLevelRewardsAsync(Guid userId, int level, ProgressionConfig cfg)
         {
             try
             {
-                var reward = ProgressionMath.LevelUpReward(level, _cfg.LvlupBase);
+                var reward = ProgressionMath.LevelUpReward(level, cfg.LvlupBase);
                 if (reward > 0)
-                    await _wallet.CreditAsync(userId.ToString(), CurrencyType.Chips, reward, TransactionType.Bonus,
-                        $"xp:lvlup:{userId}:{level}", new WalletContext { Description = $"Level {level} reward" });
+                    await _rewards.GrantAsync(userId, RewardSource.LevelUp, CurrencyType.Chips, reward,
+                        $"Level {level} reward", $"xp:lvlup:{userId}:{level}");
 
-                if (_cfg.MilestoneEveryLevels > 0 && level % _cfg.MilestoneEveryLevels == 0 && reward > 0)
-                    await _wallet.CreditAsync(userId.ToString(), CurrencyType.Chips, reward, TransactionType.Bonus,
-                        $"xp:milestone:{userId}:{level}", new WalletContext { Description = $"Level {level} milestone" });
+                if (cfg.MilestoneEveryLevels > 0 && level % cfg.MilestoneEveryLevels == 0 && reward > 0)
+                    await _rewards.GrantAsync(userId, RewardSource.Milestone, CurrencyType.Chips, reward,
+                        $"Level {level} milestone", $"xp:milestone:{userId}:{level}");
             }
             catch (Exception ex)
             {
-                // A reward credit is a non-critical, idempotent bonus — never fail the round (or the XP) over it.
-                _logger.LogError(ex, "Level-up reward credit failed for user {UserId} level {Level}", userId, level);
+                // Enqueuing a reward is non-critical — never fail the round (or the XP) over it.
+                _logger.LogError(ex, "Level-up reward enqueue failed for user {UserId} level {Level}", userId, level);
             }
         }
 
@@ -159,21 +188,47 @@ namespace Khela.Game.Services.Progression
 
             var now = DateTime.UtcNow;
             var dailyXp = (p.DailyXpResetAt == null || now >= p.DailyXpResetAt) ? 0 : p.DailyXp; // lazy view of the reset
-            var cap = await GetDailyXpCapAsync();
+            var cfg = await EffectiveCfgAsync();
+
+            // Normalize the stored (level, into-level XP) against the CURRENT curve before display. Stored values can
+            // drift — a curve retune (XpBase/XpExp are admin-tunable), or legacy/seeded data — leaving
+            // Experience >= XpToNext(Level) so the bar overfills ("250 / 150"). ApplyLevelUps with 0 fresh XP just
+            // carries the excess into the right level. Heal the stored row best-effort (mirrors VIP lazy promotion);
+            // any crossed-level reward credits on the next real grant.
+            var (xp, level, _) = ProgressionMath.ApplyLevelUps(p.Experience, p.Level, 0, cfg.XpBase, cfg.XpExp);
+            if (level != p.Level || xp != p.Experience)
+            {
+                try
+                {
+                    await _db.UserProfiles.Where(x => x.UserId == userId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.Level, level).SetProperty(x => x.Experience, xp));
+                }
+                catch (Exception ex) { _logger.LogWarning(ex, "Progression normalize-persist failed for {UserId}", userId); }
+            }
+
             return new ProgressionDto
             {
-                Level = p.Level,
-                Xp = p.Experience,
-                XpToNext = ProgressionMath.XpToNext(p.Level, _cfg.XpBase, _cfg.XpExp),
-                DailyXpRemaining = Math.Max(0, cap - dailyXp),
+                Level = level,
+                Xp = xp,
+                XpToNext = ProgressionMath.XpToNext(level, cfg.XpBase, cfg.XpExp),
+                DailyXpRemaining = Math.Max(0, cfg.DailyXpCap - dailyXp),
             };
         }
 
-        /// <summary>Runtime-tunable daily cap: a Redis override (set by an admin) wins over the config default.</summary>
-        private async Task<long> GetDailyXpCapAsync()
+        /// <summary>Effective config = appsettings base with admin runtime overrides from the Redis "khela:settings"
+        /// hash overlaid. Read once per accrual so a saved change applies on the next round; any Redis failure or
+        /// unparseable value falls back to the base config, so overrides can never break accrual.</summary>
+        private async Task<ProgressionConfig> EffectiveCfgAsync()
         {
-            var v = await _redis.GetDatabase().StringGetAsync(DailyCapRedisKey);
-            return v.HasValue && long.TryParse(v, out var cap) && cap >= 0 ? cap : _cfg.DailyXpCap;
+            try
+            {
+                var entries = await _redis.GetDatabase().HashGetAllAsync(SettingsHashKey);
+                if (entries == null || entries.Length == 0) return _cfg;
+                var map = new Dictionary<string, string>(entries.Length);
+                foreach (var e in entries) map[(string)e.Name] = (string)e.Value;
+                return ProgressionMath.Overlay(_cfg, map);
+            }
+            catch { return _cfg; }
         }
     }
 }

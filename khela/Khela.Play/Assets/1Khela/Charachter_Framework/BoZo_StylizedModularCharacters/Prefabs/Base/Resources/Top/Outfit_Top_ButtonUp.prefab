@@ -1,0 +1,159 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &4626356162208202766
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 5440294231638563508}
+  - component: {fileID: 3054140517746911653}
+  m_Layer: 0
+  m_Name: Outfit_Top_ButtonUp
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &5440294231638563508
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4626356162208202766}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 6050028444504158249}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3054140517746911653
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4626356162208202766}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: Outfit_Top_
+  OutfitIcon: {fileID: 21300000, guid: 33511cedf4c6fc6469d27bca90a1d454, type: 3}
+  ColorChannels:
+  - Base
+  - UnderShirt
+  - Pattern
+  TextureCatagory: 
+  supportDecals: 1
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: 6708e088db9d4b14caa291b19c953b71, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 0
+  defaultColors: []
+  tags:
+  - CoverShoulders
+  - CoverUpperArms
+  - CoverLowerArms
+  - CoverBack
+  - CoverChest
+  - CoverStomach
+  optionalPieces: []
+  additionalBones: []
+  LinkedColorSets: []
+  IncompatibleSets:
+  - {fileID: 11400000, guid: 70da74ce935284d419fd8fcf6f8f3306, type: 2}
+  HideTypes: []
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 0}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  decalDatas: []
+  editMode: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+--- !u!1001 &6087949349794387906
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 5440294231638563508}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+      propertyPath: m_Name
+      value: BSMC_Outfit_Top_ButtonUp
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+--- !u!4 &6050028444504158249 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 6d69c88ae01d7ce4cb317dec628879a3, type: 3}
+  m_PrefabInstance: {fileID: 6087949349794387906}
+  m_PrefabAsset: {fileID: 0}

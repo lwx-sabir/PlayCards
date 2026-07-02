@@ -39,6 +39,10 @@ namespace PlayCard.Home
         [SerializeField] private Button prevButton;
         [SerializeField] private Button nextButton;
 
+        [Tooltip("Infinite ring (wraps first↔last). AUTO-disabled for ≤2 items — a 2-item ring pops its single neighbour " +
+                 "from side to side, so ≤2 slides linearly (finite) instead.")]
+        [SerializeField] private bool allowWrap = true;
+
         /// <summary>Fires with the newly-centred item on every selection change (and once on start).</summary>
         public event Action<ICarouselItem> OnSelectionChanged;
 
@@ -48,9 +52,18 @@ namespace PlayCard.Home
         private bool _dragging;
         private bool _needsApply;   // first Apply() is deferred to the first Update — see OnEnable
 
+        /// <summary>Ring-wrap only when there are enough items for a real ring; ≤2 slides linearly (no side-to-side pop).</summary>
+        private bool Wrap => allowWrap && _items.Count >= 3;
+
         public ICarouselItem Current
         {
-            get { int n = _items.Count; return n == 0 ? null : _items[((_index % n) + n) % n]; }
+            get
+            {
+                int n = _items.Count;
+                if (n == 0) return null;
+                int idx = Wrap ? (((_index % n) + n) % n) : Mathf.Clamp(_index, 0, n - 1);
+                return _items[idx];
+            }
         }
 
         private void OnEnable()
@@ -75,8 +88,14 @@ namespace PlayCard.Home
             if (nextButton) nextButton.onClick.RemoveListener(Next);
         }
 
-        public void Next() { _index++; Apply(); }
-        public void Prev() { _index--; Apply(); }
+        public void Next() { _index++; ClampIndex(); Apply(); }
+        public void Prev() { _index--; ClampIndex(); Apply(); }
+
+        // Non-wrapping (≤2 items) is a finite slider: keep the index inside [0, n-1] instead of letting it run unbounded.
+        private void ClampIndex()
+        {
+            if (!Wrap) _index = Mathf.Clamp(_index, 0, Mathf.Max(0, _items.Count - 1));
+        }
 
         /// <summary>Re-scan children + re-centre. Call after spawning items at runtime (the Lobby does this).</summary>
         public void Rebuild()
@@ -114,10 +133,14 @@ namespace PlayCard.Home
                 _pos = _index;   // snap in edit mode so the ring reflects the inspector
             }
 
+            // Finite (≤2) mode: keep the scroll position inside the real range so items don't slide off / wrap.
+            if (!Wrap) _pos = Mathf.Clamp(_pos, 0f, Mathf.Max(0, n - 1));
+
             float half = n / 2f;
             for (int i = 0; i < n; i++)
             {
-                float off = Mathf.Repeat(i - _pos + half, n) - half;  // nearest wrapped offset, continuous
+                // n>=3: nearest wrapped offset (infinite ring). n<=2: plain linear offset (finite slide, no side pop).
+                float off = Wrap ? (Mathf.Repeat(i - _pos + half, n) - half) : (i - _pos);
                 float a = Mathf.Abs(off);
 
                 // Centre = full size & forward; one slot out = sideScale; beyond that shrink to nothing at the
@@ -171,6 +194,7 @@ namespace PlayCard.Home
             {
                 _dragging = false;
                 _index = Mathf.RoundToInt(_pos);   // snap to the nearest item, then SmoothDamp eases in
+                ClampIndex();
                 Apply();
             }
         }

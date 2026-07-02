@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f5e2f6da142ef2940b419a97432cbf0f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Animations/Expressions/BSMC_Sad.anim
+  uploadId: 941986

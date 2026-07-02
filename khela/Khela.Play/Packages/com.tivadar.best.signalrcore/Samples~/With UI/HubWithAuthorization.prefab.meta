@@ -1,0 +1,17 @@
+fileFormatVersion: 2
+guid: 485378cd297e7db4bba72fd93ae1d80f
+timeCreated: 1571296078
+licenseType: Store
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 100100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Samples~/With UI/HubWithAuthorization.prefab
+  uploadId: 884732

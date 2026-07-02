@@ -1,0 +1,110 @@
+@using Khela.Game.Database.Models
+@using Khela.Web.Controllers
+@model WalletsVm
+@{
+    ViewData["Title"] = "Wallets & Ledger";
+    ViewData["Crumb"] = "Wallets & Ledger";
+    ViewData["Nav"] = "wallets";
+
+    string Money(decimal d) => d.ToString("#,0.####");
+    string Trunc(string s, int n) => string.IsNullOrEmpty(s) ? "" : (s.Length <= n ? s : s.Substring(0, n) + "…");
+    string RefOf(LedgerRow r) =>
+        !string.IsNullOrEmpty(r.RoundId) ? "round " + Trunc(r.RoundId, 16)
+        : !string.IsNullOrEmpty(r.TableId) ? "table " + Trunc(r.TableId, 16)
+        : Trunc(r.Description, 32);
+    string StatusClass(TransactionStatus s) => s switch
+    {
+        TransactionStatus.Completed => "active",
+        TransactionStatus.Failed => "suspend",
+        TransactionStatus.Reversed => "suspend",
+        _ => "pending"
+    };
+}
+
+<h1 class="page-title">Wallets &amp; Ledger</h1>
+<p class="page-sub">Read-only audit of a player's balances and transaction ledger.</p>
+
+<form asp-controller="Wallets" asp-action="Index" method="get" class="wallet-search">
+    <div class="mini-search" style="flex:1; max-width:480px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+        <input type="text" name="q" value="@Model.Query" placeholder="Player name, email, or user id…" autofocus style="width:100%" />
+    </div>
+    <button class="btn btn-primary" type="submit">Search</button>
+</form>
+
+@if (Model.NotFound)
+{
+    <div class="panel"><div class="soon"><h2>No player found</h2><p>Nothing matched “@Model.Query”. Try a display name, an email, or the exact user id.</p></div></div>
+}
+else if (Model.Resolved)
+{
+    <div class="ledger-head">
+        <div class="ledger-name">@Model.PlayerName</div>
+        <div class="dim" style="font-size:12px">@Model.UserId</div>
+    </div>
+
+    <div class="wallet-grid">
+        @foreach (var w in Model.Wallets)
+        {
+            <div class="card wallet-card">
+                <div class="wallet-cur">@w.Currency</div>
+                <div class="wallet-bal">@Money(w.Balance)</div>
+                @if (w.Gifted > 0)
+                {
+                    <div class="wallet-gift">incl. @Money(w.Gifted) gifted</div>
+                }
+            </div>
+        }
+        @if (Model.Wallets.Count == 0)
+        {
+            <div class="dim">No wallets for this player.</div>
+        }
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Ledger</h3>
+            <span class="dim" style="font-size:12.5px">@Model.TotalTx.ToString("#,0") transactions</span>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr><th>Time (UTC)</th><th>Currency</th><th>Type</th><th>Amount</th><th>Balance after</th><th>Status</th><th>Ref</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in Model.Ledger)
+                {
+                    <tr>
+                        <td>@r.CreatedAt.ToString("MMM dd, HH:mm:ss")</td>
+                        <td>@r.Currency</td>
+                        <td>@r.Type</td>
+                        <td class="@(r.Amount < 0 ? "amt-neg" : "amt-pos")">@(r.Amount >= 0 ? "+" : "")@Money(r.Amount)</td>
+                        <td>@(r.BalanceAfter.HasValue ? Money(r.BalanceAfter.Value) : "—")</td>
+                        <td><span class="pill @StatusClass(r.Status)">@r.Status</span></td>
+                        <td class="dim" style="font-size:12px">@RefOf(r)</td>
+                    </tr>
+                }
+                @if (Model.Ledger.Count == 0)
+                {
+                    <tr><td colspan="7" class="dim" style="padding:18px 16px">No transactions.</td></tr>
+                }
+            </tbody>
+        </table>
+        <div class="table-foot">
+            <span class="dim" style="font-size:12.5px">Page @(Model.Page + 1) · showing @(Model.Ledger.Count == 0 ? 0 : Model.Page * Model.PageSize + 1)–@(Model.Page * Model.PageSize + Model.Ledger.Count)</span>
+            <div class="pager">
+                @if (Model.HasPrev) { <a class="btn btn-outline" asp-action="Index" asp-route-q="@Model.Query" asp-route-page="@(Model.Page - 1)">‹ Prev</a> }
+                @if (Model.HasNext) { <a class="btn btn-outline" asp-action="Index" asp-route-q="@Model.Query" asp-route-page="@(Model.Page + 1)">Next ›</a> }
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="panel">
+        <div class="soon">
+            <div class="soon-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4z" /></svg></div>
+            <h2>Look up a player</h2>
+            <p>Search by display name, email, or user id to see their per-currency balances and full transaction ledger.</p>
+        </div>
+    </div>
+}

@@ -1,0 +1,33 @@
+Higher Value = Lower in the order
+
+Unsorted - 0
+Body - 100 (Bottom)
+Head - 99 (Bottom)
+Eyes - 100 (Bottom)
+
+BODY-----------------------------
+
+Body Details = 98
+Body Tattoos = 97
+Body Hair = 96
+Body Scars = 95
+
+Socks - 47
+Legging - 48
+UnderUpper - 49
+UnderLower - 50 (Base)
+UnderUpper - 51
+
+FACE----------------------------
+
+Face Details = 98
+Face Tattoos = 97
+Face Make Up = 96
+Face Hair = 95
+Face Scars = 94
+
+Face----------------------------
+
+Pupil - 99
+Iris - 98
+

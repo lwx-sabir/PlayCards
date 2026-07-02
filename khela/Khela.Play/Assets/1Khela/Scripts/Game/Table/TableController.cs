@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PlayCard.Account;
 using PlayCard.App;
+using PlayCard.Core;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Net;
 using PlayCard.Game.Wallet;
@@ -129,11 +130,24 @@ namespace PlayCard.Game.Table
 
             // Round-end transition (in-progress → ended): the server's auto-settle arrives as a push with no
             // client REST call, so refresh the chips HUD here to catch the credited winnings.
-            bool roundEnded = Board != null && Board.RoundInProgress && !board.RoundInProgress;
+            var previous = Board;
+            bool roundStarted = (previous == null || !previous.RoundInProgress) && board.RoundInProgress;
+            bool roundEnded = previous != null && previous.RoundInProgress && !board.RoundInProgress;
 
             Board = board;
             if (tableView != null) tableView.Render(board);
             OnBoardChanged?.Invoke(board);
+
+            if (roundStarted)
+                KhelaAnalytics.LogRoundStarted(GameSession.SelectedGame ?? "blackjack", TableId);
+
+            if (roundEnded)
+            {
+                var myResult = board.LastResults?.FirstOrDefault(r => r.SeatNumber == MySeat);
+                if (myResult != null)
+                    KhelaAnalytics.LogRoundEnded(GameSession.SelectedGame ?? "blackjack", TableId,
+                        myResult.Outcome, myResult.Delta, myResult.Payout);
+            }
 
             if (roundEnded && WalletManager.Instance != null) _ = WalletManager.Instance.RefreshAsync();
         }
@@ -156,7 +170,8 @@ namespace PlayCard.Game.Table
 
         // ---- intents (UI → server-authoritative REST) ----
 
-        public Task PlaceBet(decimal amount)   => Do(Rest.BetAsync(TableId, amount, MySeat));
+        public Task PlaceBet(decimal amount)   => Do(Rest.BetAsync(TableId, amount, MySeat),
+            _ => KhelaAnalytics.LogBetPlaced(GameSession.SelectedGame ?? "blackjack", amount, MySeat));
         public Task Deal()                      => Do(Rest.DealAsync(TableId));
         public Task Hit()                       => Do(Rest.HitAsync(TableId, MySeat, CurrentHand));
         public Task Stand()                     => Do(Rest.StandAsync(TableId, MySeat, CurrentHand));
@@ -224,7 +239,7 @@ namespace PlayCard.Game.Table
         // Every action returns the authoritative board, so render it immediately — this covers a down /
         // mid-reconnect hub (RequestBoard would no-op). The server also pushes TableUpdated; the view diffs,
         // so the duplicate render is a no-op. Then refresh the chips HUD for any money that moved.
-        private async Task Do<T>(Task<ApiResult<T>> call)
+        private async Task Do<T>(Task<ApiResult<T>> call, Action<T> onSuccess = null)
         {
             ApiResult<T> res;
             try { res = await call; }
@@ -236,6 +251,8 @@ namespace PlayCard.Game.Table
                 OnActionError?.Invoke(res.Error);
                 return;
             }
+
+            onSuccess?.Invoke(res.Value);
 
             if (res.Value is BoardSnapshot board && board != null)
                 HandleBoard(board);

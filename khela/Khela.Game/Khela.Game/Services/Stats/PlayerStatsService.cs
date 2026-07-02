@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LbGameType = Khela.Common.Leaderboards.GameType;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
@@ -8,7 +9,8 @@ namespace Khela.Game.Services.Stats
 {
     /// <summary>Per-participant net result of one settled round, fed to the stats roll-up. <c>CleanWager</c>
     /// is the EARNED (non-gifted), insurance-excluded stake — the basis for progression XP (System A).</summary>
-    public readonly record struct RoundResult(Guid UserId, decimal Wagered, decimal Net, decimal CleanWager, long GrantedXp);
+    public readonly record struct RoundResult(Guid UserId, decimal Wagered, decimal Net, decimal CleanWager, long GrantedXp,
+        IReadOnlyDictionary<string, long> StatCounters = null);
 
     public interface IPlayerStatsService
     {
@@ -81,6 +83,24 @@ namespace Khela.Game.Services.Stats
                 stats.Region = region;
                 stats.UpdatedAt = now;
 
+                // Game-specific lifetime counters (the JSON bag) — merge this round's per-seat deltas (additive,
+                // so it rides the same per-round idempotency as the rest of this roll-up). A corrupt bag resets.
+                if (r.StatCounters != null && r.StatCounters.Count > 0)
+                {
+                    Dictionary<string, long> bag;
+                    try
+                    {
+                        bag = string.IsNullOrEmpty(stats.StatCountersJson)
+                            ? new Dictionary<string, long>()
+                            : (JsonSerializer.Deserialize<Dictionary<string, long>>(stats.StatCountersJson) ?? new Dictionary<string, long>());
+                    }
+                    catch { bag = new Dictionary<string, long>(); }
+
+                    foreach (var kv in r.StatCounters)
+                        bag[kv.Key] = (bag.TryGetValue(kv.Key, out var cur) ? cur : 0L) + kv.Value;
+                    stats.StatCountersJson = JsonSerializer.Serialize(bag);
+                }
+
                 // ---- cross-game (UserProfile) ----
                 if (profile != null)
                 {
@@ -109,6 +129,25 @@ namespace Khela.Game.Services.Stats
                     profile.LastPlayedAt = now;
                     profile.UpdatedAt = now;
                 }
+
+                // ---- windowed rollup (PlayerDailyStat) — today's UTC bucket; source for daily/weekly/monthly boards ----
+                var today = now.Date;
+                var daily = await _db.PlayerDailyStats
+                    .FirstOrDefaultAsync(d => d.UserId == r.UserId && d.GameType == gameType && d.StatDate == today);
+                if (daily == null)
+                {
+                    daily = new PlayerDailyStat { UserId = r.UserId, GameType = gameType, StatDate = today, Region = region };
+                    _db.PlayerDailyStats.Add(daily);
+                }
+                daily.Xp += xp;
+                daily.GamesPlayed++;
+                if (win) daily.GamesWon++;
+                daily.Wagered += r.Wagered;
+                daily.ChipsWon += win ? r.Net : 0m;
+                daily.NetProfit += r.Net;
+                if (win && r.Net > daily.BiggestSingleWin) daily.BiggestSingleWin = r.Net;
+                daily.Region = region;
+                daily.UpdatedAt = now;
 
                 lbPushes.Add((r.UserId, region, new RoundMetrics(
                     ChipsWon: win ? r.Net : 0m,

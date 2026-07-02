@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 318fdd9b13caffd4e89ef1eebf7cc8a8
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Runtime/Transports/WebsocketTransport.cs
+  uploadId: 884732

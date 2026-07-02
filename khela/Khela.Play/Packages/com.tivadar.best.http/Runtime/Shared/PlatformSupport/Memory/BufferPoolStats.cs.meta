@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 4a63d88aa7b47f049b4f066dc154285a
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267636
+  packageName: Best HTTP
+  packageVersion: 3.1.0
+  assetPath: Packages/com.tivadar.best.http/Runtime/Shared/PlatformSupport/Memory/BufferPoolStats.cs
+  uploadId: 884706

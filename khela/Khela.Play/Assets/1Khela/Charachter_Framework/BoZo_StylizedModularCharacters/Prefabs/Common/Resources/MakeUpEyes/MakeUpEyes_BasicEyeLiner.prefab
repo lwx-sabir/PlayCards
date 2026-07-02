@@ -1,0 +1,87 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &6301022232626012461
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4352094813961972806}
+  - component: {fileID: 2160705252195994913}
+  m_Layer: 0
+  m_Name: MakeUpEyes_BasicEyeLiner
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4352094813961972806
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6301022232626012461}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2160705252195994913
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6301022232626012461}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: Basic Eye Liner
+  OutfitIcon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  ColorChannels:
+  - Base
+  TextureCatagory: 
+  supportDecals: 0
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: d7ef079491b244e41a9ecbe9d6b455e1, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 99
+  defaultColors: []
+  tags: []
+  optionalPieces: []
+  additionalBones: []
+  LinkedColorSets: []
+  IncompatibleSets: []
+  HideTypes: []
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 2100000, guid: 12dc299c45ade9041a26a7449cea4f94, type: 2}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  decalDatas: []
+  editMode: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}

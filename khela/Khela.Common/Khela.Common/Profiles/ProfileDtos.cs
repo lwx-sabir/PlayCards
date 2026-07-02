@@ -15,6 +15,37 @@ namespace Khela.Common.Profiles
         public int LongestWinStreak { get; set; }
         /// <summary>Lifetime net (signed). Returned on the OWN profile only — omitted (null) on public profiles.</summary>
         public decimal? NetProfit { get; set; }
+        public decimal TotalWagered { get; set; }
+        public DateTime? LastPlayedAt { get; set; }
+        /// <summary>When the player first played any game (earliest per-game FirstPlayedAt, else profile CreatedAt).</summary>
+        public DateTime? StartedPlayingAt { get; set; }
+    }
+
+    /// <summary>Per-game stats for one game the player has played — the "Blackjack" / "Slots" / … tabs. Field
+    /// names mirror <see cref="ProfileStatsDto"/> so the same UI stat-block binds to the "All" tab or a game tab.
+    /// <see cref="NetProfit"/> is own-profile only (null on public); <see cref="WinRate"/> is null when there are
+    /// no games yet (or for games with no per-hand win/loss, e.g. slots).</summary>
+    public class GameStatsDto
+    {
+        public int Game { get; set; }                    // Khela.Common.Leaderboards.GameType as int
+        public string DisplayName { get; set; } = string.Empty;
+        public long GamesPlayed { get; set; }
+        public long GamesWon { get; set; }
+        public double? WinRate { get; set; }             // percentage 0..100 (1 dp); null = n/a
+        public decimal TotalWagered { get; set; }
+        public decimal BiggestWin { get; set; }
+        public decimal? NetProfit { get; set; }
+        public int CurrentWinStreak { get; set; }
+        public int LongestWinStreak { get; set; }
+        public long ExperienceEarned { get; set; }
+        public DateTime? LastPlayedAt { get; set; }
+        public DateTime? StartedPlayingAt { get; set; }  // = UserGameStats.FirstPlayedAt
+
+        /// <summary>Game-specific lifetime stat counters (the "playstyle" stats — blackjacks, doubles, busts, …),
+        /// in catalog order (label + value). Built server-side from the JSON bag on UserGameStats joined with
+        /// <see cref="Khela.Common.Stats.GameStatCatalog"/>, so the client just renders the list. Empty for games
+        /// that declare no counters.</summary>
+        public List<Khela.Common.Stats.StatCounterDto> StatCounters { get; set; } = new List<Khela.Common.Stats.StatCounterDto>();
     }
 
     /// <summary>A publicly-shown linked social account.</summary>
@@ -43,6 +74,8 @@ namespace Khela.Common.Profiles
         public DateTime? LastSeenAt { get; set; }
         public int FriendCount { get; set; }
         public ProfileStatsDto Stats { get; set; } = new ProfileStatsDto();
+        /// <summary>Per-game breakdown (one per game played), newest-played first — the per-game stat tabs.</summary>
+        public List<GameStatsDto> PerGame { get; set; } = new List<GameStatsDto>();
         public List<LinkedSocialDto> LinkedSocials { get; set; } = new List<LinkedSocialDto>();
     }
 
@@ -68,6 +101,8 @@ namespace Khela.Common.Profiles
         public bool RequestFromMePending { get; set; }
         public bool RequestToMePending { get; set; }
         public ProfileStatsDto Stats { get; set; } = new ProfileStatsDto();
+        /// <summary>Per-game breakdown (one per game played), newest-played first. NetProfit null on public.</summary>
+        public List<GameStatsDto> PerGame { get; set; } = new List<GameStatsDto>();
         public List<LinkedSocialDto> LinkedSocials { get; set; } = new List<LinkedSocialDto>();
     }
 

@@ -1,4 +1,5 @@
 using PlayCard.App;
+using PlayCard.Core;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -71,6 +72,7 @@ namespace PlayCard.Home
         {
             if (!Available) return;
             GameSession.SelectedGame = Key;
+            KhelaAnalytics.LogGameSelected(Key);
             if (!string.IsNullOrEmpty(tableId)) SceneNavigator.GoToTable(tableId);
             else SceneNavigator.GoToLobby();
         }
@@ -80,6 +82,7 @@ namespace PlayCard.Home
         {
             if (!Available) return;
             GameSession.SelectedGame = Key;
+            KhelaAnalytics.LogGameSelected(Key);
             SceneNavigator.GoToLobby();
         }
     }

@@ -31,6 +31,14 @@ namespace Khela.Game.Database
 
         public DbSet<UserGameStats> UserGameStats { get; set; }
 
+        public DbSet<PlayerDailyStat> PlayerDailyStats { get; set; }   // windowed (daily/weekly/monthly) leaderboard source
+
+        public DbSet<StatusPointsLedger> StatusPointsLedgers { get; set; }   // monthly SP + spend buckets → VIP tier window (§3)
+        public DbSet<LoyaltyRedemption> LoyaltyRedemptions { get; set; }   // Loyalty-store redemption ledger (idempotency + audit, §4)
+        public DbSet<PlayerReward> PlayerRewards { get; set; }   // claimable reward inbox (level-up/daily/pass/…); credited only on claim
+        public DbSet<PlayerDailyMission> PlayerDailyMissions { get; set; }   // per-player daily mission set + progress
+        public DbSet<PlayerDailyMissionBundle> PlayerDailyMissionBundles { get; set; }   // complete-all bundle claim marker
+
         public DbSet<LeaderboardDefinition> LeaderboardDefinitions { get; set; }
 
         public DbSet<LeaderboardInstance> LeaderboardInstances { get; set; }

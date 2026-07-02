@@ -1,0 +1,10 @@
+fileFormatVersion: 2
+guid: c912644eb3bc48eaa2720bf5c63c5e8d
+timeCreated: 1747129961
+AssetOrigin:
+  serializedVersion: 1
+  productId: 267636
+  packageName: Best HTTP
+  packageVersion: 3.1.0
+  assetPath: Packages/com.tivadar.best.http/Runtime/Shared/PlatformSupport/Threading/CustomThreadPool.cs
+  uploadId: 884706

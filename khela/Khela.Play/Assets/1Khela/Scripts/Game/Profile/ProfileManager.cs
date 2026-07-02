@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using PlayCard.Game.Net;
 using UnityEngine;
@@ -45,6 +46,8 @@ namespace PlayCard.Game.Profile
         public string StatusMessage => Profile?.StatusMessage;
         public int    FriendCount   => Profile?.FriendCount ?? 0;
         public ProfileStats Stats   => Profile?.Stats ?? new ProfileStats();
+        /// <summary>Per-game stat rows (one per game played), newest-first; empty until loaded.</summary>
+        public List<GameStatsDto> PerGame => Profile?.PerGame ?? new List<GameStatsDto>();
 
         private void Awake()
         {

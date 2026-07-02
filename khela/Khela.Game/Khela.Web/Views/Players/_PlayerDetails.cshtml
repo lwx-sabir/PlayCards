@@ -1,0 +1,131 @@
+@using Khela.Common.Leaderboards
+@using Khela.Web.Controllers
+@model PlayerDetailsVm
+@{
+    string TierName(VipTier t) => t switch
+    {
+        VipTier.RoyalDiamond => "Royal Diamond",
+        VipTier.BlackDiamond => "Black Diamond",
+        _ => t.ToString()
+    };
+    string Money(decimal d) => d.ToString("#,0.####");
+    string Int(long n) => n.ToString("#,0");
+    string Dt(DateTime? d) => d.HasValue ? d.Value.ToString("yyyy-MM-dd HH:mm") + " UTC" : "—";
+    double winRate = Model.GamesPlayed > 0 ? (double)Model.GamesWon / Model.GamesPlayed * 100.0 : 0;
+}
+
+<div class="pd-head">
+    <div class="pd-name">@Model.DisplayName</div>
+    <div class="pd-tags">
+        <span class="pill active">@TierName(Model.VipTier)</span>
+        <span class="pill @(Model.VipLevel > 0 ? "active" : "pending")">@(Model.VipLevel > 0 ? $"VIP {Model.VipLevel}" : "no VIP")</span>
+        <span class="pill">Lvl @Model.Level</span>
+    </div>
+    <div class="dim" style="font-size:11px; margin-top:4px">@Model.UserId</div>
+</div>
+
+<div class="pd-grid">
+    <section class="pd-card">
+        <h4>Identity</h4>
+        <div class="pd-kv"><span>Email</span><b>@(Model.Email ?? "—")</b></div>
+        <div class="pd-kv"><span>Username</span><b>@(Model.UserName ?? "—")</b></div>
+        <div class="pd-kv"><span>Region</span><b>@Model.Region</b></div>
+        <div class="pd-kv"><span>Bio</span><b>@(string.IsNullOrEmpty(Model.Bio) ? "—" : Model.Bio)</b></div>
+        <div class="pd-kv"><span>Status</span><b>@(string.IsNullOrEmpty(Model.StatusMessage) ? "—" : Model.StatusMessage)</b></div>
+        <div class="pd-kv"><span>Friends / Referrals</span><b>@Model.FriendCount / @Model.ReferralCount</b></div>
+        <div class="pd-kv"><span>Joined</span><b>@Dt(Model.CreatedAt)</b></div>
+        <div class="pd-kv"><span>Last seen</span><b>@Dt(Model.LastSeenAt)</b></div>
+        <div class="pd-kv"><span>Last played</span><b>@Dt(Model.LastPlayedAt)</b></div>
+    </section>
+
+    <section class="pd-card">
+        <h4>Wallets</h4>
+        @if (Model.Wallets.Count == 0)
+        {
+            <div class="dim" style="font-size:12px">No wallets.</div>
+        }
+        else
+        {
+            foreach (var w in Model.Wallets)
+            {
+                <div class="pd-kv"><span>@w.Currency</span><b>@Money(w.Balance)@(w.Gifted > 0 ? $"  (incl. {Money(w.Gifted)} gifted)" : "")</b></div>
+            }
+        }
+    </section>
+
+    <section class="pd-card">
+        <h4>VIP</h4>
+        <div class="pd-kv"><span>Tier</span><b>@TierName(Model.VipTier)</b></div>
+        <div class="pd-kv"><span>VIP level</span><b>@(Model.VipLevel > 0 ? $"VIP {Model.VipLevel}" : "—")</b></div>
+        <div class="pd-kv"><span>Level progress</span><b>@Int(Model.VipLevelProgress)</b></div>
+        <div class="pd-kv"><span>Maintained through</span><b>@Dt(Model.VipMaintainedThrough)</b></div>
+        <div class="pd-kv"><span>Lifetime status pts</span><b>@Int(Model.LifetimeStatusPoints)</b></div>
+        <div class="pd-kv"><span>Badge</span><b>@(Model.HideVipBadge ? "hidden by player" : (Model.BadgeLitUntil.HasValue ? "lit until " + Dt(Model.BadgeLitUntil) : "—"))</b></div>
+    </section>
+
+    <section class="pd-card">
+        <h4>Progression &amp; Loyalty</h4>
+        <div class="pd-kv"><span>Level</span><b>@Model.Level</b></div>
+        <div class="pd-kv"><span>Into-level XP</span><b>@Int(Model.Experience)</b></div>
+        <div class="pd-kv"><span>Lifetime XP</span><b>@Int(Model.LifetimeExperience)</b></div>
+        <div class="pd-kv"><span>Loyalty points</span><b>@Int(Model.LoyaltyPoints) LP</b></div>
+        <div class="pd-kv"><span>Lifetime LP earned</span><b>@Int(Model.LifetimeLoyaltyPoints) LP</b></div>
+    </section>
+
+    <section class="pd-card pd-wide">
+        <h4>Stats</h4>
+        <div class="pg-tabs">
+            <button type="button" class="pg-tab active" data-tab="all" onclick="pgTab(this)">All</button>
+            @foreach (var g in Model.Games)
+            {
+                <button type="button" class="pg-tab" data-tab="g@(g.Game)" onclick="pgTab(this)">@g.DisplayName</button>
+            }
+        </div>
+
+        @* All — cross-game lifetime aggregate (UserProfile) *@
+        <div class="pg-panel" data-tab="all">
+            <div class="pd-stats">
+                <div class="pd-stat"><div class="pd-stat-v">@Int(Model.GamesPlayed)</div><div class="pd-stat-l">Games</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@Int(Model.GamesWon)</div><div class="pd-stat-l">Won</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@winRate.ToString("0.0")%</div><div class="pd-stat-l">Win rate</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@Money(Model.TotalWagered)</div><div class="pd-stat-l">Wagered</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@Money(Model.BiggestWin)</div><div class="pd-stat-l">Biggest win</div></div>
+                <div class="pd-stat"><div class="pd-stat-v" style="color:@(Model.NetProfit >= 0 ? "var(--ok,#34d399)" : "var(--bad,#f87171)")">@Money(Model.NetProfit)</div><div class="pd-stat-l">Net profit</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@Model.CurrentWinStreak</div><div class="pd-stat-l">Win streak</div></div>
+                <div class="pd-stat"><div class="pd-stat-v">@Model.LongestWinStreak</div><div class="pd-stat-l">Best streak</div></div>
+            </div>
+        </div>
+
+        @* One panel per game played — summary + the playstyle counters *@
+        @foreach (var g in Model.Games)
+        {
+            <div class="pg-panel" data-tab="g@(g.Game)" style="display:none">
+                <div class="pd-stats">
+                    <div class="pd-stat"><div class="pd-stat-v">@Int(g.GamesPlayed)</div><div class="pd-stat-l">Games</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@Int(g.GamesWon)</div><div class="pd-stat-l">Won</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@g.WinRate.ToString("0.0")%</div><div class="pd-stat-l">Win rate</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@Money(g.TotalWagered)</div><div class="pd-stat-l">Wagered</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@Money(g.BiggestWin)</div><div class="pd-stat-l">Biggest win</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v" style="color:@(g.NetProfit >= 0 ? "var(--ok,#34d399)" : "var(--bad,#f87171)")">@Money(g.NetProfit)</div><div class="pd-stat-l">Net profit</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@g.CurrentWinStreak</div><div class="pd-stat-l">Win streak</div></div>
+                    <div class="pd-stat"><div class="pd-stat-v">@g.LongestWinStreak</div><div class="pd-stat-l">Best streak</div></div>
+                </div>
+                @if (g.Counters.Count > 0)
+                {
+                    <div class="pg-sub">Playstyle</div>
+                    <div class="pg-counters">
+                        @foreach (var c in g.Counters)
+                        {
+                            <div class="pd-kv"><span>@c.Label</span><b>@Int(c.Value)</b></div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @if (Model.Games.Count == 0)
+        {
+            <div class="dim" style="font-size:12px; padding-top:6px">No games played yet.</div>
+        }
+    </section>
+</div>

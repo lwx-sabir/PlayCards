@@ -19,6 +19,11 @@ namespace PlayCard.Home
         [Tooltip("Shown in the HUD title, e.g. \"BLACKJACK\".")]
         public string displayName = "BLACKJACK";
 
+        [Tooltip("Server leaderboard GameType id, used to match this game's profile stats (Blackjack=1, Poker=2, " +
+                 "TeenPatti=3, Roulette=4). 0 = not tracked on the server yet → the per-game stats tab shows zeros. " +
+                 "This is the explicit client↔server map — the two GameType enums diverge, so never cast between them.")]
+        public int leaderboardGameId = 0;
+
         public GameCategory category = GameCategory.Cards;
 
         [Tooltip("Is the game actually built (engine + lobby on the server)? OFF = appears in the carousel as a " +

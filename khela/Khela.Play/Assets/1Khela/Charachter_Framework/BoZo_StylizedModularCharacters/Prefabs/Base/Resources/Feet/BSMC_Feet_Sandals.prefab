@@ -1,0 +1,170 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &653813465914097860
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 169200883079125630}
+  - component: {fileID: -7749929396979314068}
+  - component: {fileID: 2692167752664659983}
+  m_Layer: 0
+  m_Name: BSMC_Feet_Sandals
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &169200883079125630
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 653813465914097860}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 5997592179594771837}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &-7749929396979314068
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 653813465914097860}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4fa4ff59040138645be4f3fd3a219b5c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  HeightOffset: 0.005
+  heelEnabled: 0
+  animParameter: HeelHeight
+  blendName: AnimShape_HeelHeight
+  heelHeight: 0
+  heelHeightOffset: 0
+--- !u!114 &2692167752664659983
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 653813465914097860}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: 
+  OutfitIcon: {fileID: 21300000, guid: 9196715e92c11754b9d379a87a039f4b, type: 3}
+  ColorChannels:
+  - Base
+  - Straps
+  TextureCatagory: 
+  supportDecals: 0
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: 0e4e820936308e84487fc607e27aad31, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 0
+  defaultColors: []
+  tags: []
+  optionalPieces: []
+  additionalBones: []
+  LinkedColorSets: []
+  IncompatibleSets: []
+  HideTypes: []
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 0}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  decalDatas: []
+  editMode: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+--- !u!1001 &6102662487421049494
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 169200883079125630}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+      propertyPath: m_Name
+      value: BSMC_Outfit_Feet_Sandals
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+--- !u!4 &5997592179594771837 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 7e59372a0dc0dca4a82914dc0292edaa, type: 3}
+  m_PrefabInstance: {fileID: 6102662487421049494}
+  m_PrefabAsset: {fileID: 0}

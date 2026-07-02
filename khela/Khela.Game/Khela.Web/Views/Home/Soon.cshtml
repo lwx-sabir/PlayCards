@@ -1,0 +1,18 @@
+@{
+    var sectionName = ViewData["Section"] as string ?? "This section";
+    ViewData["Title"] = sectionName;
+    ViewData["Crumb"] = sectionName;
+}
+
+<h1 class="page-title">@sectionName</h1>
+<p class="page-sub">Manage @(sectionName.ToLower()) across Khela.</p>
+
+<div class="panel">
+    <div class="soon">
+        <div class="soon-ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.7 2.7-2-2 2.7-2.7z" /></svg>
+        </div>
+        <h2>Coming soon</h2>
+        <p>The <strong>@sectionName</strong> module isn't wired up yet. The theme, auth gate and shared DB/Redis plumbing are ready — this is the placeholder it'll drop into.</p>
+    </div>
+</div>

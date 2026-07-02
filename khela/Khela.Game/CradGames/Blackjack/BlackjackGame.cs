@@ -93,6 +93,16 @@ namespace CardGames.Blackjack
                         p.CurrentDeck = Deck;
                     }
                 }
+
+                // Flag each opening hand that's a splittable pair (the "pairs dealt" lifetime stat) — captured NOW,
+                // because a later hit/split changes the cards. Set on hand 0 only; a split reuses hand 0 so it survives.
+                foreach (var p in Players)
+                {
+                    if (!p.InRound) continue;
+                    var hs = p.Hands[0];
+                    if (hs.Hand.Cards.Count == 2 && Player.CanSplitPair(hs.Hand.Cards[0], hs.Hand.Cards[1]))
+                        hs.WasDealtPair = true;
+                }
             }
 
             /// <summary>

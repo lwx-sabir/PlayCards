@@ -42,6 +42,12 @@ namespace Khela.Game.Database.Models
         [MaxLength(64)]
         public string CountryFlagId { get; set; }  // optional cosmetic flag (may differ from Region)
 
+        /// <summary>The player's full BoZo avatar config (structured AvatarDto serialized to JSON), server-synced and
+        /// SANITIZED on write — distinct from the simple cosmetic <see cref="AvatarId"/>. Others load this to render the
+        /// player's 3D avatar at their seat.</summary>
+        [Column(TypeName = "text")]
+        public string AvatarConfig { get; set; }
+
         // ---- Free-text blurbs (user-editable; moderated on write — see ProfileService) ----
         [MaxLength(160)]
         public string Bio { get; set; }            // "about me"
@@ -65,6 +71,18 @@ namespace Khela.Game.Database.Models
         [Required] public VipTier VipTier { get; set; } = VipTier.None;
         [Required] public long LoyaltyPoints { get; set; } = 0;       // current spendable balance
         [Required] public long LifetimeLoyaltyPoints { get; set; } = 0;
+
+        // ---- VIP / status (Progression Spec §3) — tier itself is computed from StatusPointsLedger (trailing window) ----
+        [Required] public long LifetimeStatusPoints { get; set; } = 0;  // monotonic SP, display/analytics (rank = trailing-window sum, not this)
+        [Required] public long DailySpFromWager { get; set; } = 0;      // SP earned from wager today (drives SP_FROM_WAGER_DAILY_CAP)
+        public DateTime? DailySpResetAt { get; set; }                   // UTC midnight after which DailySpFromWager resets
+        public DateTime? BadgeLitUntil { get; set; }                    // badge shown lit until this UTC time (refreshed within BADGE_WINDOW_DAYS); COSMETIC — never affects tier
+        [Required] public bool HideVipBadge { get; set; } = false;      // player opt-out: hide the VIP badge from others
+
+        // ---- VIP Level (Progression Spec §3.6) — the premium ladder (1..10) on TOP of the tier ----
+        [Required] public int VipLevel { get; set; } = 0;               // 0 = none; 1..10 the premium ladder (the big comp multiplier)
+        [Required] public long VipLevelProgress { get; set; } = 0;      // into-next-level grind progress (SP × tier factor)
+        public DateTime? VipLevelMaintainedThrough { get; set; }        // level holds until this UTC time; else the monthly review drops it 1 (floor 0)
 
         // ---- Lifetime CROSS-GAME aggregates (General board + home screen) ----
         [Required] public long GamesPlayed { get; set; } = 0;

@@ -1,5 +1,40 @@
 {
   "dependencies": {
+    "com.tivadar.best.http": {
+      "version": "file:com.tivadar.best.http",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.burst": "1.8.23",
+        "com.unity.profiling.core": "1.0.0"
+      }
+    },
+    "com.tivadar.best.signalrcore": {
+      "version": "file:com.tivadar.best.signalrcore",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.tivadar.best.http": "3.1.0",
+        "com.tivadar.best.websockets": "3.0.9"
+      }
+    },
+    "com.tivadar.best.tlssecurity": {
+      "version": "file:com.tivadar.best.tlssecurity",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.tivadar.best.http": "3.0.0"
+      }
+    },
+    "com.tivadar.best.websockets": {
+      "version": "file:com.tivadar.best.websockets",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.burst": "1.8.27",
+        "com.tivadar.best.http": "3.1.0"
+      }
+    },
     "com.unity.ai.navigation": {
       "version": "2.0.12",
       "depth": 0,
@@ -11,7 +46,7 @@
     },
     "com.unity.burst": {
       "version": "1.8.28",
-      "depth": 2,
+      "depth": 1,
       "source": "registry",
       "dependencies": {
         "com.unity.mathematics": "1.2.1",
@@ -88,6 +123,13 @@
     "com.unity.nuget.mono-cecil": {
       "version": "1.11.6",
       "depth": 3,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.profiling.core": {
+      "version": "1.0.3",
+      "depth": 1,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 6bd28a72bf1727542937e09ab435abcc
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Samples~/With UI/TestHubSample.cs
+  uploadId: 884732

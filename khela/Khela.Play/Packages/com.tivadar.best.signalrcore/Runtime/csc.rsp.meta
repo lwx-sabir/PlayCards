@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: fc475c1988713af4a85a33fc86c23ba0
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Runtime/csc.rsp
+  uploadId: 884732

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: c1ef4a5e47703f44aa72e5fa04302a02
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Prefabs/_CharacterCreator/SwatchSelector.prefab
+  uploadId: 941986

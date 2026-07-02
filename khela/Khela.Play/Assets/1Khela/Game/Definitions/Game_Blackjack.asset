@@ -11,9 +11,10 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 9287366d762933e4999acd46c612ce0d, type: 3}
   m_Name: Game_Blackjack
-  m_EditorClassIdentifier:
+  m_EditorClassIdentifier: 
   key: blackjack
   displayName: BLACKJACK
+  leaderboardGameId: 1
   category: 0
   available: 1
   comingSoonLabel: COMING SOON

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: a0d6f71c9108b3b419ee412fa4ddd018
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Samples~/With UI/HubWithAuthorizationSample.cs
+  uploadId: 884732

@@ -1,0 +1,79 @@
+@using System.Linq
+@using Khela.Game.Services.Missions
+@using Khela.Web.Controllers
+@model MissionsVm
+@{
+    ViewData["Title"] = "Daily Missions";
+    ViewData["Crumb"] = "Missions";
+    ViewData["Nav"] = "missions";
+    string Money(decimal d) => d.ToString("#,0.####");
+    string Pill(MissionDifficulty d) => d == MissionDifficulty.Hard ? "suspend" : d == MissionDifficulty.Medium ? "pending" : "active";
+}
+
+<h1 class="page-title">Daily Missions</h1>
+<p class="page-sub">
+    The daily-mission pool, per-day counts, and complete-all bundle. Saving writes the live overlay (Redis) and applies on
+    the next fetch — no redeploy. <strong>@(Model.Overridden ? "A saved override is active." : "Using the built-in defaults.")</strong>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Current missions</h3>
+        <span class="dim" style="font-size:12.5px">Daily pick: @Model.Config.DailyEasy easy · @Model.Config.DailyMedium medium · @Model.Config.DailyHard hard</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Id</th><th>Difficulty</th><th>Title</th><th>Goal</th><th>Reward</th><th>Game</th></tr></thead>
+        <tbody>
+            @foreach (var m in Model.Config.Missions.OrderBy(x => (int)x.Difficulty).ThenBy(x => x.Title))
+            {
+                <tr>
+                    <td class="dim" style="font-size:12px">@m.Id</td>
+                    <td><span class="pill @Pill(m.Difficulty)">@m.Difficulty</span></td>
+                    <td>@m.Title</td>
+                    <td class="dim" style="font-size:12.5px">@m.Description <span style="opacity:.6">(@m.Type @m.Target)</span></td>
+                    <td>@Money(m.RewardAmount) @m.RewardCurrency</td>
+                    <td class="dim" style="font-size:12px">@m.Game</td>
+                </tr>
+            }
+            @if (Model.Config.Missions.Count == 0)
+            {
+                <tr><td colspan="6" class="dim" style="padding:18px 16px">No missions.</td></tr>
+            }
+        </tbody>
+    </table>
+    <div class="table-foot">
+        <span class="dim" style="font-size:12.5px">Complete-all reward: a <b>@Model.Config.Bundle.Tier @Model.Config.Bundle.Key</b> chest (defined on the <a asp-controller="Chests" asp-action="Index">Chests</a> page)</span>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Edit</h3></div>
+    <form asp-action="Save" method="post">
+        <textarea name="json" rows="22" class="json-editor" spellcheck="false">@Model.Json</textarea>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save</button>
+            <span class="dim" style="font-size:12px">Names: Game <b>Blackjack</b> · Type <b>PlayRounds/WinHands/WagerChips/GetBlackjacks/Doubles/Splits/Pushes</b> · Difficulty <b>Easy/Medium/Hard</b> · Currency <b>Chips/Coins/Gems/Kash</b>. Add or remove array entries to change the pool; <code>iconKey</code> must match the client icon map.</span>
+        </div>
+    </form>
+    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in default missions?');" style="margin-top:10px">
+        <button type="submit" class="btn btn-outline">Reset to defaults</button>
+    </form>
+</div>
+
+<style>
+    .json-editor {
+        width: 100%; min-height: 380px;
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 8px; padding: 12px;
+        font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 12.5px; line-height: 1.5; resize: vertical;
+    }
+</style>

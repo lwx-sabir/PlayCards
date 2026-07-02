@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Khela.Game.Services.Progression
 {
@@ -17,7 +18,7 @@ namespace Khela.Game.Services.Progression
         public long DailyXpCap { get; init; } = 150_000;
         public long XpBase { get; init; } = 150;                    // curve coefficient
         public double XpExp { get; init; } = 1.6;                   // curve exponent (super-linear)
-        public long LvlupBase { get; init; } = 10_000;              // chips per level on level-up
+        public long LvlupBase { get; init; } = 100;                 // level-up chip reward ≈ LvlupBase × level (L6 → 600). 10_000 was ~100× too high — it dwarfed stakes so balances grew even on losing play (economy faucet >> wager sink).
         public int MilestoneEveryLevels { get; init; } = 10;
     }
 
@@ -27,11 +28,15 @@ namespace Khela.Game.Services.Progression
     /// </summary>
     public static class ProgressionMath
     {
-        /// <summary>XP needed to go from <paramref name="level"/> to the next: super-linear, rounded to 50.</summary>
+        /// <summary>XP needed to go from <paramref name="level"/> to the next: super-linear, rounded to 50, with a
+        /// hard floor of 50. The floor matters: a tiny <paramref name="xpBase"/> could round the threshold to 0, and a
+        /// 0 threshold STALLS the level-up loop (its <c>need &gt; 0</c> guard), letting into-level XP grow unbounded —
+        /// the "250 / 150" overfill bug. Never return 0.</summary>
         public static long XpToNext(int level, long xpBase, double xpExp)
         {
             if (level < 1) level = 1;
-            return (long)Math.Round(xpBase * Math.Pow(level, xpExp) / 50.0) * 50;
+            var v = (long)Math.Round(xpBase * Math.Pow(level, xpExp) / 50.0) * 50;
+            return v < 50 ? 50 : v;
         }
 
         /// <summary>
@@ -76,5 +81,42 @@ namespace Khela.Game.Services.Progression
         /// <summary>Chip reward granted on reaching <paramref name="level"/>, rounded to 100.</summary>
         public static long LevelUpReward(int level, long lvlupBase)
             => (long)Math.Round(lvlupBase * (double)level / 100.0) * 100;
+
+        /// <summary>
+        /// Apply admin runtime overrides (string values keyed by the same "Progression:*" config keys, e.g. from
+        /// the dashboard's Redis "khela:settings" hash) onto a base (appsettings) config. Each value is parsed
+        /// leniently with invariant culture; anything missing or unparseable keeps the base value, so a bad or
+        /// empty override can NEVER break accrual. The master <see cref="ProgressionConfig.Enabled"/> switch is
+        /// intentionally NOT overridable here (it also gates at the table manager / at startup).
+        /// </summary>
+        public static ProgressionConfig Overlay(ProgressionConfig b, IReadOnlyDictionary<string, string> o)
+        {
+            if (o == null || o.Count == 0) return b;
+            return new ProgressionConfig
+            {
+                Enabled              = b.Enabled,
+                XpChipsPerPoint      = Dec(o, "Progression:XpChipsPerPoint", b.XpChipsPerPoint),
+                MaxWagerPerBet       = Dec(o, "Progression:MaxWagerPerBet", b.MaxWagerPerBet),
+                MinBetEarly          = Dec(o, "Progression:MinBetEarly", b.MinBetEarly),
+                MinBetLate           = Dec(o, "Progression:MinBetLate", b.MinBetLate),
+                EarlyMaxLevel        = Int(o, "Progression:EarlyMaxLevel", b.EarlyMaxLevel),
+                SubFloorXpMultiplier = Dec(o, "Progression:SubFloorXpMultiplier", b.SubFloorXpMultiplier),
+                WinXpBonus           = Dec(o, "Progression:WinXpBonus", b.WinXpBonus),
+                DailyXpCap           = Lng(o, "Progression:DailyXpCap", b.DailyXpCap),
+                XpBase               = Lng(o, "Progression:XpBase", b.XpBase),
+                XpExp                = Dbl(o, "Progression:XpExp", b.XpExp),
+                LvlupBase            = Lng(o, "Progression:LvlupBase", b.LvlupBase),
+                MilestoneEveryLevels = Int(o, "Progression:MilestoneEveryLevels", b.MilestoneEveryLevels),
+            };
+        }
+
+        private static decimal Dec(IReadOnlyDictionary<string, string> o, string k, decimal d)
+            => o.TryGetValue(k, out var v) && decimal.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;
+        private static long Lng(IReadOnlyDictionary<string, string> o, string k, long d)
+            => o.TryGetValue(k, out var v) && long.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;
+        private static int Int(IReadOnlyDictionary<string, string> o, string k, int d)
+            => o.TryGetValue(k, out var v) && int.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;
+        private static double Dbl(IReadOnlyDictionary<string, string> o, string k, double d)
+            => o.TryGetValue(k, out var v) && double.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;
     }
 }

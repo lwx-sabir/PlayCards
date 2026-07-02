@@ -79,15 +79,7 @@ namespace PlayCard.UI
         [SerializeField] private GameObject tokensChip;
         [SerializeField] private TMP_Text tokensText;
 
-        [Header("Lifetime stats (cross-game aggregate)")]
-        [SerializeField] private TMP_Text gamesPlayedText;
-        [SerializeField] private TMP_Text gamesWonText;
-        [SerializeField] private TMP_Text winRateText;
-        [SerializeField] private TMP_Text biggestWinText;
-        [SerializeField] private TMP_Text currentStreakText;
-        [SerializeField] private TMP_Text longestStreakText;
-        [Tooltip("Own-profile only (null on public profiles); hidden when null.")]
-        [SerializeField] private TMP_Text netProfitText;
+        // Lifetime / per-game stats moved to the GameStatsTabs "All" tab (GameStatsTabs + StatBlockView).
 
         [Header("Blurbs / Social")]
         [SerializeField] private TMP_Text bioText;
@@ -99,9 +91,9 @@ namespace PlayCard.UI
         [SerializeField] private string moneyFormat = "#,0";
         [SerializeField] private string memberSinceFormat = "MMM yyyy";
 
-        // VipTier enum mirror: index 0 = None (no label). Bronze..Elite = 1..6.
+        // VipTier enum mirror (Progression Spec §3): index 0 = None (no label). Bronze=1 (floor) … Black Diamond=7.
         private static readonly string[] VipNames =
-            { "", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Elite" };
+            { "", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Royal Diamond", "Black Diamond" };
 
         private void OnEnable()
         {
@@ -157,17 +149,17 @@ namespace PlayCard.UI
         {
             try
             {
+                // FORCE a re-pull (NOT EnsureLoaded): VIP tier, loyalty, level + stats can all change server-side
+                // (admin grants, a settle) while the client still holds the profile cached from login. EnsureLoaded
+                // would keep showing that stale copy, so an admin VIP/tier change never appeared. RefreshAsync fires
+                // OnProfileChanged, so every surface bound to the profile (this panel, the HUD chip) repaints fresh.
                 var pm = ProfileManager.Instance;
-                if (pm != null) await pm.EnsureLoadedAsync();
+                if (pm != null) await pm.RefreshAsync();
                 var wm = WalletManager.Instance;
                 if (wm != null) await wm.RefreshAsync();
 
                 // The XP bar has no manager/cache — pull it straight from the server on each open.
                 var prog = await BlackjackRestClient.Instance.GetProgressionAsync();
-                // TEMP DIAGNOSTIC — remove once the panel binds: prints profile-load + name + progression result.
-                var pmLog = ProfileManager.Instance;
-                Debug.Log($"[ProfilePanelBinder] profile loaded={pmLog?.IsLoaded} name='{pmLog?.DisplayName}' | " +
-                          $"prog ok={prog.Ok} status={prog.Status} xp={prog.Value?.Xp}/{prog.Value?.XpToNext} err='{prog.Error}'");
                 if (prog.Ok && prog.Value != null) RenderProgression(prog.Value);
             }
             catch (Exception e)
@@ -206,17 +198,6 @@ namespace PlayCard.UI
             long loyalty = pm.LoyaltyPoints;
             SetActiveSafe(loyaltyChip, loyalty > 0);  // inert until loyalty is awarded
             SetText(loyaltyText, loyalty.ToString(moneyFormat));
-
-            // --- Lifetime stats (Stats is never null) ---
-            var s = pm.Stats;
-            SetText(gamesPlayedText, s.GamesPlayed.ToString(moneyFormat));
-            SetText(gamesWonText, s.GamesWon.ToString(moneyFormat));
-            SetText(winRateText, s.WinRate.ToString("0.0") + "%");
-            SetText(biggestWinText, s.BiggestWin.ToString(moneyFormat));
-            SetText(currentStreakText, s.CurrentWinStreak.ToString());
-            SetText(longestStreakText, s.LongestWinStreak.ToString());
-            if (netProfitText != null)
-                netProfitText.text = s.NetProfit.HasValue ? FormatSigned(s.NetProfit.Value) : "";
 
             // --- Blurbs / Social ---
             SetText(bioText, pm.Bio ?? "");
@@ -259,8 +240,6 @@ namespace PlayCard.UI
         /// catalog exists — a null sprite simply hides the image. Override or extend when the catalog lands.
         /// </summary>
         protected virtual Sprite ResolveCosmetic(string cosmeticId) => null;
-
-        private string FormatSigned(decimal v) => v > 0 ? "+" + v.ToString(moneyFormat) : v.ToString(moneyFormat);
 
         private static string VipLabel(int tier) => (tier > 0 && tier < VipNames.Length) ? VipNames[tier] : "";
 

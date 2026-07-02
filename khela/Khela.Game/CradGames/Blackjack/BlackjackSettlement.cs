@@ -22,6 +22,8 @@ namespace CardGames.Blackjack
         public decimal Stake { get; set; }            // main-hand stake (includes a double-down's extra)
         public decimal InsuranceStake { get; set; }
         public int FinalValue { get; set; }
+        public bool Doubled { get; set; }             // this hand was doubled down (feeds the "doubles" stat)
+        public bool WasDealtPair { get; set; }        // opening hand was a splittable pair (feeds "pairs dealt"; hand 0 only)
         public HandOutcome Outcome { get; set; }
         public InsuranceResult Insurance { get; set; }
         public decimal PayoutMultiplier { get; set; } // gross multiplier on the main stake (2.5 / 2 / 1 / 0)
@@ -129,6 +131,8 @@ namespace CardGames.Blackjack
                         Stake = stake,
                         InsuranceStake = insStake,
                         FinalValue = playerTotal,
+                        Doubled = handState.IsDoubled,
+                        WasDealtPair = handState.WasDealtPair,
                         Outcome = outcome,
                         Insurance = insurance,
                         PayoutMultiplier = MainPayoutMultiplier(outcome),

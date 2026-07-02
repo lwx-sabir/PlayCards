@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a201ff78069ec5b4d9b0eb8d30746aaf
+TextScriptImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/CHANGELOG.md
+  uploadId: 884732

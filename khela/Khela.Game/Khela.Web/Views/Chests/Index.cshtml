@@ -1,0 +1,83 @@
+@using System.Linq
+@using Khela.Game.Services.Chests
+@using Khela.Web.Controllers
+@model ChestsVm
+@{
+    ViewData["Title"] = "Chests";
+    ViewData["Crumb"] = "Chests";
+    ViewData["Nav"] = "chests";
+    string Pill(ChestTier t) => t == ChestTier.Rare ? "suspend" : t == ChestTier.Uncommon ? "pending" : "active";
+    string Rewards(ChestDef c) => (c.Rewards == null || c.Rewards.Count == 0)
+        ? "—"
+        : string.Join(" · ", c.Rewards.Select(r => $"{r.Min:#,0}–{r.Max:#,0} {r.Currency}"));
+}
+
+<h1 class="page-title">Chests</h1>
+<p class="page-sub">
+    Create and manage reward chests. A chest is a <b>Key</b> + <b>Tier</b> with a title, description, and reward ranges —
+    a uniform random amount per currency is rolled on open. Saving writes the live overlay (Redis) and applies on the next
+    open — no redeploy. <strong>@(Model.Overridden ? "A saved override is active." : "Using the built-in defaults.")</strong>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Catalog</h3>
+        <span class="dim" style="font-size:12.5px">@Model.Config.Chests.Count chest variants</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Key</th><th>Tier</th><th>Title</th><th>Description</th><th>Rewards (min–max)</th></tr></thead>
+        <tbody>
+            @foreach (var c in Model.Config.Chests.OrderBy(x => x.Key).ThenBy(x => (int)x.Tier))
+            {
+                <tr>
+                    <td><b>@c.Key</b></td>
+                    <td><span class="pill @Pill(c.Tier)">@c.Tier</span></td>
+                    <td>@c.Title</td>
+                    <td class="dim" style="font-size:12.5px">@c.Description</td>
+                    <td class="dim" style="font-size:12.5px">@Rewards(c)</td>
+                </tr>
+            }
+            @if (Model.Config.Chests.Count == 0)
+            {
+                <tr><td colspan="5" class="dim" style="padding:18px 16px">No chests.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Edit</h3></div>
+    <form asp-action="Save" method="post">
+        <textarea name="json" rows="24" class="json-editor" spellcheck="false">@Model.Json</textarea>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save</button>
+            <span class="dim" style="font-size:12px">
+                Per chest: <b>Key</b> (e.g. <code>CK_Chest</code>) · <b>Tier</b> <b>Common/Uncommon/Rare</b> · <b>Title</b> · <b>Description</b> ·
+                <b>IconKey</b> · <b>Rewards</b> = list of <code>{ Currency, Min, Max }</code>. Currency: <b>Chips/Coins/Gems/Kash</b> —
+                the tradeable <b>Tokens</b> can never be a chest reward. Add a chest by appending an entry; the daily-mission bundle
+                points at one by Key+Tier on the <a asp-controller="Missions" asp-action="Index">Missions</a> page.
+            </span>
+        </div>
+    </form>
+    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in default chests?');" style="margin-top:10px">
+        <button type="submit" class="btn btn-outline">Reset to defaults</button>
+    </form>
+</div>
+
+<style>
+    .json-editor {
+        width: 100%; min-height: 420px;
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 8px; padding: 12px;
+        font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 12.5px; line-height: 1.5; resize: vertical;
+    }
+</style>

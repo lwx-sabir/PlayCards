@@ -14,6 +14,9 @@ namespace Khela.Game.Database.Models
     [Index(nameof(UserId), nameof(GameType), IsUnique = true)] // natural key + upsert + per-user fetch
     [Index(nameof(GameType), nameof(NetProfit))]               // AllTime NetProfit fallback top-N
     [Index(nameof(GameType), nameof(ChipsWon))]                // AllTime ChipsWon fallback top-N
+    [Index(nameof(GameType), nameof(ExperienceEarned))]        // AllTime XP top-N
+    [Index(nameof(GameType), nameof(BiggestSingleWin))]        // AllTime biggest-win top-N
+    [Index(nameof(GameType), nameof(LongestWinStreak))]        // AllTime streak top-N
     public class UserGameStats
     {
         [Key]
@@ -43,6 +46,13 @@ namespace Khela.Game.Database.Models
         [Required] public int LongestWinStreak { get; set; } = 0;
 
         [Required] public long ExperienceEarned { get; set; } = 0; // per-game lifetime XP
+
+        /// <summary>Game-specific lifetime stat counters as a JSON object (key → count), e.g. blackjack
+        /// {"blackjacks":12,"doubles":5,"busts":30,…}. Extensible WITHOUT a migration: a new stat is just a new
+        /// key (see <see cref="Khela.Common.Stats.GameStatCatalog"/>). Accumulated at settle from each hand's
+        /// outcome; null/empty until the game emits counters. Stored as text (a bag, not queried per-key here).</summary>
+        [Column(TypeName = "json")]
+        public string StatCountersJson { get; set; }
 
         // ---- Per-game preference + recency (favourites + "jump back in"; most-played = GamesPlayed) ----
         [Required] public bool IsFavorite { get; set; } = false;

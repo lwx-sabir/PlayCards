@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Khela.Common.Blackjack;
 using PlayCard.App;
+using PlayCard.Core;
 using PlayCard.Game.Net;
 using PlayCard.Home;
 using TMPro;
@@ -86,13 +87,18 @@ namespace PlayCard.UI
             BindSeats();
         }
 
-        // Drive each seat slot: occupied → show the player, open → show empty + tap to sit (JoinSeat).
+        // Drive each seat slot: occupied → show the player, open → show empty + tap to sit (JoinSeat). A seat card
+        // whose number exceeds this table's MaxPlayers is NOT a real seat here — hide it, otherwise it shows a "JOIN"
+        // that silently no-ops (JoinSeat → IsSeatOpen rejects seats > MaxPlayers). That dead-JOIN is exactly the
+        // "only seat 1 works" symptom on a table whose MaxPlayers is smaller than the prefab's seat-card count.
         private void BindSeats()
         {
             if (seatCards == null) return;
+            int max = MaxPlayers;
             foreach (var sc in seatCards)
             {
                 if (sc == null) continue;
+                if (sc.SeatNumber < 1 || sc.SeatNumber > max) { sc.Hide(); continue; }
                 var occ = FindOccupant(sc.SeatNumber);
                 if (occ != null) sc.ShowOccupant(occ);
                 else sc.ShowEmpty(JoinSeat);
@@ -124,6 +130,7 @@ namespace PlayCard.UI
             var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, "Player");
             if (res.Ok)
             {
+                KhelaAnalytics.LogTableJoined(GameSession.SelectedGame ?? "blackjack", _tableId, 0);
                 SceneNavigator.GoToTable(_tableId);
             }
             else
@@ -144,6 +151,7 @@ namespace PlayCard.UI
             var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, "Player", "", seatNumber);
             if (res.Ok)
             {
+                KhelaAnalytics.LogTableJoined(GameSession.SelectedGame ?? "blackjack", _tableId, seatNumber);
                 SceneNavigator.GoToTable(_tableId, seatNumber);   // carry the chosen seat so the table resolves it instantly
             }
             else

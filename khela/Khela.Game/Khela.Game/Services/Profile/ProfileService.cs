@@ -55,6 +55,7 @@ namespace Khela.Game.Services.Profile
         {
             var p = await _db.UserProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == userId);
             if (p == null) return null;
+            var perGame = await PerGameAsync(userId, includeNet: true);
             return new MyProfileDto
             {
                 UserId = userId.ToString(),
@@ -72,7 +73,8 @@ namespace Khela.Game.Services.Profile
                 CreatedAt = p.CreatedAt,
                 LastSeenAt = p.LastSeenAt,
                 FriendCount = p.FriendCount,
-                Stats = BuildStats(p, includeNet: true),
+                Stats = BuildStats(p, perGame, includeNet: true),
+                PerGame = perGame,
                 LinkedSocials = await PublicSocialsAsync(userId),
             };
         }
@@ -101,6 +103,7 @@ namespace Khela.Game.Services.Profile
                 }
             }
 
+            var perGame = await PerGameAsync(targetId, includeNet: false);
             return new PublicProfileDto
             {
                 UserId = targetId.ToString(),
@@ -120,7 +123,8 @@ namespace Khela.Game.Services.Profile
                 IsFriend = isFriend,
                 RequestFromMePending = fromMe,
                 RequestToMePending = toMe,
-                Stats = BuildStats(p, includeNet: false),   // public view hides exact net worth
+                Stats = BuildStats(p, perGame, includeNet: false),   // public view hides exact net worth
+                PerGame = perGame,
                 LinkedSocials = await PublicSocialsAsync(targetId),
             };
         }
@@ -219,15 +223,102 @@ namespace Khela.Game.Services.Profile
 
         // ---- helpers ----
 
-        private static ProfileStatsDto BuildStats(UserProfile p, bool includeNet) => new ProfileStatsDto
+        // The "All" aggregate is DERIVED from the per-game rows (UserGameStats — the authoritative per-game source),
+        // NOT from UserProfile's separate counters. UserProfile can undercount: rounds that settled before the
+        // profile row existed updated UserGameStats (which auto-creates its row) but hit the `if (profile != null)`
+        // guard in PlayerStatsService and skipped the profile update — which made "All" show LESS than a single game.
+        // Summing the per-game rows guarantees All == the true sum/extent of the games (≥ any one game).
+        private static ProfileStatsDto BuildStats(UserProfile p, List<GameStatsDto> perGame, bool includeNet)
         {
-            GamesPlayed = p.GamesPlayed,
-            GamesWon = p.GamesWon,
-            WinRate = p.GamesPlayed > 0 ? Math.Round(100.0 * p.GamesWon / p.GamesPlayed, 1) : 0,
-            BiggestWin = p.BiggestWin,
-            CurrentWinStreak = p.CurrentWinStreak,
-            LongestWinStreak = p.LongestWinStreak,
-            NetProfit = includeNet ? p.NetProfit : (decimal?)null,
+            long gamesPlayed = 0, gamesWon = 0;
+            decimal wagered = 0m, net = 0m, biggestWin = 0m;
+            int longestStreak = 0;
+            DateTime? lastPlayed = null, firstPlayed = null;
+            foreach (var g in perGame)
+            {
+                gamesPlayed += g.GamesPlayed;
+                gamesWon += g.GamesWon;
+                wagered += g.TotalWagered;
+                net += g.NetProfit ?? 0m;
+                if (g.BiggestWin > biggestWin) biggestWin = g.BiggestWin;
+                if (g.LongestWinStreak > longestStreak) longestStreak = g.LongestWinStreak;
+                if (g.LastPlayedAt.HasValue && (lastPlayed == null || g.LastPlayedAt > lastPlayed)) lastPlayed = g.LastPlayedAt;
+                if (g.StartedPlayingAt.HasValue && (firstPlayed == null || g.StartedPlayingAt < firstPlayed)) firstPlayed = g.StartedPlayingAt;
+            }
+            return new ProfileStatsDto
+            {
+                GamesPlayed = gamesPlayed,
+                GamesWon = gamesWon,
+                WinRate = gamesPlayed > 0 ? Math.Round(100.0 * gamesWon / gamesPlayed, 1) : 0,
+                BiggestWin = biggestWin,
+                CurrentWinStreak = p.CurrentWinStreak,                        // cross-game CURRENT streak only lives on UserProfile
+                LongestWinStreak = Math.Max(longestStreak, p.LongestWinStreak),
+                NetProfit = includeNet ? net : (decimal?)null,
+                TotalWagered = wagered,
+                LastPlayedAt = lastPlayed ?? p.LastPlayedAt,
+                StartedPlayingAt = firstPlayed ?? p.CreatedAt,
+            };
+        }
+
+        // Per-game stat rows (one per game the player has played), newest-played first. NetProfit own-only.
+        private async Task<List<GameStatsDto>> PerGameAsync(Guid userId, bool includeNet)
+        {
+            var rows = await _db.UserGameStats.AsNoTracking()
+                .Where(s => s.UserId == userId)
+                .OrderByDescending(s => s.LastPlayedAt)
+                .ToListAsync();
+            return rows.Select(s => new GameStatsDto
+            {
+                Game = (int)s.GameType,
+                DisplayName = GameDisplayName(s.GameType),
+                GamesPlayed = s.GamesPlayed,
+                GamesWon = s.GamesWon,
+                WinRate = s.GamesPlayed > 0 ? Math.Round(100.0 * s.GamesWon / s.GamesPlayed, 1) : (double?)null,
+                TotalWagered = s.TotalWagered,
+                BiggestWin = s.BiggestSingleWin,
+                NetProfit = includeNet ? s.NetProfit : (decimal?)null,
+                CurrentWinStreak = s.CurrentWinStreak,
+                LongestWinStreak = s.LongestWinStreak,
+                ExperienceEarned = s.ExperienceEarned,
+                LastPlayedAt = s.LastPlayedAt,
+                StartedPlayingAt = s.FirstPlayedAt,
+                StatCounters = BuildStatCounters(s.GameType, s.StatCountersJson),
+            }).ToList();
+        }
+
+        // The per-game stat-counter panel: the catalog's ordered (key,label) joined with the stored JSON bag
+        // (value 0 if the player hasn't logged that stat yet), so the client renders a complete, ordered list.
+        private static List<Khela.Common.Stats.StatCounterDto> BuildStatCounters(
+            Khela.Common.Leaderboards.GameType game, string json)
+        {
+            var catalog = Khela.Common.Stats.GameStatCatalog.For(game);
+            if (catalog.Count == 0) return new List<Khela.Common.Stats.StatCounterDto>();
+
+            Dictionary<string, long> bag = null;
+            if (!string.IsNullOrEmpty(json))
+            {
+                try { bag = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, long>>(json); }
+                catch { /* corrupt bag → treat as empty */ }
+            }
+            var result = new List<Khela.Common.Stats.StatCounterDto>(catalog.Count);
+            foreach (var (key, label) in catalog)
+                result.Add(new Khela.Common.Stats.StatCounterDto
+                {
+                    Key = key,
+                    Label = label,
+                    Value = bag != null && bag.TryGetValue(key, out var v) ? v : 0L,
+                });
+            return result;
+        }
+
+        private static string GameDisplayName(Khela.Common.Leaderboards.GameType g) => g switch
+        {
+            Khela.Common.Leaderboards.GameType.Blackjack => "Blackjack",
+            Khela.Common.Leaderboards.GameType.Poker     => "Poker",
+            Khela.Common.Leaderboards.GameType.TeenPatti => "Teen Patti",
+            Khela.Common.Leaderboards.GameType.Roulette  => "Roulette",
+            Khela.Common.Leaderboards.GameType.General   => "General",
+            _ => g.ToString()
         };
 
         private Task<List<LinkedSocialDto>> PublicSocialsAsync(Guid userId)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Khela.Game.Services.Progression;
 using Xunit;
@@ -34,6 +35,15 @@ namespace Khela.Game.Tests
                 Assert.True(x >= prev, $"L{l} must not need less than L{l - 1}");
                 prev = x;
             }
+        }
+
+        [Fact]
+        public void XpToNext_FloorsAtFifty_NeverZero()
+        {
+            // A tiny base used to round the threshold to 0 → the level-up loop stalled (its `need > 0` guard) and
+            // into-level XP grew unbounded (the "250 / 150" overfill bug). The threshold must never drop below 50.
+            Assert.Equal(50, ProgressionMath.XpToNext(1, 10, 1.6));   // 10*1^1.6/50 = 0.2 → would round to 0
+            Assert.True(ProgressionMath.XpToNext(1, 0, 1.6) >= 50);
         }
 
         // ---- tiered soft floor ----
@@ -100,6 +110,17 @@ namespace Khela.Game.Tests
             Assert.Empty(crossed);
         }
 
+        [Fact]
+        public void ApplyLevelUps_WithZeroGrant_NormalizesDriftedLevel()
+        {
+            // Stored drift: Level 1 holding 250 into-level XP (>= XpToNext(1)=150) — e.g. after a curve retune.
+            // Re-applying 0 XP carries the excess into the correct level (L2 with 100) — the display normalization
+            // GetMyProgressionAsync relies on, so the bar never overfills.
+            var (exp, level, _) = ProgressionMath.ApplyLevelUps(250, 1, 0, 150, 1.6);
+            Assert.Equal(2, level);
+            Assert.Equal(100, exp);
+        }
+
         // ---- level reward ----
 
         [Theory]
@@ -109,6 +130,55 @@ namespace Khela.Game.Tests
         public void LevelUpReward_IsBasePerLevelRoundedTo100(int level, long expected)
         {
             Assert.Equal(expected, ProgressionMath.LevelUpReward(level, 10000));
+        }
+
+        // ---- runtime overrides (admin dashboard → Redis "khela:settings" → engine) ----
+
+        [Fact]
+        public void Overlay_NullOrEmpty_ReturnsBaseUnchanged()
+        {
+            var b = Cfg();
+            Assert.Same(b, ProgressionMath.Overlay(b, null));
+            Assert.Same(b, ProgressionMath.Overlay(b, new Dictionary<string, string>()));
+        }
+
+        [Fact]
+        public void Overlay_ValidOverrides_AreApplied_OthersKeepBase()
+        {
+            var b = Cfg();
+            var e = ProgressionMath.Overlay(b, new Dictionary<string, string>
+            {
+                ["Progression:XpChipsPerPoint"] = "100",
+                ["Progression:MaxWagerPerBet"] = "5000",
+                ["Progression:DailyXpCap"] = "99000",
+                ["Progression:XpExp"] = "1.9",
+            });
+            Assert.Equal(100m, e.XpChipsPerPoint);
+            Assert.Equal(5000m, e.MaxWagerPerBet);
+            Assert.Equal(99000L, e.DailyXpCap);
+            Assert.Equal(1.9, e.XpExp);
+            Assert.Equal(b.LvlupBase, e.LvlupBase);   // untouched key keeps the base value
+        }
+
+        [Fact]
+        public void Overlay_UnparseableOrEmpty_KeepsBase()
+        {
+            var b = Cfg();
+            var e = ProgressionMath.Overlay(b, new Dictionary<string, string>
+            {
+                ["Progression:XpChipsPerPoint"] = "abc",
+                ["Progression:DailyXpCap"] = "",
+            });
+            Assert.Equal(b.XpChipsPerPoint, e.XpChipsPerPoint);
+            Assert.Equal(b.DailyXpCap, e.DailyXpCap);
+        }
+
+        [Fact]
+        public void Overlay_DoesNotOverrideEnabledMasterSwitch()
+        {
+            var b = Cfg();   // Enabled = true (default)
+            var e = ProgressionMath.Overlay(b, new Dictionary<string, string> { ["Progression:Enabled"] = "false" });
+            Assert.True(e.Enabled);
         }
     }
 }

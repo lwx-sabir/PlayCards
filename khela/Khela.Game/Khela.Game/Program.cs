@@ -168,13 +168,20 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddHostedService<BlackjackRoundDriver>();   // server round-driver: auto-stand on timeout + auto-settle
+builder.Services.AddHostedService<LeaderboardPruneService>();   // nightly prune of old PlayerDailyStat rows
+builder.Services.AddHostedService<Khela.Game.Services.Vip.VipTierReviewService>();   // monthly VIP tier review (gentle decay, §3.4)
 builder.Services.AddSingleton<SettlementReconciliationService>();      // one shared instance...
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconciliationService>());  // ...run as the hosted sweeper (no-op unless Reconciliation:Enabled) AND injectable for the on-demand debug endpoint
 builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; credited on claim)
+builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();   // chest system (CK_Chest etc.; opened by the daily-mission bundle)
+builder.Services.AddScoped<Khela.Game.Services.Missions.IMissionService, Khela.Game.Services.Missions.MissionService>();   // daily missions (server-authoritative; progress at settle, reward on claim)
 builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
+builder.Services.AddScoped<Khela.Game.Services.Vip.IVipService, Khela.Game.Services.Vip.VipService>();
+builder.Services.AddScoped<Khela.Game.Services.Loyalty.ILoyaltyService, Khela.Game.Services.Loyalty.LoyaltyService>();
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
 if (builder.Configuration.GetValue("Moderation:AiEnabled", false))
     builder.Services.AddSingleton<IChatModerator, AiChatModerator>();   // seam: present, off by default

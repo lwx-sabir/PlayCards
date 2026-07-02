@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 7a6cb6d4eadc83c4e879adbce97f9124
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 268760
+  packageName: Best SignalR
+  packageVersion: 3.0.5
+  assetPath: Packages/com.tivadar.best.signalrcore/Runtime/Encoders/MessagePackCSharpProtocol.cs
+  uploadId: 884732

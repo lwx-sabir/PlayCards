@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.IO;
+using System.Net.Http;              // HttpMethod — used only as the internal method selector (no HttpClient)
 using System.Text;
 using System.Threading.Tasks;
 using System.Text.Json;
+using Best.HTTP;
 using Khela.Common.Blackjack;
 using PlayCard.Account;
 using PlayCard.Core;
@@ -57,6 +57,12 @@ namespace PlayCard.Game.Net
         private static BlackjackRestClient _instance;
         public static BlackjackRestClient Instance => _instance ??= new BlackjackRestClient();
 
+        /// <summary>Raised after a REST call that may have changed the player's wallet (a claim, redeem, …) SUCCEEDS.
+        /// The arg is the post-credit chip balance IF the response carried it (else null). <see cref="PlayCard.Game.Wallet.WalletManager"/>
+        /// listens, applies the chip hint INSTANTLY, then reconciles all currencies — so every balance HUD updates without
+        /// each caller remembering to refresh. Route balance-changing endpoints through <c>BalanceChangingAsync</c>.</summary>
+        public static event Action<decimal?> BalanceMaybeChanged;
+
         // System.Text.Json (already vendored, used by SignalR + the server). Case-insensitive read
         // so the server's camelCase maps to our PascalCase DTOs; camelCase write to match the server.
         private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
@@ -65,14 +71,22 @@ namespace PlayCard.Game.Net
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
-        private readonly HttpClient _http;
-
-        public BlackjackRestClient()
-        {
-            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(AppConfig.Instance.RequestTimeoutSeconds) };
-        }
-
         private static string Base => AppConfig.Instance.BaseApiUrl;
+
+        // Wraps a balance-changing call: on success, fires BalanceMaybeChanged so WalletManager re-pulls and every
+        // balance HUD refreshes. Route ANY endpoint that credits/debits the wallet (claims, redeems, purchases) through this.
+        private async Task<ApiResult<T>> BalanceChangingAsync<T>(HttpMethod method, string path, object body = null)
+        {
+            var res = await SendAsync<T>(method, path, body);
+            if (res.Ok)
+            {
+                // If the response carries the post-credit chip balance, pass it so WalletManager updates INSTANTLY;
+                // the reconcile re-pull then fills the other currencies (e.g. Kash from a chest).
+                decimal? chips = (res.Value as IChipBalanceResult)?.NewChipBalance;
+                BalanceMaybeChanged?.Invoke(chips);
+            }
+            return res;
+        }
 
         // ---------- Lobby / wallet (queries) ----------
 
@@ -87,6 +101,85 @@ namespace PlayCard.Game.Net
         /// <summary>The caller's live level / into-level XP for the profile XP bar (GET /api/progression/me).</summary>
         public Task<ApiResult<ProgressionData>> GetProgressionAsync()
             => SendAsync<ProgressionData>(HttpMethod.Get, "/api/progression/me");
+
+        /// <summary>The caller's live VIP status — tier, badge, trailing SP, benefit multiplier (GET /api/vip/me).</summary>
+        public Task<ApiResult<VipStatusData>> GetMyVipStatusAsync()
+            => SendAsync<VipStatusData>(HttpMethod.Get, "/api/vip/me");
+
+        /// <summary>Toggle the "hide my VIP badge from others" opt-out (POST /api/vip/me/hide-badge).</summary>
+        public Task<ApiResult<bool>> SetHideVipBadgeAsync(bool hidden)
+            => SendOkAsync(HttpMethod.Post, $"/api/vip/me/hide-badge?hidden={(hidden ? "true" : "false")}");
+
+        /// <summary>The Loyalty store — the caller's LP balance + the catalog (GET /api/loyalty).</summary>
+        public Task<ApiResult<LoyaltyStoreData>> GetLoyaltyStoreAsync()
+            => SendAsync<LoyaltyStoreData>(HttpMethod.Get, "/api/loyalty");
+
+        /// <summary>Redeem a Loyalty-store item (POST /api/loyalty/redeem). idemKey = a stable id per buy tap.</summary>
+        public Task<ApiResult<RedeemResultData>> RedeemLoyaltyAsync(string itemId, string idemKey)
+            => BalanceChangingAsync<RedeemResultData>(HttpMethod.Post, "/api/loyalty/redeem",
+                new RedeemRequestData { ItemId = itemId, IdempotencyKey = idemKey });
+
+        /// <summary>Spend Loyalty Points to keep your current VIP level (POST /api/vip/maintain).</summary>
+        public Task<ApiResult<VipMaintainResultData>> MaintainVipAsync()
+            => SendAsync<VipMaintainResultData>(HttpMethod.Post, "/api/vip/maintain", new { });
+
+        // ---- Daily missions ----
+        /// <summary>The caller's daily missions + bundle state + reset time (GET /api/missions/daily).</summary>
+        public Task<ApiResult<DailyMissionsData>> GetDailyMissionsAsync()
+            => SendAsync<DailyMissionsData>(HttpMethod.Get, "/api/missions/daily");
+
+        /// <summary>Claim a completed mission — reward credited straight to balance (POST /api/missions/{id}/claim).</summary>
+        public Task<ApiResult<MissionClaimResultData>> ClaimMissionAsync(string missionInstanceId)
+            => BalanceChangingAsync<MissionClaimResultData>(HttpMethod.Post, $"/api/missions/{missionInstanceId}/claim", new { });
+
+        /// <summary>Claim the complete-all daily bundle (POST /api/missions/bundle/claim).</summary>
+        public Task<ApiResult<MissionClaimResultData>> ClaimMissionBundleAsync()
+            => BalanceChangingAsync<MissionClaimResultData>(HttpMethod.Post, "/api/missions/bundle/claim", new { });
+
+        // ---- Reward inbox (level-up / passive rewards) ----
+        /// <summary>The caller's pending claimable rewards (GET /api/rewards).</summary>
+        public Task<ApiResult<List<RewardData>>> GetRewardsAsync()
+            => SendAsync<List<RewardData>>(HttpMethod.Get, "/api/rewards");
+
+        /// <summary>Collect one pending reward (POST /api/rewards/{id}/claim).</summary>
+        public Task<ApiResult<RewardClaimResultData>> ClaimRewardAsync(string rewardId)
+            => BalanceChangingAsync<RewardClaimResultData>(HttpMethod.Post, $"/api/rewards/{rewardId}/claim", new { });
+
+        /// <summary>Collect all pending rewards (POST /api/rewards/claim-all).</summary>
+        public Task<ApiResult<RewardClaimResultData>> ClaimAllRewardsAsync()
+            => BalanceChangingAsync<RewardClaimResultData>(HttpMethod.Post, "/api/rewards/claim-all", new { });
+
+        // ---- Gifts (free chips from friends) ----
+        /// <summary>Claim all pending gifts → credits chips (idempotent). Routed through BalanceChangingAsync so every
+        /// balance HUD refreshes after, identical to the mission/reward claim path. A gift-inbox UI must call THIS
+        /// (not raw HTTP) so the wallet stays in sync.</summary>
+        public Task<ApiResult<GiftClaimResult>> ClaimGiftsAsync()
+            => BalanceChangingAsync<GiftClaimResult>(HttpMethod.Post, "/api/gifts/claim", new { });
+
+        // ---- Leaderboards ----
+        /// <summary>One leaderboard page + the caller's own rank. game: general/blackjack/poker/teenpatti/roulette ·
+        /// metric: xp/biggestwin/streak · period: daily/weekly/monthly/alltime · scope: global/friends/country.</summary>
+        public Task<ApiResult<LbPageData>> GetLeaderboardAsync(
+            string game = "general", string metric = "xp", string period = "weekly", string scope = "global", int top = 50)
+            => SendAsync<LbPageData>(HttpMethod.Get,
+                $"/api/leaderboard?game={game}&metric={metric}&period={period}&scope={scope}&top={top}");
+
+        // ---- Avatar (3D BoZo character; server-synced + sanitized) ----
+        /// <summary>The caller's saved avatar (null if never set). Value is server-sanitized, so it's safe to render.</summary>
+        public async Task<ApiResult<AvatarData>> GetMyAvatarAsync()
+            => Unwrap(await SendAsync<AvatarEnvelope>(HttpMethod.Get, "/api/avatar/me"));
+
+        /// <summary>Any player's avatar — used to render other seated players (null if they have none / are blocked).</summary>
+        public async Task<ApiResult<AvatarData>> GetAvatarAsync(string userId)
+            => Unwrap(await SendAsync<AvatarEnvelope>(HttpMethod.Get, $"/api/avatar/{userId}"));
+
+        /// <summary>Save the caller's avatar. The server re-SANITIZES and echoes the stored result, which we return so the
+        /// client re-syncs to exactly what persisted (never trust the local pre-clamp copy).</summary>
+        public async Task<ApiResult<AvatarData>> PutMyAvatarAsync(AvatarData avatar)
+            => Unwrap(await SendAsync<AvatarEnvelope>(HttpMethod.Put, "/api/avatar/me", avatar));
+
+        private static ApiResult<AvatarData> Unwrap(ApiResult<AvatarEnvelope> r)
+            => r.Ok ? ApiResult<AvatarData>.Success(r.Value?.Avatar, r.Status) : ApiResult<AvatarData>.Fail(r.Status, r.Error);
 
         /// <summary>Edit the caller's profile (PATCH /api/profile/me). Server moderates/validates — re-fetch after.</summary>
         public Task<ApiResult<bool>> UpdateProfileAsync(ProfileEditRequest edit)
@@ -202,38 +295,50 @@ namespace PlayCard.Game.Net
         {
             try
             {
-                using var req = new HttpRequestMessage(method, Base + path);
+                var req = new HTTPRequest(new Uri(Base + path), ToBest(method));
+                req.TimeoutSettings.Timeout = TimeSpan.FromSeconds(AppConfig.Instance.RequestTimeoutSeconds);
 
                 var token = AccountManager.Instance != null ? AccountManager.Instance.JwtToken : null;
                 if (!string.IsNullOrEmpty(token))
-                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    req.SetHeader("Authorization", "Bearer " + token);
 
                 if (body != null)
                 {
                     var json = JsonSerializer.Serialize(body, JsonOpts);
-                    req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    req.SetHeader("Content-Type", "application/json; charset=utf-8");
+                    req.UploadSettings.UploadStream = new MemoryStream(Encoding.UTF8.GetBytes(json));
                 }
 
-                using var resp = await _http.SendAsync(req);
-                var text = await resp.Content.ReadAsStringAsync();
-
+                // Best HTTP throws AsyncHTTPException on any non-2xx (and on network/timeout); 2xx returns the response.
+                var resp = await req.GetHTTPResponseAsync();
+                return new Raw(true, resp.StatusCode, resp.DataAsText, null);
+            }
+            catch (AsyncHTTPException hex)
+            {
                 // Token expired mid-session: refresh once and replay the exact same call.
-                if (resp.StatusCode == HttpStatusCode.Unauthorized && !isRetry && AccountManager.Instance != null)
+                if (hex.StatusCode == 401 && !isRetry && AccountManager.Instance != null)
                 {
                     if (await AccountManager.Instance.HandleAuthFailureAsync())
                         return await SendRawAsync(method, path, body, isRetry: true);
                 }
-
-                if (!resp.IsSuccessStatusCode)
-                    return new Raw(false, (int)resp.StatusCode, text, ExtractMessage(text) ?? resp.ReasonPhrase);
-
-                return new Raw(true, (int)resp.StatusCode, text, null);
+                return new Raw(false, hex.StatusCode, hex.Content, ExtractMessage(hex.Content) ?? hex.Message);
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[BlackjackRestClient] {method} {path} failed: {ex.Message}");
                 return new Raw(false, 0, null, ex.Message);
             }
+        }
+
+        // Map the System.Net.Http.HttpMethod selector (used by the public methods) to Best HTTP's enum.
+        private static HTTPMethods ToBest(HttpMethod m)
+        {
+            if (m == HttpMethod.Get) return HTTPMethods.Get;
+            if (m == HttpMethod.Post) return HTTPMethods.Post;
+            if (m == HttpMethod.Put) return HTTPMethods.Put;
+            if (m == HttpMethod.Delete) return HTTPMethods.Delete;
+            if (string.Equals(m.Method, "PATCH", StringComparison.OrdinalIgnoreCase)) return HTTPMethods.Patch;
+            return HTTPMethods.Get;
         }
 
         // Server errors come back as { "message": "..." }.
@@ -257,6 +362,13 @@ namespace PlayCard.Game.Net
         public decimal Coins { get; set; }
         public decimal Gems { get; set; }
         public decimal Tokens { get; set; }
+        public decimal Kash { get; set; }
+    }
+
+    /// <summary>Result of POST /api/gifts/claim — how many pending gifts were collected.</summary>
+    public sealed class GiftClaimResult
+    {
+        public int Claimed { get; set; }
     }
 
     /// <summary>Client mirror of the <c>/Blackjack/create</c> response.</summary>

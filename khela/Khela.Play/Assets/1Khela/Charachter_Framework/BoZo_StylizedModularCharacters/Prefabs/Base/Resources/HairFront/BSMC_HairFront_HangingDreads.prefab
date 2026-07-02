@@ -1,0 +1,168 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7987617062748985617
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7319026459055539115}
+  - component: {fileID: 846512170331751719}
+  m_Layer: 0
+  m_Name: BSMC_HairFront_HangingDreads
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7319026459055539115
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7987617062748985617}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 7733807174623814239}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &846512170331751719
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7987617062748985617}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: Hanging Dreads
+  OutfitIcon: {fileID: 21300000, guid: b1bf80063a34b8049a21dfcae0b4867d, type: 3}
+  ColorChannels:
+  - Base
+  - Gradient
+  TextureCatagory: 
+  supportDecals: 0
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: 025dcbe78cc533044936dbb48c1c30e3, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  defaultColors: []
+  pattern: {fileID: 0}
+  patternColors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  patternSize: {x: 0, y: 0}
+  decalDatas: []
+  tags: []
+  categories: []
+  optionalPieces: []
+  additionalBones:
+  - {fileID: 8051714222950629648}
+  LinkedColorSets: []
+  IncompatibleSets: []
+  HideTypes: []
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 0}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  editMode: 0
+--- !u!1001 &7844911951752496564
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 7319026459055539115}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_RootOrder
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+      propertyPath: m_Name
+      value: BSMC_Outfit_Hairfront_HangingDreads
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+--- !u!4 &7733807174623814239 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+  m_PrefabInstance: {fileID: 7844911951752496564}
+  m_PrefabAsset: {fileID: 0}
+--- !u!4 &8051714222950629648 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 244274882676933796, guid: 9f3a96f8ae4e1e340ae3cd1dfd9d1cf0, type: 3}
+  m_PrefabInstance: {fileID: 7844911951752496564}
+  m_PrefabAsset: {fileID: 0}

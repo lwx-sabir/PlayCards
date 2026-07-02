@@ -1,0 +1,114 @@
+@{
+    ViewData["Title"] = "Dashboard";
+    ViewData["Crumb"] = "Dashboard";
+    ViewData["Nav"] = "dashboard";
+}
+
+<h1 class="page-title">Dashboard</h1>
+<p class="page-sub">Live snapshot of the Khela casino — players, economy and operations.</p>
+
+<!-- ============ stat cards ============ -->
+<div class="stat-grid">
+    <div class="card stat-card">
+        <div class="stat-top">
+            <span class="stat-label">Total Players</span>
+            <span class="stat-ico blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+        </div>
+        <div class="stat-value" id="st-total-players">—</div>
+        <div class="stat-foot"><span class="trend up" id="st-new-week">—</span></div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-top">
+            <span class="stat-label">Chips Wagered · 24h</span>
+            <span class="stat-ico purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"/><path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></span>
+        </div>
+        <div class="stat-value" id="st-wagered-24h">—</div>
+        <div class="stat-foot" id="st-wagered-foot">—</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-top">
+            <span class="stat-label">Rounds Played · 24h</span>
+            <span class="stat-ico green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></span>
+        </div>
+        <div class="stat-value" id="st-rounds-24h">—</div>
+        <div class="stat-foot" id="st-rounds-foot">—</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-top">
+            <span class="stat-label">Chips in Play</span>
+            <span class="stat-ico amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"/><path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></span>
+        </div>
+        <div class="stat-value" id="st-chips-float">—</div>
+        <div class="stat-foot">across all wallets</div>
+    </div>
+</div>
+
+<!-- ============ chart + alerts ============ -->
+<div class="content-row">
+    <div class="panel chart-wrap">
+        <div class="panel-head">
+            <h3>Chips wagered over time</h3>
+            <div class="chart-toggle"><span>7d</span><span>15d</span><span class="on">30d</span></div>
+        </div>
+        <svg class="chart-svg" viewBox="0 0 720 230" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-opacity="0.35" style="stop-color:var(--accent)" />
+                    <stop offset="100%" stop-opacity="0" style="stop-color:var(--accent)" />
+                </linearGradient>
+            </defs>
+            <g stroke="rgba(255,255,255,0.055)" stroke-width="1">
+                <line x1="0" y1="35" x2="720" y2="35" /><line x1="0" y1="90" x2="720" y2="90" />
+                <line x1="0" y1="145" x2="720" y2="145" /><line x1="0" y1="200" x2="720" y2="200" />
+            </g>
+            <path id="chart-area" d="M0,160 L80,120 L160,140 L240,85 L320,125 L400,55 L480,100 L560,72 L640,118 L720,92 L720,230 L0,230 Z" fill="url(#area)" />
+            <path id="chart-line" d="M0,160 L80,120 L160,140 L240,85 L320,125 L400,55 L480,100 L560,72 L640,118 L720,92" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" style="stroke:var(--accent)" />
+            <circle id="chart-dot" cx="400" cy="55" r="5" stroke-width="3" style="fill:var(--panel);stroke:var(--accent)" />
+        </svg>
+        <div id="chart-xaxis" style="display:flex; justify-content:space-between; margin-top:10px; font-size:11.5px; color:var(--dim)">
+            <span>—</span><span>—</span><span>—</span><span>—</span><span>—</span><span>—</span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head"><h3>Live system alerts</h3><a href="#" class="muted" style="font-size:12.5px">View all</a></div>
+        <div id="alerts-body">
+            <div class="alert-item"><span class="alert-text dim">Loading…</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ recent players table ============ -->
+<div class="panel">
+    <div class="panel-head">
+        <h3>Recent players</h3>
+        <div class="table-tools">
+            <div class="mini-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+                <input type="text" placeholder="Search players…" />
+            </div>
+            <button class="btn btn-outline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" /></svg> Filter</button>
+        </div>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr><th>Player</th><th>Level</th><th>Chips</th><th>Status</th></tr>
+        </thead>
+        <tbody id="recent-players-body">
+            <tr><td colspan="4" class="dim" style="padding:18px 16px">Loading…</td></tr>
+        </tbody>
+    </table>
+    <div class="table-foot">
+        <span class="dim" style="font-size:12.5px">Most recent registrations</span>
+        <div class="pager">
+            <button>‹</button><button class="on">1</button><button>2</button><button>3</button><button>…</button><button>›</button>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/dashboard.js" asp-append-version="true"></script>
+}

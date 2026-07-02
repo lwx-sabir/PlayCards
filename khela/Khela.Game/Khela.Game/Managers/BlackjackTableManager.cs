@@ -33,10 +33,21 @@ namespace Khela.Game.Managers
         private readonly IServiceScopeFactory scopeFactory;
         private readonly IHubContext<BlackjackHub> hubContext;
         private readonly ILogger<BlackjackTableManager> logger;
-        private readonly int turnDurationSeconds;
-        private readonly int insuranceDurationSeconds;
-        private readonly int stalledTimeoutSeconds;     // no heartbeat for this long ⇒ stalled ⇒ §5 removal
-        private readonly int disconnectGraceSeconds;    // no heartbeat for this long ⇒ show "disconnected…"
+        // Config defaults (appsettings). The LIVE values are read via the properties below, which overlay admin
+        // runtime overrides from the Redis "khela:settings" hash (cached ~15s) — the same store the dashboard and
+        // ProgressionService use. A non-positive / unparseable override is ignored, so it can't break the clock.
+        private readonly int cfgTurnSeconds;
+        private readonly int cfgInsuranceSeconds;
+        private readonly int cfgStalledTimeout;     // no heartbeat for this long ⇒ stalled ⇒ §5 removal
+        private readonly int cfgDisconnectGrace;    // no heartbeat for this long ⇒ show "disconnected…"
+        private int turnDurationSeconds      => RuntimeInt("Blackjack:TurnSeconds", cfgTurnSeconds);
+        private int insuranceDurationSeconds => RuntimeInt("Blackjack:InsuranceSeconds", cfgInsuranceSeconds);
+        private int stalledTimeoutSeconds    => RuntimeInt("Table:StalledTimeoutSeconds", cfgStalledTimeout);
+        private int disconnectGraceSeconds   => RuntimeInt("Table:DisconnectGraceSeconds", cfgDisconnectGrace);
+        private const string SettingsHashKey = "khela:settings";
+        private Dictionary<string, string> settingsSnapshot = new();
+        private DateTime settingsCacheUntil = DateTime.MinValue;
+        private readonly object settingsLock = new();
         private readonly int emoteCooldownMs;           // per-user emote anti-spam cooldown
         private readonly HashSet<string> emoteIds;      // allowed emote catalog ids (empty ⇒ safe-token guard)
         private readonly bool progressionEnabled;       // master switch for the game-extension layer (gifted-taint + XP)
@@ -54,14 +65,41 @@ namespace Khela.Game.Managers
             this.logger = logger;
             this.config = config;
             this.env = env;
-            this.turnDurationSeconds = config.GetValue("Blackjack:TurnSeconds", 30);
-            this.insuranceDurationSeconds = config.GetValue("Blackjack:InsuranceSeconds", 12);
-            this.stalledTimeoutSeconds = config.GetValue("Table:StalledTimeoutSeconds", 30);
-            this.disconnectGraceSeconds = config.GetValue("Table:DisconnectGraceSeconds", 20);
+            this.cfgTurnSeconds = config.GetValue("Blackjack:TurnSeconds", 30);
+            this.cfgInsuranceSeconds = config.GetValue("Blackjack:InsuranceSeconds", 12);
+            this.cfgStalledTimeout = config.GetValue("Table:StalledTimeoutSeconds", 30);
+            this.cfgDisconnectGrace = config.GetValue("Table:DisconnectGraceSeconds", 20);
             this.emoteCooldownMs = config.GetValue("Emotes:CooldownMs", 1500);
             this.emoteIds = new HashSet<string>(
                 config.GetSection("Emotes:Ids").Get<string[]>() ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             this.progressionEnabled = config.GetValue("Progression:Enabled", true);
+        }
+
+        // Read a timing setting live: admin runtime override (Redis "khela:settings" hash, cached ~15s) overlaid
+        // on the appsettings default. A non-positive or unparseable override is ignored (keeps the default), so a
+        // bad value can never break the round clock. Money-safety §5 (never pull a live-stake seat) is unaffected
+        // — this only moves the threshold. Redis hiccup ⇒ keep the last snapshot.
+        private int RuntimeInt(string key, int fallback)
+        {
+            if (DateTime.UtcNow >= settingsCacheUntil)
+            {
+                lock (settingsLock)
+                {
+                    if (DateTime.UtcNow >= settingsCacheUntil)
+                    {
+                        try
+                        {
+                            var entries = redisService.GetDatabase().HashGetAll(SettingsHashKey);
+                            var d = new Dictionary<string, string>(entries.Length);
+                            foreach (var e in entries) d[(string)e.Name] = (string)e.Value;
+                            settingsSnapshot = d;
+                        }
+                        catch { /* Redis hiccup — keep the prior snapshot */ }
+                        settingsCacheUntil = DateTime.UtcNow.AddSeconds(15);
+                    }
+                }
+            }
+            return settingsSnapshot.TryGetValue(key, out var v) && int.TryParse(v, out var x) && x > 0 ? x : fallback;
         }
 
         // ---- Wallet integration (this manager is a singleton; resolve the scoped wallet per op) ----
@@ -198,6 +236,60 @@ namespace Khela.Game.Managers
             {
                 logger.LogError(ex, "Progression accrual failed for user {UserId} round {RoundId}", userId, roundId);
                 return 0;
+            }
+        }
+
+        /// <summary>
+        /// Accrues VIP Status Points for a settled seat from its EARNED (clean) wager (FLAT ×1, daily-capped, never
+        /// from winnings; §3). Idempotent per (round, user). Best-effort + wrapped so a VIP failure can never break
+        /// settle — the wallet already settled.
+        /// </summary>
+        private async Task AccrueVipAsync(Guid userId, decimal cleanWager, string roundId)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var vip = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Vip.IVipService>();
+                await vip.AccrueForRoundAsync(userId, cleanWager, roundId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "VIP accrual failed for user {UserId} round {RoundId}", userId, roundId);
+            }
+        }
+
+        /// <summary>
+        /// Accrues Loyalty Points for a settled seat from its EARNED (clean) wager × the player's VIP benefit
+        /// multiplier (§4). Idempotent per (round, user). Best-effort + wrapped so a Loyalty failure can never
+        /// break settle — the wallet already settled.
+        /// </summary>
+        private async Task AccrueLoyaltyAsync(Guid userId, decimal cleanWager, string roundId)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var loyalty = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Loyalty.ILoyaltyService>();
+                await loyalty.AccrueForRoundAsync(userId, cleanWager, roundId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Loyalty accrual failed for user {UserId} round {RoundId}", userId, roundId);
+            }
+        }
+
+        /// <summary>Advances daily-mission progress for a settled seat from the round's events (round count, clean
+        /// wager, hand outcomes from the stat counters). Idempotent per (round, user). Best-effort — never breaks settle.</summary>
+        private async Task AccrueMissionsAsync(Guid userId, IReadOnlyDictionary<string, long> statCounters, decimal cleanWager, string roundId)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var missions = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Missions.IMissionService>();
+                await missions.ReportRoundAsync(userId, statCounters, cleanWager, roundId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Mission progress failed for user {UserId} round {RoundId}", userId, roundId);
             }
         }
 
@@ -1297,7 +1389,14 @@ namespace Khela.Game.Managers
                     long grantedXp = progressionEnabled
                         ? await AccrueProgressionAsync(uid, cleanWager, net > 0m, roundId)
                         : 0L;
-                    statResults.Add(new RoundResult(uid, pre.Wagered, net, cleanWager, grantedXp));
+                    var statCounters = BlackjackStatCounters.ForSeat(seatHands);   // game-specific lifetime counters (blackjacks/doubles/busts/…)
+                    statResults.Add(new RoundResult(uid, pre.Wagered, net, cleanWager, grantedXp, statCounters));
+                    // VIP Status Points (flat ×1, never from winnings) — best-effort, idempotent per (round, user).
+                    if (progressionEnabled) await AccrueVipAsync(uid, cleanWager, roundId);
+                    // Loyalty Points (clean wager × VIP multiplier) — best-effort, idempotent per (round, user).
+                    if (progressionEnabled) await AccrueLoyaltyAsync(uid, cleanWager, roundId);
+                    // Daily-mission progress (round + clean wager + outcomes) — idempotent per (round, user).
+                    if (progressionEnabled) await AccrueMissionsAsync(uid, statCounters, cleanWager, roundId);
                 }
 
                 // The money credits above are idempotent (per-seat :pay key), but PersistHand and RecordStats

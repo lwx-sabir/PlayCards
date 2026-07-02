@@ -47,6 +47,16 @@ namespace PlayCard.UI
             if (button) button.interactable = true;
         }
 
+        /// <summary>Not a real seat on this table (seat number &gt; the table's MaxPlayers) — hide both states so it
+        /// can't show a dead "JOIN" that no-ops on tap.</summary>
+        public void Hide()
+        {
+            _onTap = null;
+            if (occupiedRoot) occupiedRoot.SetActive(false);
+            if (emptyRoot) emptyRoot.SetActive(false);
+            if (button) button.interactable = false;
+        }
+
         /// <summary>Taken seat: show the occupant and disable the tap.</summary>
         public void ShowOccupant(TableOccupant o)
         {

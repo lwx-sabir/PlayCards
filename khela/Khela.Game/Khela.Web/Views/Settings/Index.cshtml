@@ -1,0 +1,96 @@
+@model Khela.Web.Controllers.SettingsVm
+@{
+    ViewData["Title"] = "Settings";
+    ViewData["Crumb"] = "Settings";
+    ViewData["Nav"] = "settings";
+}
+
+<h1 class="page-title">Settings</h1>
+<p class="page-sub">Casino-wide and per-game configuration.</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved)) { <div class="banner ok">@Model.Saved</div> }
+@if (!string.IsNullOrEmpty(Model.Error)) { <div class="banner err">@Model.Error</div> }
+
+<div class="tabs">
+    <button type="button" class="tab active" data-tab="casino">Casino Settings</button>
+    <button type="button" class="tab" data-tab="game">Game Settings</button>
+</div>
+
+<div class="tab-panel" data-panel="casino">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Economy &amp; progression</h3>
+            <span class="badge badge-live">Live · applies next round</span>
+        </div>
+        <form asp-controller="Settings" asp-action="SaveCasino" method="post">
+            <div class="setting-list">
+                @foreach (var s in Model.Casino)
+                {
+                    <div class="setting-edit-row2">
+                        <div class="setting-meta">
+                            <div class="setting-label">@s.Label</div>
+                            <div class="setting-help">@s.Help</div>
+                        </div>
+                        <input class="input setting-input" type="number" step="@s.Step" name="@s.Key" value="@s.Value" />
+                    </div>
+                }
+            </div>
+            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save casino settings</button></div>
+        </form>
+    </div>
+</div>
+
+<div class="tab-panel hidden" data-panel="game">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Blackjack &amp; table timing</h3>
+            <span class="badge badge-live">Live · within ~15s</span>
+        </div>
+        <form asp-controller="Settings" asp-action="SaveGame" method="post">
+            <div class="setting-list">
+                @foreach (var s in Model.Game)
+                {
+                    <div class="setting-edit-row2">
+                        <div class="setting-meta">
+                            <div class="setting-label">@s.Label</div>
+                            <div class="setting-help">@s.Help</div>
+                        </div>
+                        <input class="input setting-input" type="number" step="@s.Step" min="1" name="@s.Key" value="@s.Value" />
+                    </div>
+                }
+            </div>
+            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save game settings</button></div>
+        </form>
+
+        @if (Model.GameReadOnly.Count > 0)
+        {
+            <div class="setting-list" style="margin-top:18px">
+                @foreach (var s in Model.GameReadOnly)
+                {
+                    <div class="setting-row">
+                        <span class="setting-label">@s.Label</span>
+                        <span class="setting-val">@s.Value</span>
+                        <span class="badge badge-plan">appsettings · restart</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var tabs = document.querySelectorAll('.tab');
+            var panels = document.querySelectorAll('.tab-panel');
+            tabs.forEach(function (t) {
+                t.addEventListener('click', function () {
+                    tabs.forEach(function (x) { x.classList.remove('active'); });
+                    t.classList.add('active');
+                    var key = t.getAttribute('data-tab');
+                    panels.forEach(function (p) { p.classList.toggle('hidden', p.getAttribute('data-panel') !== key); });
+                });
+            });
+        })();
+    </script>
+}

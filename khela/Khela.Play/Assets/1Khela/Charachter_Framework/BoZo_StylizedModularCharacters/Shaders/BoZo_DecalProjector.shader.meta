@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: b1478c1e037e81d40b952a1321a16ac9
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Shaders/BoZo_DecalProjector.shader
+  uploadId: 941986

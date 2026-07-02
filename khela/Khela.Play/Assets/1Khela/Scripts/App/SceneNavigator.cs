@@ -1,4 +1,5 @@
 using UnityEngine.SceneManagement;
+using PlayCard.Core;
 
 namespace PlayCard.App
 {
@@ -8,12 +9,30 @@ namespace PlayCard.App
     /// </summary>
     public static class SceneNavigator
     {
+        public const string Onboarding = "Onboarding";
         public const string Home = "Home";
         public const string Lobby = "Lobby";
         public const string Table = "Table";
 
-        public static void GoToHome() => SceneManager.LoadScene(Home);
-        public static void GoToLobby() => SceneManager.LoadScene(Lobby);
+        /// <summary>First-run avatar picker (shown only when the player has no saved avatar). Must be in Build Settings.</summary>
+        public static void GoToOnboarding()
+        {
+            KhelaAnalytics.LogScreen(Onboarding);
+            SceneManager.LoadScene(Onboarding);
+        }
+
+        public static void GoToHome()
+        {
+            KhelaAnalytics.LogScreen(Home);
+            SceneManager.LoadScene(Home);
+        }
+
+        public static void GoToLobby()
+        {
+            KhelaAnalytics.LogScreen(Lobby);
+            KhelaAnalytics.LogLobbyOpened(GameSession.SelectedGame ?? "blackjack");
+            SceneManager.LoadScene(Lobby);
+        }
 
         /// <summary>Open a specific table — stashes its id (and the picked seat, if any) for the Table scene to
         /// pick up after load. <paramref name="seatNumber"/> 0 = unknown (auto-match / spectate).</summary>
@@ -21,6 +40,7 @@ namespace PlayCard.App
         {
             GameSession.TableId = tableId;
             GameSession.SeatNumber = seatNumber;   // lets the Table scene resolve the local seat before the board
+            KhelaAnalytics.LogScreen(Table);
             SceneManager.LoadScene(Table);
         }
     }

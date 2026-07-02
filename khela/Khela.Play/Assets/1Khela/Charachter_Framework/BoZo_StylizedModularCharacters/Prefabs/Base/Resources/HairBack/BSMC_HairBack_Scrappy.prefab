@@ -1,0 +1,190 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &6950404631842945114
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6950404631842945112}
+  - component: {fileID: 6950404631842945113}
+  m_Layer: 0
+  m_Name: BSMC_HairBack_Scrappy
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6950404631842945112
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6950404631842945114}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 7493555804001660323}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &6950404631842945113
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6950404631842945114}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30163d88ceeb5dd4c9f91932956c80e1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  AttachInEditMode: 0
+  OutfitName: Scrappy
+  OutfitIcon: {fileID: 21300000, guid: c6636bc5dd60a20498adc391c794985d, type: 3}
+  ColorChannels:
+  - Base
+  - Gradient
+  TextureCatagory: 
+  supportDecals: 0
+  supportPatterns: 0
+  showCharacterCreator: 1
+  Type: {fileID: 11400000, guid: 3781f2a69b931724b9a19deab41d2f45, type: 2}
+  AttachPoint: 
+  materialIndex: 0
+  materialPriority: 0
+  colors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  defaultColors: []
+  pattern: {fileID: 0}
+  patternColors:
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  - {r: 0, g: 0, b: 0, a: 0}
+  patternSize: {x: 0, y: 0}
+  decalDatas: []
+  tags: []
+  categories: []
+  optionalPieces: []
+  additionalBones: []
+  LinkedColorSets: []
+  IncompatibleSets: []
+  HideTypes: []
+  currentSwatch: 0
+  outfitSwatches: []
+  originalBones: []
+  originalRootBone: {fileID: 0}
+  editorAttachPoint: {fileID: 0}
+  customShader: 0
+  material: {fileID: 0}
+  controlMaterial: {fileID: 0}
+  controlIndex: 0
+  editMode: 0
+--- !u!1001 &6950404633158781512
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 6950404631842945112}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_RootOrder
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_Name
+      value: BSMC_Outfit_HairBack_Scrappy
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_DirtyAABB
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Center.x
+      value: -0.00030789524
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Center.y
+      value: 0.10335347
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Center.z
+      value: 0.010037076
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Extent.x
+      value: 0.09991119
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Extent.y
+      value: 0.12160075
+      objectReference: {fileID: 0}
+    - target: {fileID: 5276341225256954324, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+      propertyPath: m_AABB.m_Extent.z
+      value: 0.10832076
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+--- !u!4 &7493555804001660323 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: acb0a201b6e56c640ae8af371473fcce, type: 3}
+  m_PrefabInstance: {fileID: 6950404633158781512}
+  m_PrefabAsset: {fileID: 0}

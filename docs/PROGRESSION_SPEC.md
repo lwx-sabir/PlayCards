@@ -11,6 +11,32 @@ Numbers below are **tunable defaults** — put every one of them in config, not 
 
 ---
 
+## Build status (audited 2026-06-28)
+
+| # | System | Status | Notes |
+|---|---|---|---|
+| 1 | §6 Two-bucket wallet (clean/tainted) | ✅ **Done** | Earned-first spend, payout keeps the gifted fraction tainted, XP uses clean wager only; idempotent under `FOR UPDATE`. Stored as `Balance` + a single `GiftedBalance` slice (+ `WalletTransaction.GiftedDelta`), not literal `EarnedChips`/`GiftedChips`/portions — **mathematically equivalent**, accepted. |
+| 2 | §2 XP & Level (core loop) | ✅ **Done** | Bet-proportional XP, the curve, win bonus, daily cap, level-up + every-10 milestone chip rewards, `GET /api/progression/me` + `ProgressionDto` — all live, wired into settle, runtime-tunable. |
+| 3 | §4 Loyalty Points | ❌ **Not started** | Only a dead `LoyaltyPoints` field. No earn / store / redeem / DTO / endpoint. |
+| 4 | §3 VIP / Status Points | ❌ **Not started** · design finalized 2026-06-29 | Code unbuilt (bare, never-written `VipTier`; 6 enum values vs 7 — migrate, don't cast). **Design redesigned** (see §3): Bronze auto-granted at Level 20 = floor/no-badge; Silver+ are scarce SP **+ spend-gated** badges; **flat ×1 SP** (multiplier on the Loyalty/benefit track only); **two separate windows** (tier 12mo / badge 30d); one gentle rolling-window decay. |
+| 5 | §7 Anti-abuse | 🟡 **XP-side done** | Server-authoritative, min-bet floor, daily cap, idempotent. Claim/velocity/decay levers wait on the features that need them. |
+
+**Deferred by design (ride in with the feature that needs them — NOT gaps in the core):**
+- §2.1 secondary XP sources (daily-login/streak, quests/missions, first-purchase grants) → come with a login/quest system.
+- §2.3 level-gated content unlocks → moot until there's more than blackjack to gate.
+
+**Accepted deviations (working, intentional):**
+- Min-bet is a level-tiered *soft* floor (sub-floor bets earn `0.2×`), not a single hard zero.
+- Milestone reward (levels ending in 0) is a duplicate of the level-up chip credit, not a "bigger pack + boost".
+
+**Cleanups owed:**
+- `WinXpBonus` (+10% XP on a win) is **outcome-dependent** — minor tension with §1.2 / the legal posture. Listed here as a knob so it's intended, but get a lawyer nod or set it to `0`.
+- `POST /api/progression/admin/daily-cap` writes the **retired** `progression:dailyXpCap` key nothing reads (live cap is the `khela:settings` hash) — delete or repoint.
+
+**Next:** §4 Loyalty earn + store (the missing chip *sink*; earn folds into the existing settle accrual next to XP). **Blocked on IAP:** the spend side of Loyalty (`LpPerUsd`) and VIP (`SpPerUsd`) + VIP's monetization payoff — build System B alongside the IAP flow.
+
+---
+
 ## 0. The three systems (and why they're separate)
 
 The industry-standard split is **a play track and a status/spend track**, kept distinct so each
@@ -128,68 +154,139 @@ Sample (defaults), illustrating the "treadmill that slows":
 
 ---
 
-## 3. SYSTEM B — VIP / Status Points (status track)
+## 3. SYSTEM B — VIP / Status Points (the prestige track)
+
+> **Design intent (Reza, 2026-06-29): VIP is a SCARCE prestige/spend ladder, NOT a free-player ladder.**
+> Free-player progression lives in XP/Level (§2). A VIP **badge** (Silver and up) must be *hard* — 30 days of
+> continuous free play should not reach Silver. **Bronze is the floor, not a badge.** Status Points (SP) are
+> non-redeemable (rank only); the per-tier multiplier is a **benefit on the Loyalty/store track, NOT on SP itself**
+> (so a high tier never self-accelerates its own climb).
+
+### 3.0 Bronze floor vs the VIP badge
+- **Unranked** — below `VIP_ENTRY_LEVEL` (default **20**, tunable): not in the VIP system; no tier, no badge.
+- **Bronze** — granted automatically on reaching `VIP_ENTRY_LEVEL`. It is the **floor** ("you're in the system"):
+  **no VIP badge, baseline perks only.** SP is irrelevant at Bronze — Level alone grants it.
+- **Silver → Black Diamond** — the actual **VIP badges**, earned by SP over the tier window **plus a spend floor**
+  on the upper bands (§3.2). Deliberately scarce — a badge signals real spend / elite commitment, not time served.
 
 ### 3.1 How Status Points (SP) accumulate
-Three sources, each multiplied by the player's **tier multiplier** (§3.3):
+SP only matter for climbing **above Bronze** (Silver+). Sources accrue at a **FLAT ×1 rate** — the tier multiplier
+is NOT applied here (it lives on the benefit track, §3.5):
 
 ```
-spFromWager    = floor(cleanWagerChips / SP_CHIPS_PER_POINT) * tierMult   // SP_CHIPS_PER_POINT = 50
-spFromPurchase = floor(usdSpent * SP_PER_USD) * tierMult                  // SP_PER_USD = 100, bigger packs get a bonus %
-spFromActivity = fixed grants for login/quests/level-up * tierMult
+spFromWager    = floor(cleanWagerChips / SP_CHIPS_PER_POINT)   // divisor tuned (with the §3.2 bars) so free volume
+                                                               //   ALONE can't reach Silver in a month; + a daily cap
+spFromPurchase = floor(usdSpent * SP_PER_USD)                  // SP_PER_USD = 100; bigger packs get a bonus %
+spFromActivity = fixed grants for login / quests / level milestones
 ```
-- **Never** from winnings. Bet volume, real-money purchases, and activity only.
-- `cleanWagerChips` again = Earned/Purchased portion only (§6).
+- **Never from winnings** — the legal line (status not "based on the outcome of any game"). This includes *indirect*
+  paths: keep `WinXpBonus = 0` (§2) so a win can't speed XP → level → activity-SP; activity SP rides only
+  wager/time-driven milestones, never win-driven ones.
+- `cleanWagerChips` = the Earned/Purchased portion only (§6) — gifted chips grant nothing.
+- **`SP_FROM_WAGER_DAILY_CAP`** (tunable): caps SP earnable from wager volume per day, so a no-life grinder can't
+  shortcut a badge by session length. IAP-driven SP is uncapped (real spend self-limits and is the intended fast
+  path to a badge). The same `MIN_BET` floor as XP applies.
 
-### 3.2 Tier table (7 tiers — the modal industry choice)
-Tier = highest band your **trailing-12-month SP** qualifies for. Thresholds (tunable):
+### 3.2 Tier table — Bronze floor + 6 earned badges
+Tier = the highest band for which **both** the SP bar (over the tier window, §3.3) **and** the spend floor are met.
+Numbers are **tunable defaults to recalibrate against real wager/spend telemetry before launch** — the *structure*
+(flat ~×5 SP steps, spend-gated upper badges, scarce apex, multiplier on benefits not SP) is the fixed part.
 
-| Tier | Trailing-12-mo SP | SP/earn multiplier |
-|---|---|---|
-| Bronze | 0 – 999 | ×1.0 |
-| Silver | 1,000 – 9,999 | ×1.5 |
-| Gold | 10,000 – 49,999 | ×2.0 |
-| Platinum | 50,000 – 249,999 | ×3.0 |
-| Diamond | 250,000 – 1,499,999 | ×4.0 |
-| Royal Diamond | 1,500,000 – 7,999,999 | ×5.0 |
-| Black Diamond | 8,000,000+ | ×6.0 |
+| Tier | Badge | Target % of payers | SP bar (trailing tier window) | + Spend floor (trailing, BD-rescaled) | Benefit ×mult (Loyalty/store) |
+|---|---|---|---|---|---|
+| Bronze | — floor, **permanent** | ~all engaged | n/a — granted at `VIP_ENTRY_LEVEL` | — | ×1.0 |
+| Silver | ✅ | ~60% | 50,000 | — | ×1.3 |
+| Gold | ✅ | ~22% | 250,000 | — | ×1.7 |
+| Platinum | ✅ | ~10% | 1,250,000 | ~$30 (Tk ~3.5k) | ×2.2 |
+| Diamond | ✅ | ~4% | 6,250,000 | ~$150 (Tk ~18k) | ×2.8 |
+| Royal Diamond | ✅ | ~1% | 31,000,000 | ~$800 (Tk ~95k) | ×3.6 |
+| Black Diamond | ✅ | ~0.2% | 150,000,000 | ~$4,000 (Tk ~480k) | ×4.5 |
 
-The **compounding multiplier** (×1 → ×6) is the workhorse retention lever: high tiers earn SP
-faster, so the climb accelerates. (Existing `VipTier` field holds the tier; see §7.)
+*All numbers are starting defaults — instrument live telemetry and tune (per-tier population is unpublished
+industry-wide; operators set these post-launch). Calibrate the SP divisor + bars BACKWARD from the target
+distribution above, which reproduces the empirical "top ~5% of payers ≈ ~48% of revenue."*
 
-### 3.3 Maintenance / decay
-Tier is reviewed on a rolling schedule (monthly). If the player's **trailing-12-month Status
-Points** fall below the threshold needed to hold their current tier, they **step down by the rule
-below** — a soft landing, not an immediate crash to whatever band their points currently qualify
-for. Apex tiers decay hard (volatile by design); lower tiers decay gently, one step at a time:
+**Locked design decisions (validated by the 2026-06-29 industry research):**
+- **Bronze is PERMANENT** (level-gated, never decays) — no one ever falls out of VIP entirely. Playtika trained
+  social-casino whales to expect *permanent* status, so visible demotion is the top churn risk; the floor absorbs it
+  (Marriott "soft-landing" pattern handles the rest, §3.4).
+- **Spend floors are BD-rescaled ~10× down** from Western anchors (Bangladesh mobile ARPU ~$16/yr ≈ ¼ of global):
+  apex ≈ $4k, not $40–80k. **Present floors as "SP earned from purchases," NEVER a literal "$X = Diamond"** (a visible
+  dollar gate reads pay-to-win). Silver/Gold are SP-only; spend gates start at Platinum.
+- **Spend is IAP-only at launch** (no external/MFS payment yet). The SP-from-purchase hook is **RAIL-AGNOSTIC** —
+  it credits SP + spend on a *verified purchase event* (USD amount + idempotency key), not off an Apple/Google
+  receipt — so the later **coinfolytics web store** (adds bKash/Nagad, skips the store cut) is just a second feed and
+  VIP needs no change. Spend floors stay dormant until IAP ships.
+- **Benefit multiplier widened to ×1.0→×4.5** (market tops ~×5–6); applies ONLY to the Loyalty/store track.
+  **Hard-cap it so a top tier never costs more to serve than it pays** (model IAP-margin at the ceiling — the 2026
+  "VIP-era" failures were margin inversion).
+- **7 tiers + names are exact industry standard** (Playtika); flat-SP + multiplier-on-redeemable-only is *ahead* of
+  Playtika (which multiplies SP itself = rich-get-richer). The existing `VipTier` enum is **6 values vs 7** — add the
+  missing band via a deliberate migration (**map, never cast**).
+- **"Hide my VIP badge" opt-out** (KamaGames ships this) — cheap differentiator; part of the badge-display contract.
 
-- **Black Diamond** → drops to **Platinum**.
-- **Royal Diamond** or **Diamond** → drops to **Gold**.
-- **Any other tier** → drops **one tier** (Gold→Silver, Silver→Bronze, …), with **Bronze** as the floor.
+### 3.3 The two windows — tier rank vs badge display (separate, configurable knobs)
+Do **not** conflate them:
+- **`TIER_WINDOW_MONTHS`** (default **12**): the SP lookback that sets your **earned rank**. Slow to climb, slow to
+  lose. Tier = the band your SP over this window qualifies for (with the spend floor).
+- **`BADGE_WINDOW_DAYS`** (default **30**, a *separate* knob): the badge stays **lit** only while you meet its
+  maintenance bar within this *shorter* window. Go quiet past `BADGE_WINDOW_DAYS` and the **badge greys out — COSMETIC
+  ONLY; it NEVER lowers your rank/tier**; re-meeting the bar relights it instantly. So a badge is **hard to earn**
+  (long window, high bar + spend) and **must stay active to wear** (short window). Rank only ever moves on the
+  12-month window at the monthly review (§3.4). (Research note: the closest keep-active precedent, MGM, uses 90 days;
+  keeping the 30d effect purely cosmetic avoids over-punishing episodic spenders.)
 
-A player who keeps missing the maintenance bar at successive reviews continues stepping down until
-they reach the tier their activity actually supports (Bronze at the floor). **Promotion is
-immediate**: crossing a higher band's SP threshold at any time promotes them straight back up (take
-`max(currentTier, bandFromTrailing12moSP)`); decay only ever applies at a scheduled review.
+### 3.4 Decay — ONE model, gentle
+- **Promotion is immediate**: cross a band's SP bar (and spend floor) → promoted at once (`max(current, band)`).
+- **Tier follows the rolling tier window**: at each monthly review, tier = `band(SP over TIER_WINDOW_MONTHS)`. The
+  window's natural roll-off **IS** the decay — there are **no separate step-down targets** (the old
+  Black→Platinum / Royal→Gold rules are **deleted**; they contradicted the rolling sum and produced cliff demotions).
+- **Softeners** (anti-churn): demote **at most one tier per review**; require **two consecutive** reviews below the
+  bar before any demotion (grace); **hysteresis** — the demote bar sits ~15–20% below the promote bar so boundary
+  players don't yo-yo; never demote a player whose trailing **spend** still holds the band.
+- **Inactivity / win-back**: prolonged inactivity decays rank via the window roll-off and dims the badge via
+  `BADGE_WINDOW_DAYS`. On return, **lead with a win-back** (restore the badge on first login back, offer a short
+  boosted-SP "reclaim your status" window) — never confront the player with a demotion screen.
 
-Plus a universal **inactivity rule**: after `INACTIVITY_DAYS` (default 180) with no real wagered
-activity, **suspend perks** (not the tier) until the player returns.
-
-Implementation: persist `VipTier` + the trailing-12-mo SP (monthly ledger, §8); the monthly job
-compares SP against the current tier's threshold and applies the step-down rule above. Keep the
-step-down map in config so it's tunable.
-
-### 3.4 VIP perks (scale by tier; all non-cash)
-- **SP/Loyalty earn multiplier** (×1 → ×6) — the core compounding perk.
-- **Bigger daily free-chip gift + bigger daily wheel** per tier.
-- **Store value boost / vouchers**: more chips per IAP dollar at higher tiers (the monetization
-  payoff — effectively a deepening, tier-gated discount).
+### 3.5 VIP perks (Silver+ only; scale by tier; all non-cash)
+Bronze gets baseline only — perks begin at the first **badge** (Silver). The **benefit multiplier** (×1.0 → ×3.5,
+§3.2) boosts the **Loyalty / store track**, NOT SP. Per tier (tune freely):
+- **Loyalty-Point + store-value boost** (the ×multiplier) — more comp value per dollar as you climb.
+- **Bigger daily free-chip gift + bigger daily wheel.**
+- **More chips per IAP dollar** at higher tiers (the monetization payoff — a tier-gated discount).
 - **Exclusive high-limit tables / invite-only tournaments** at Platinum+.
 - **More daily gift redemptions** and bigger social-gift multipliers.
-- **Cosmetic status**: collectible tier badge/frame, name flair, table aura.
-- **Dedicated VIP host / "Ambassador" support** at Diamond+ (human touch for top spenders).
-- **Faster faucets / reduced cooldowns**.
+- **Cosmetic prestige**: the tier badge/frame, name flair, table aura — the visible flex.
+- **Dedicated VIP host / concierge** at Diamond+.
+- **Faster faucets / reduced cooldowns.**
+- Differentiate the **top** bands with exclusivity/cosmetics/host, **not** ever-deeper per-dollar discounts (that
+  inverts unit economics — you'd discount your biggest spenders most).
 > None of these alter odds. They grant more chips, more access, more status, more convenience.
+
+### 3.6 VIP Level (1–10) — the premium multiplier ladder (Reza, 2026-06-29)
+The TIER ladder (§3.0–3.5) is the *earned* prestige; on top sits a separate **VIP Level 1–10** — the real prestige +
+the big multiplier. **ALL multipliers apply to the COMP/FAUCET tracks (Loyalty earning, daily bonus, wheel, store
+value) — NEVER to winnings.** Odds stay identical for payers and free players; the §1.3 non-negotiable holds. (This
+supersedes the §3.2 "Benefit ×mult" column — that ×1.0→×4.5 is replaced by the small TierBonus below.)
+
+**Effective comp boost = 1 + TierBonus + VipLevelBonus** (additive; all tunable):
+- **TierBonus** — small, the "experienced player" signal: Bronze +1% → Black Diamond +15%.
+- **VipLevelBonus** — the real lever: VIP 1 +20% → VIP 10 **+170%**. (So a Black-Diamond VIP 10 ≈ **+185%** comp.)
+
+**Earn a VIP Level (both deliberately hard):**
+- **Buy** from the store — rail-agnostic purchase hook ("VIP Booster" IAP item; live once IAP / web-store ships).
+- **Grind** — a `VipLevelProgress` accumulator ticks each settled round by `roundSP × tierFactor` (Bronze ×1 → Black
+  ×3, so a higher tier grinds VIP faster); per-level thresholds are huge, so even VIP 1 is a long road.
+
+**Maintained, or it decays 1 level/month** (floor 0 — you CAN fall out of VIP entirely; unlike Bronze there's no free
+floor here):
+- The monthly review drops VIP Level by **1** if it wasn't maintained that period.
+- Maintained by ANY of: **playing** (a settled round within `VipMaintainDays` = 30), spending **Loyalty Points**
+  (live now), or an **IAP "VIP Booster" top-up** (a small keep-up charge, cheaper than buying a level fresh — dormant
+  until IAP). Future rails ("TC"/etc.) plug into the same maintain seam.
+
+**Buildable now:** the level field + the grind + the combined comp multiplier + the monthly decay + LP-maintenance.
+**Dormant until IAP:** buy-a-level + the VIP-Booster top-up (the rail-agnostic seam is ready).
 
 ---
 
@@ -293,11 +390,16 @@ wallet integrity.*
 **Add (deliberate migrations):**
 - `PlayerWallet.EarnedChips` (`decimal(18,4)`), `PlayerWallet.GiftedChips` (`decimal(18,4)`).
 - `WalletTransaction.EarnedPortion` + `WalletTransaction.GiftedPortion` (`decimal(18,4)`, signed).
-- `UserProfile.StatusPoints` (lifetime, `bigint`) + a windowed accumulator for trailing-12-mo
-  (either a `StatusPointsLedger` table keyed by month, or `StatusPointsWindowStart` + a rolling
-  sum — a monthly ledger is cleaner for decay math).
-- `UserProfile.StickyVipTier` (the highest non-apex tier ever earned).
-- `UserProfile.LastWageredActivityAt` (for inactivity rule; debounce writes).
+- `UserProfile.StatusPoints` (lifetime, `bigint`) + a **monthly SP ledger** (`StatusPointsLedger` keyed by
+  (UserId, month)) so the **tier window** (`TIER_WINDOW_MONTHS`) is a sum over the trailing buckets. Store SP at a
+  FLAT ×1 rate — the multiplier is NOT applied to SP (§3.1).
+- Trailing **spend** accumulator (for the upper-band spend floors) — a USD column on the same monthly ledger, or a
+  `UserProfile.TrailingSpend` rolling sum.
+- **Badge state** (`UserProfile.BadgeLitUntil` / last-SP-activity timestamp) so the **badge window**
+  (`BADGE_WINDOW_DAYS`, separate from the tier window) can grey out / relight the badge independently of rank.
+- `UserProfile.LastWageredActivityAt` (inactivity rule; debounce writes). (No `StickyVipTier` / step-down map needed
+  — the rolling tier window IS the decay, §3.4.)
+- `VIP_ENTRY_LEVEL` is a config knob, not a field: Bronze is derived from `UserProfile.Level >= VIP_ENTRY_LEVEL`.
 - `UserProfile.DailyXp` + `DailyXpResetAt` (or Redis counter) for the daily cap.
 
 **Services:**
@@ -305,9 +407,10 @@ wallet integrity.*
   debit — computes XP/SP/LP from `EarnedPortion`, applies tier multiplier, daily cap, min-bet
   floor; handles level-up (chips via `WalletService` credit + unlock checks). Idempotent on the
   wager's `CorrelationId`.
-- `IVipService` (new): recompute tier from trailing-12-mo SP + sticky tier; expose perks
-  (multiplier, daily-bonus size, store-value boost) as a `VipPerks` value object other services
-  read. Nightly/periodic job for decay + inactivity suspension.
+- `IVipService` (new): tier = `band(SP over TIER_WINDOW_MONTHS)` **and** the band's spend floor; Bronze auto-granted
+  at `VIP_ENTRY_LEVEL` (no badge). Tracks the badge separately on `BADGE_WINDOW_DAYS` (lit only with recent activity).
+  Exposes perks (the benefit multiplier, daily-bonus size, store-value boost) as a `VipPerks` value object other
+  services read. Monthly review applies the gentle one-tier-max decay (§3.4) — no fixed step-down map.
 - `ILoyaltyStoreService` (new): catalog + redeem (idempotent via `WalletService`).
 - DTOs in `Khela.Common`: `ProgressionDto` (level, xp, xpToNext, dailyXpRemaining),
   `VipStatusDto` (tier, statusPoints, nextTierAt, perks), `LoyaltyDto` (points, catalog).
@@ -315,8 +418,18 @@ wallet integrity.*
   `GET /api/loyalty/store`, `POST /api/loyalty/redeem`.
 
 **Config (all defaults above live here, not in code):** a `Progression` config section —
-`XpChipsPerPoint, XpBase, XpExp, DailyXpCap, MinBetForXp, WinXpBonus, LvlUpBase, SpChipsPerPoint,
-SpPerUsd, LpChipsPerPoint, LpPerUsd, VipTierThresholds[], VipMultipliers[], InactivityDays`.
+`XpChipsPerPoint, XpBase, XpExp, DailyXpCap, MinBetForXp, WinXpBonus, LvlUpBase, SpChipsPerPoint, SpPerUsd,
+SpFromWagerDailyCap, LpChipsPerPoint, LpPerUsd, VipEntryLevel, TierWindowMonths, BadgeWindowDays,
+VipTierSpThresholds[], VipTierSpendFloors[], VipBenefitMultipliers[], InactivityDays`. Note: `VipBenefitMultipliers`
+apply to the **Loyalty/store track, NOT to SP** (§3.1/§3.5); they replace the old `VipMultipliers`, and
+`VipTierSpThresholds` + `VipTierSpendFloors` replace the old single `VipTierThresholds`.
+
+> **Runtime-tunable (since the admin dashboard, 2026-06-26):** every `Progression:*` key is now an
+> admin-editable *override* in the Redis hash `khela:settings`, which `ProgressionService` overlays onto
+> the appsettings base on each accrual (`ProgressionMath.Overlay`, lenient parse + fallback — a bad value
+> can't break accrual; the `Enabled` master switch is intentionally NOT overridable). Edit them live in
+> **Khela.Web ▸ Settings ▸ Casino** — applies on the next round, no restart. The old standalone
+> `progression:dailyXpCap` key is retired (folded into the hash). See `docs/ADMIN_DASHBOARD.md`.
 
 ---
 
