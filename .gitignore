@@ -109,3 +109,24 @@ mono_crash.*
 # =========================
 **/Il2CppBuildCache/
 **/BurstDebugInformation*
+
+# =========================
+# Firebase — SDK + generated output (NOT source)
+# On a fresh clone: re-import the Firebase Unity SDK 13.9.0 .unitypackage, then
+# Assets ▸ External Dependency Manager ▸ Android Resolver ▸ Force Resolve.
+# KEPT in VCS (project config / build templates): google-services.json,
+# GoogleService-Info.plist, Plugins/Android/*.gradle + gradleTemplate.properties.
+# =========================
+/khela/Khela.Play/Assets/Firebase/
+/khela/Khela.Play/Assets/Firebase.meta
+/khela/Khela.Play/Assets/ExternalDependencyManager/
+/khela/Khela.Play/Assets/ExternalDependencyManager.meta
+/khela/Khela.Play/Assets/GeneratedLocalRepo/
+/khela/Khela.Play/Assets/GeneratedLocalRepo.meta
+/khela/Khela.Play/Assets/Editor Default Resources/Firebase/
+/khela/Khela.Play/Assets/Editor Default Resources/Firebase.meta
+/khela/Khela.Play/Assets/Plugins/iOS/Firebase/
+/khela/Khela.Play/Assets/Plugins/iOS/Firebase.meta
+/khela/Khela.Play/Assets/Plugins/tvOS/Firebase/
+/khela/Khela.Play/Assets/Plugins/tvOS/Firebase.meta
+/khela/Khela.Play/ProjectSettings/AndroidResolverDependencies.xml
