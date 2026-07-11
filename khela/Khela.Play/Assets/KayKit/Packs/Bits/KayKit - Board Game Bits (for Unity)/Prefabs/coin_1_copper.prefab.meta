@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: c5bcac97e74277040a66b45607d388f0
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/coin_1_copper.prefab
+  uploadId: 903436

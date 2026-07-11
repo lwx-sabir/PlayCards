@@ -69,15 +69,33 @@ namespace PlayCard.Avatar
         [Serializable]
         public sealed class SlotConfig
         {
-            public string slot;             // OutfitType name (Top/Bottom/HairFront/…)
+            public string slot;             // OutfitType name (Top/Bottom/HairFront/…) — the PRIMARY slot + tab label/icon source
+            public string label;            // player-facing tab label (empty = use the raw slot name)
+            public string group;            // top-level group this tab lives under (Body/Face/Outfit) — drives the group bar
+            [Tooltip("Extra OutfitType names merged into this ONE tab, e.g. Underwear tab = UnderLower + UnderUpper. Items " +
+                     "from all of them show together; each equips into its own real slot (from its path).")]
+            public List<string> extraSlots = new List<string>();
             [Tooltip("Resources paths of allowed parts, e.g. \"Top/BSMC_Top_Tee\". EMPTY = allow every part in this slot.")]
             public List<string> allowedPartIds = new List<string>();
+
+            /// <summary>Every OutfitType this tab pulls items from — the primary slot plus any merged extras.</summary>
+            public IEnumerable<string> AllSlots()
+            {
+                yield return slot;
+                if (extraSlots != null) foreach (var s in extraSlots) if (!string.IsNullOrEmpty(s)) yield return s;
+            }
         }
 
         [Serializable]
         public sealed class ColorPalette
         {
-            public string target;           // Skin / Hair / Top / …
+            public string target;           // display label: Skin / Hair / Top / …
+            [Tooltip("OutfitType name this palette recolours (\"Body\" for skin, \"Top\", \"HairFront\"…).")]
+            public string slot;
+            [Tooltip("1-indexed colour channel within that outfit (skin is usually the Body outfit, channel 1).")]
+            public int channel = 1;
+            [Tooltip("Extra slots recoloured with the SAME swatch — e.g. Skin=Body also recolours Head; Hair front+back.")]
+            public List<string> linkedSlots = new List<string>();
             public List<Color> swatches = new List<Color>();
         }
 
@@ -94,7 +112,56 @@ namespace PlayCard.Avatar
         [Header("Curated color palettes (skin → human tones, etc.)")]
         public List<ColorPalette> palettes = new List<ColorPalette>();
 
+        [Header("Outfit catalogue (MOBILE-SAFE) — build via Khela ▸ Avatar ▸ Build Outfit Index. Without it the wardrobe " +
+                "falls back to scanning Resources at runtime (loads every mesh into RAM = heavy / phone-hostile).")]
+        public OutfitIndex outfitIndex;
+
         public GenderProfile Profile(Gender g) => g == Gender.Male ? male : female;
+
+        // ---- wardrobe whitelist helpers (drive PartsForSlot; an unauthored config is permissive) ----
+
+        /// <summary>Should this slot appear in the wardrobe? No slots configured ⇒ all shown; else only slots present
+        /// in <see cref="slots"/> ("omit a slot to hide it").</summary>
+        public bool SlotShown(string slot)
+        {
+            if (slots == null || slots.Count == 0) return true;
+            for (int i = 0; i < slots.Count; i++)
+                if (slots[i] != null && slots[i].slot == slot) return true;
+            return false;
+        }
+
+        /// <summary>Player-facing tab label for a slot (its SlotConfig.label, or the raw slot name if unset).</summary>
+        public string SlotLabel(string slot)
+        {
+            if (slots != null)
+                for (int i = 0; i < slots.Count; i++)
+                    if (slots[i] != null && slots[i].slot == slot && !string.IsNullOrEmpty(slots[i].label))
+                        return slots[i].label;
+            return slot;
+        }
+
+        /// <summary>Is a part ("slot/name") allowed in its slot? No slots configured ⇒ yes (permissive); a configured
+        /// slot with an EMPTY allowedPartIds ⇒ every part; a slot omitted from a configured list ⇒ no.</summary>
+        public bool PartAllowed(string slot, string path)
+        {
+            if (slots == null || slots.Count == 0) return true;
+            SlotConfig sc = null;
+            for (int i = 0; i < slots.Count; i++)
+                if (slots[i] != null && slots[i].slot == slot) { sc = slots[i]; break; }
+            if (sc == null) return false;
+            if (sc.allowedPartIds == null || sc.allowedPartIds.Count == 0) return true;
+            return sc.allowedPartIds.Contains(path);
+        }
+
+        /// <summary>Whitelist-gate a saved outfit path ("slot/name") — used on load/save so a de-listed part can't ride
+        /// back in. Splits the path and delegates to <see cref="PartAllowed"/>.</summary>
+        public bool PathAllowed(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            int slash = path.IndexOf('/');
+            if (slash <= 0) return false;
+            return PartAllowed(path.Substring(0, slash), path);
+        }
 
         // ---- first-cut defaults from the premade-human research (see chat: bozo-avatar-limits-research) ----
 
@@ -120,6 +187,77 @@ namespace PlayCard.Avatar
             female.baseId = "Base/1DefaultFemale";
             female.shapes = FemaleDefaults();
         }
+
+        /// <summary>Fill <see cref="palettes"/> with a curated starter set: human skin tones (Body+Head linked), natural
+        /// hair colours (HairFront+HairBack linked), eye colours, and general outfit colours for Top/Bottom. Slots verified
+        /// against the base characters' outfits (Body/Head/Eyes/HairFront/HairBack/Top/Bottom). Runs from the inspector.</summary>
+        public void PopulatePalettes()
+        {
+            palettes = new List<ColorPalette>
+            {
+                // Skin — the Body outfit's Base channel, linked to Head so the face doesn't go two-tone.
+                Pal("Skin", "Body", 1, new[] { "Head" },
+                    "#FFE0BD", "#F5CBA7", "#F1C27D", "#E0AC69", "#C68642", "#A5673F", "#8D5524", "#6B4423", "#4A2F1B"),
+                // Hair — front + back linked so they match.
+                Pal("Hair", "HairFront", 1, new[] { "HairBack" },
+                    "#1C1C1C", "#3B2417", "#5A3825", "#7B4B2A", "#A67B4A", "#D4B37A", "#E8DCC0",
+                    "#7A3520", "#B55A2A", "#9E9E9E", "#E8E8E8", "#3A6EA5", "#D46A9F"),
+                // Eyes — iris colour (verify channel if it doesn't take: eyes may use a channel other than 1).
+                Pal("Eyes", "Eyes", 1, null,
+                    "#4A2F1B", "#6B4423", "#8B5A2B", "#3A6EA5", "#27AE60", "#7A8B99", "#2C3E50"),
+                // General outfit colours.
+                Pal("Top", "Top", 1, null,
+                    "#EDEDED", "#2A2A2A", "#8A8A8A", "#C0392B", "#E67E22", "#F1C40F", "#27AE60", "#16A085",
+                    "#2980B9", "#8E44AD", "#E84393", "#7B4B2A"),
+                Pal("Bottom", "Bottom", 1, null,
+                    "#EDEDED", "#2A2A2A", "#34495E", "#8A8A8A", "#2980B9", "#27AE60", "#7B4B2A", "#C0392B", "#8E44AD"),
+            };
+        }
+
+        private static ColorPalette Pal(string target, string slot, int channel, string[] linked, params string[] hexes)
+        {
+            var p = new ColorPalette { target = target, slot = slot, channel = channel, swatches = new List<Color>() };
+            if (linked != null) p.linkedSlots = new List<string>(linked);
+            foreach (var h in hexes) p.swatches.Add(ColorUtility.TryParseHtmlString(h, out var c) ? c : Color.white);
+            return p;
+        }
+
+        /// <summary>Fill <see cref="slots"/> with a curated, ORDERED, labelled set of dressing tabs — the meaningful
+        /// wearable slots (clothing / hair / accessories / makeup), skipping the base Body/Head/Eyes/Pupil which aren't
+        /// "worn". Empty allowedPartIds on each ⇒ all parts of that slot show. Trim / reorder afterwards to taste.</summary>
+        public void PopulateStarterSlots()
+        {
+            const string Face = "Face", Outfit = "Outfit";
+            slots = new List<SlotConfig>
+            {
+                // ---- Face group (head / face area) ----
+                Slot("HairFront",    "Hair",       Face),
+                Slot("HairBack",     "Hair Back",  Face),
+                Slot("Hat",          "Hat",        Face),
+                Slot("UpperFace",    "Glasses",    Face),
+                Slot("LowerFace",    "Beard",      Face),
+                Slot("HeadAcc",      "Head",       Face),
+                Slot("FaceDetails",  "Face",       Face),
+                Slot("MakeUpEyes",   "Eye Makeup", Face),
+                Slot("MakeUpLips",   "Lips",       Face),
+                Slot("MakeUpCheeks", "Blush",      Face),
+                // ---- Outfit group (clothing) — some tabs merge several slots ----
+                Slot("Top",        "Top",       Outfit),
+                Slot("Overall",    "Outfit",    Outfit),
+                Slot("Bottom",     "Bottom",    Outfit, "Leggings"),      // Bottom tab also holds Leggings
+                Slot("UnderLower", "Underwear", Outfit, "UnderUpper"),    // Underwear tab = underwear + bra
+                Slot("Feet",       "Shoes",     Outfit),
+                Slot("Socks",      "Socks & Gloves", Outfit, "Gloves"),   // one tab for socks + gloves
+            };
+        }
+
+        private static SlotConfig Slot(string slot, string label, string group = "Outfit", params string[] extraSlots)
+            => new SlotConfig
+            {
+                slot = slot, label = label, group = group,
+                extraSlots = new List<string>(extraSlots),
+                allowedPartIds = new List<string>(),
+            };
 
         private static ShapeLimit Bs(string key, string label, ShapeCategory cat, float min, float max, float def, bool risk = false, bool locked = false)
             => new ShapeLimit { key = key, label = label, kind = ShapeKind.Blendshape, category = cat, min = min, max = max, def = def, deformRisk = risk, locked = locked };
@@ -225,6 +363,18 @@ namespace PlayCard.Avatar
             {
                 Undo.RecordObject(cfg, "Populate avatar limits");
                 cfg.PopulateFromResearch();
+                EditorUtility.SetDirty(cfg);
+            }
+            if (GUILayout.Button("Populate starter palettes (skin / hair / eyes / top / bottom)"))
+            {
+                Undo.RecordObject(cfg, "Populate avatar palettes");
+                cfg.PopulatePalettes();
+                EditorUtility.SetDirty(cfg);
+            }
+            if (GUILayout.Button("Populate starter slots (ordered + labelled dressing tabs)"))
+            {
+                Undo.RecordObject(cfg, "Populate avatar slots");
+                cfg.PopulateStarterSlots();
                 EditorUtility.SetDirty(cfg);
             }
             EditorGUILayout.Space();

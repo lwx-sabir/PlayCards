@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 82fd28565293a3841a1147f5ffa1c5a6
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/playercard_skeleton_brute.prefab
+  uploadId: 903436

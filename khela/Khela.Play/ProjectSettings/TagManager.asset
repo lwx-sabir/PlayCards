@@ -5,6 +5,11 @@ TagManager:
   serializedVersion: 3
   tags:
   - Avatar_3d
+  - Ignore Ragdoll
+  - Weapon
+  - Enemy
+  - CompanionAI
+  - AutoCrouch
   layers:
   - Default
   - TransparentFX
@@ -14,13 +19,13 @@ TagManager:
   - UI
   - Chip
   - BetSpot
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
-  - 
+  - Triggers
+  - Player
+  - HeadTrack
+  - Enemy
+  - CompanionAI
+  - BodyPart
+  -
   - 
   - 
   - 

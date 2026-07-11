@@ -9762,6 +9762,7 @@ GameObject:
   m_Component:
   - component: {fileID: 743494257}
   - component: {fileID: 743494258}
+  - component: {fileID: 743494259}
   m_Layer: 0
   m_Name: AvatarStage
   m_TagString: Untagged
@@ -9804,6 +9805,22 @@ MonoBehaviour:
   defaultAvatar: {fileID: 0}
   avatarLayerName: Avatar
   autoRotateDegPerSec: 0
+--- !u!114 &743494259
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 743494256}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5adcfae4bd35b654b98f04e2b6332ae0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Avatar.AvatarStageBinder
+  config: {fileID: 11400000, guid: 6df596ac500db3e439f0589161f46775, type: 2}
+  mount: {fileID: 524779363}
+  placeholder: {fileID: 7708187377136259274}
+  actorPrefab: {fileID: 3640035491320013482, guid: 78996b40b7f8f384b84ab1658e305cd5, type: 3}
 --- !u!1 &745445320
 GameObject:
   m_ObjectHideFlags: 0
@@ -20937,6 +20954,7 @@ MonoBehaviour:
   dragPixelsPerSlot: 800
   prevButton: {fileID: 0}
   nextButton: {fileID: 0}
+  allowWrap: 1
 --- !u!4 &1635572811
 Transform:
   m_ObjectHideFlags: 0
@@ -35965,7 +35983,6 @@ ParticleSystemRenderer:
   m_RendererPriority: 0
   m_Materials:
   - {fileID: 10308, guid: 0000000000000000f000000000000000, type: 0}
-  - {fileID: 0}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -76631,7 +76648,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 1206, y: -55.7279}
+  m_AnchoredPosition: {x: 1302.3721, y: -55.7279}
   m_SizeDelta: {x: 329.6445, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &2856472413001652237
@@ -105678,7 +105695,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Select
+  m_text: Customize
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: c1482dbce654844b9ba1c753cbea5d80, type: 2}
   m_sharedMaterial: {fileID: 7374927986402738804, guid: c1482dbce654844b9ba1c753cbea5d80, type: 2}
@@ -106401,7 +106418,19 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 4503513072373126899}
   m_OnClick:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 4503513072373126900}
+        m_TargetAssemblyTypeName: PlayCard.Avatar.WardrobeButton, Assembly-CSharp
+        m_MethodName: Open
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
 --- !u!224 &4503513072373126896
 RectTransform:
   m_ObjectHideFlags: 0
@@ -106434,6 +106463,7 @@ GameObject:
   - component: {fileID: 4503513072373126898}
   - component: {fileID: 4503513072373126899}
   - component: {fileID: 4503513072373126893}
+  - component: {fileID: 4503513072373126900}
   m_Layer: 5
   m_Name: Button_Selet
   m_TagString: Untagged
@@ -106479,6 +106509,18 @@ MonoBehaviour:
   m_FillOrigin: 0
   m_UseSpriteMesh: 0
   m_PixelsPerUnitMultiplier: 1
+--- !u!114 &4503513072373126900
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4503513072373126897}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d8ac7ee7009575b41b0f83cffdf90c73, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Avatar.WardrobeButton
 --- !u!224 &4503513072386242600
 RectTransform:
   m_ObjectHideFlags: 0
@@ -108858,7 +108900,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380.39258, y: -55.7279}
+  m_AnchoredPosition: {x: 412.5166, y: -55.7279}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &4570855538541576750
@@ -109683,7 +109725,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 2031.6074, y: -55.7279}
+  m_AnchoredPosition: {x: 2192.2275, y: -55.7279}
   m_SizeDelta: {x: 200, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &5102303847840075655

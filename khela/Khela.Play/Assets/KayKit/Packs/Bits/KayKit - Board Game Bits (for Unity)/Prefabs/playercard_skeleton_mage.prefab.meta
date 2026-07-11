@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 14074c09b18852948a95afa60dc80504
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/playercard_skeleton_mage.prefab
+  uploadId: 903436

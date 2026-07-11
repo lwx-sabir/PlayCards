@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 3cd333615c00ede4cae6c9fa038acca9
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_clubs_queen.prefab
+  uploadId: 903436

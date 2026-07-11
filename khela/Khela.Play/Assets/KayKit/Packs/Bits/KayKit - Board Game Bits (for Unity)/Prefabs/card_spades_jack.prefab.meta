@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 5b52010f3d9250c4f9628fba94a49c30
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_spades_jack.prefab
+  uploadId: 903436

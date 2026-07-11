@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a96a5aa0c5a3fbd4a81ba19af2a19339
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/coin_5_silver.prefab
+  uploadId: 903436

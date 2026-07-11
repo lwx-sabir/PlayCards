@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 137ca1e0b47d3794dba1952a3fb15b54
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_hearts_six.prefab
+  uploadId: 903436

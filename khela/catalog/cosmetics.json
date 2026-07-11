@@ -1,0 +1,50 @@
+{
+    "skus": [
+        {
+            "id": "top-open-jacket",
+            "type": "item",
+            "name": "Open Jacket",
+            "description": "wear a gown",
+            "slot": "Top",
+            "path": "Top/BSMC_Top_OpenJacket",
+            "colorMode": "palette",
+            "defaultColors": [
+                "#083643",
+                "#973640",
+                "#2C3D73"
+            ],
+            "palette": [
+                "#083643",
+                "#973640",
+                "#2C3D73",
+                "#1A1A1A",
+                "#F2F2F2",
+                "#8C4512",
+                "#BF1A1A",
+                "#F28C1A",
+                "#F2D933",
+                "#269933",
+                "#1A73D9",
+                "#0D338C",
+                "#4626A6",
+                "#F273A6",
+                "#808080"
+            ],
+            "pieces": [],
+            "character": {
+                "gender": "",
+                "baseId": "",
+                "body": [],
+                "face": [],
+                "mods": [],
+                "outfits": []
+            },
+            "price": 10.0,
+            "priceCurrency": "Kash",
+            "isStarter": false,
+            "exclusive": false,
+            "enabled": true,
+            "sortOrder": 0
+        }
+    ]
+}

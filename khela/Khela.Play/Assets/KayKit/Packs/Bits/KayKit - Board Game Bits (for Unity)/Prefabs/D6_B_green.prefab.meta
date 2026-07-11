@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 46f3314f298b52047a0eb8e642cef69d
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/D6_B_green.prefab
+  uploadId: 903436

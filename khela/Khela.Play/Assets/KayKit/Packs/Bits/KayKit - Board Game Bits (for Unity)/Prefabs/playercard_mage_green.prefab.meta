@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 111f6797b2ff0ee4787f4a80f7cf83b3
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/playercard_mage_green.prefab
+  uploadId: 903436

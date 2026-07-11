@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 95da15d9b46abcc4591a419c60b962d9
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Materials/Cards/card_clubs_nine.mat
+  uploadId: 903436

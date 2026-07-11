@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 24184ea61bee7ec4b9a0b6530a3b71ed
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/cube_copper.prefab
+  uploadId: 903436

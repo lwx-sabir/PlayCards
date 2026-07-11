@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: f6a2625e5a3bf2a478c7b7837c91f504
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/coin_5_gold.prefab
+  uploadId: 903436

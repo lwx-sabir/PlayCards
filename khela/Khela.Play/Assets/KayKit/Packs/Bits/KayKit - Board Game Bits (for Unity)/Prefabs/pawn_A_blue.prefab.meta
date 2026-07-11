@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 2681902b2a652c243a98065d11458d72
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/pawn_A_blue.prefab
+  uploadId: 903436

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 7d32a44689fa30f43bf1b4288ae271e1
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/chess_white_queen.prefab
+  uploadId: 903436

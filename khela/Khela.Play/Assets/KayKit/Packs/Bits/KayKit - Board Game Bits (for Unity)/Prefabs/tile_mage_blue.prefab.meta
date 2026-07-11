@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 0cf90ba9d221bfc49be6687674f902bc
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/tile_mage_blue.prefab
+  uploadId: 903436

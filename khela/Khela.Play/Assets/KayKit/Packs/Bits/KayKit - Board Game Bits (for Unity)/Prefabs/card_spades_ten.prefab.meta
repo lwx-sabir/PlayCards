@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 283167eb701e56c4ea0f1a35f7cdee93
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_spades_ten.prefab
+  uploadId: 903436

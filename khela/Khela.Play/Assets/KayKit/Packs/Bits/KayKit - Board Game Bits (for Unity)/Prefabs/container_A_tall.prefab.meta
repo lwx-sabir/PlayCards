@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a239bf4e9a8924646b3e9b9fb1b91075
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/container_A_tall.prefab
+  uploadId: 903436

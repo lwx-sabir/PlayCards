@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: d36689bf790b54f4cb4287b03aac1c50
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/chess_black_king.prefab
+  uploadId: 903436

@@ -34,6 +34,17 @@ namespace PlayCard.App
 #endif
         }
 
+        /// <summary>
+        /// Disable URP's runtime Rendering Debugger ("Display Stats" overlay). It ships enabled in every build and
+        /// is summoned by a 3-finger tap on mobile (Ctrl+Backspace on desktop) — players trigger it by accident.
+        /// Turning off <c>enableRuntimeUI</c> makes the gesture inert without affecting anything we render.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void DisableRenderingDebugger()
+        {
+            UnityEngine.Rendering.DebugManager.instance.enableRuntimeUI = false;
+        }
+
         // Start (not Awake): guarantees AccountManager.Awake has already run and set up Instance + auth.
         private void Start()
         {

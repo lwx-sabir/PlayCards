@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: cbc01e598adfe7a4ca67f632bdf6d02d
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_spades_eight.prefab
+  uploadId: 903436

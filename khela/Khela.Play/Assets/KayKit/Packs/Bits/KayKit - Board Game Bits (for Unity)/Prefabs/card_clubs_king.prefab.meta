@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: d0d12c105c049d146bb1f233bcdedc4b
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_clubs_king.prefab
+  uploadId: 903436

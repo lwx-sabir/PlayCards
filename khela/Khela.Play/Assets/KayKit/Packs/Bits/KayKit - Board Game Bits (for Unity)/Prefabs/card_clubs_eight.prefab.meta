@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: b622dfafefc2b4045ae0a5c7a26b14d4
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_clubs_eight.prefab
+  uploadId: 903436

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 0d58892abf6c7344587f8d917aa1598b
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_diamonds_king.prefab
+  uploadId: 903436

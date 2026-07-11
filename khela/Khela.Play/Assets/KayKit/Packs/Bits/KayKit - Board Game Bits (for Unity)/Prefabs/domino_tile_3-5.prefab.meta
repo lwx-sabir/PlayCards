@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 8a5d6e66fbb55ca47933b51f59be8b65
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/domino_tile_3-5.prefab
+  uploadId: 903436

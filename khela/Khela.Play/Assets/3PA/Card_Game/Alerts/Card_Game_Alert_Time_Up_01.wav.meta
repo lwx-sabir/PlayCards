@@ -1,0 +1,30 @@
+fileFormatVersion: 2
+guid: 4134b895597d544a283e2da9c19b338e
+AudioImporter:
+  externalObjects: {}
+  serializedVersion: 8
+  defaultSettings:
+    serializedVersion: 2
+    loadType: 1
+    sampleRateSetting: 0
+    sampleRateOverride: 0
+    compressionFormat: 0
+    quality: 1
+    conversionMode: 0
+    preloadAudioData: 0
+  platformSettingOverrides: {}
+  forceToMono: 0
+  normalize: 1
+  loadInBackground: 0
+  ambisonic: 0
+  3D: 1
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 112743
+  packageName: Card Game
+  packageVersion: 1.0
+  assetPath: Assets/Card_Game/Alerts/Card_Game_Alert_Time_Up_01.wav
+  uploadId: 243867

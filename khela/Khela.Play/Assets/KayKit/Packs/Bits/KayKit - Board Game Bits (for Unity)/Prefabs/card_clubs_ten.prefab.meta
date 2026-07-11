@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 5b3ea8fe286c0664a8593c1edb4e2adb
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_clubs_ten.prefab
+  uploadId: 903436

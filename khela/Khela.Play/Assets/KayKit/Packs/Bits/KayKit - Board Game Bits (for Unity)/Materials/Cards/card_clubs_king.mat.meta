@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: dc8d8b8bb4ee88947b5a913d16e00b76
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Materials/Cards/card_clubs_king.mat
+  uploadId: 903436

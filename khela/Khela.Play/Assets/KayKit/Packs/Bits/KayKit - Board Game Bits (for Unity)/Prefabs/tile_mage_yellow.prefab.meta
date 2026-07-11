@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 28f6671882e1b8049a8009d86e63504a
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/tile_mage_yellow.prefab
+  uploadId: 903436

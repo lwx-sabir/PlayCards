@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 5350ff0d66b4b4f41b82552b1cdba287
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/card_clubs_jack.prefab
+  uploadId: 903436

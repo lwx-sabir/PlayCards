@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 6fa5e0a97f717494a93d5cf8d586f534
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/tile_barbarian_green.prefab
+  uploadId: 903436

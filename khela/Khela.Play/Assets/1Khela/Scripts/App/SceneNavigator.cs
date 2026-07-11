@@ -13,6 +13,14 @@ namespace PlayCard.App
         public const string Home = "Home";
         public const string Lobby = "Lobby";
         public const string Table = "Table";
+        public const string Wardrobe = "Wardrobe";
+
+        /// <summary>Avatar customization (full edit — shapes/outfits/colours). Re-entrant from Home. Must be in Build Settings.</summary>
+        public static void GoToWardrobe()
+        {
+            KhelaAnalytics.LogScreen(Wardrobe);
+            SceneManager.LoadScene(Wardrobe);
+        }
 
         /// <summary>First-run avatar picker (shown only when the player has no saved avatar). Must be in Build Settings.</summary>
         public static void GoToOnboarding()

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: c72b3205e9852ea4c8e09a73525b2fa0
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/checker_black_double.prefab
+  uploadId: 903436

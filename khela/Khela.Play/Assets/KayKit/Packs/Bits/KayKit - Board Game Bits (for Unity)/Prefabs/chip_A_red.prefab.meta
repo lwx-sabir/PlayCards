@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 65f901d0fbd124640949ecb6a082d6a6
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/chip_A_red.prefab
+  uploadId: 903436

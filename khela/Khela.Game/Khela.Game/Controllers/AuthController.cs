@@ -1,12 +1,16 @@
 ﻿using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
+using Khela.Game.Services.Auth;
 using Khela.Game.Services.Chat;
 using Khela.Game.Services.Wallet;
 using Khela.Common.Auth;
-using Microsoft.AspNetCore.Identity; 
+using FirebaseAdmin.Auth;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace Khela.Game.Controllers
 {
@@ -21,6 +25,11 @@ namespace Khela.Game.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IWalletService _wallet;
         private readonly IChatModerator _moderator;
+        private readonly IFirebaseTokenVerifier _firebase;
+
+        // Stable LoginProvider we store every Firebase-brokered identity under. A Firebase user keeps ONE uid
+        // even after linking multiple providers, so one row per account keyed on the uid is all we need.
+        private const string FirebaseLoginProvider = "firebase";
 
         public AuthController(
             UserManager<ApplicationUser> userManager,
@@ -29,7 +38,8 @@ namespace Khela.Game.Controllers
             JwtSettings jwtSettings,
             AppDbContext dbContext,
             IWalletService wallet,
-            IChatModerator moderator)
+            IChatModerator moderator,
+            IFirebaseTokenVerifier firebase)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -38,6 +48,7 @@ namespace Khela.Game.Controllers
             _dbContext = dbContext;
             _wallet = wallet;
             _moderator = moderator;
+            _firebase = firebase;
         }
 
         // ================= Register =================
@@ -121,6 +132,161 @@ namespace Khela.Game.Controllers
             };
 
             return Ok(response);
+        }
+
+        // ================= Firebase social sign-in (single broker for Google/Facebook/Apple/guest) =================
+        /// <summary>
+        /// Verifies a Firebase ID token (any provider) and returns our app JWT. Idempotent find-or-create keyed
+        /// on the Firebase uid (stored in AspNetUserLogins). Supports guest -> social UPGRADE: if the caller is
+        /// already authenticated (Authorization header) or supplies a linked DeviceId, the social identity is
+        /// attached to that existing guest account so their chips carry over — no new account, no lost balance.
+        /// </summary>
+        [HttpPost("firebase")]
+        public async Task<IActionResult> FirebaseSignIn([FromBody] FirebaseAuthRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request?.IdToken))
+                return BadRequest(new { message = "Missing Firebase ID token." });
+
+            if (!_firebase.IsConfigured)
+                return StatusCode(503, new { message = "Social sign-in is not configured on the server." });
+
+            ExternalIdentity identity;
+            try
+            {
+                identity = await _firebase.VerifyAsync(request.IdToken, HttpContext.RequestAborted);
+            }
+            catch (FirebaseAuthException)
+            {
+                return Unauthorized(new { message = "Invalid or expired sign-in token." });
+            }
+
+            // 1) Already linked? -> log into that account.
+            var user = await _userManager.FindByLoginAsync(FirebaseLoginProvider, identity.Uid);
+
+            // 2) Not linked yet -> try to UPGRADE an existing guest account (caller's JWT, then DeviceId).
+            if (user == null)
+            {
+                user = await ResolveUpgradeTargetAsync(request.DeviceId);
+                if (user != null)
+                    await LinkFirebaseAsync(user, identity);   // guest -> social, in place
+            }
+
+            // 3) Still nothing -> adopt an existing account by verified email, else create fresh.
+            if (user == null)
+            {
+                if (identity.EmailVerified && !string.IsNullOrWhiteSpace(identity.Email))
+                {
+                    user = await _userManager.FindByEmailAsync(identity.Email);
+                    if (user != null)
+                        await LinkFirebaseAsync(user, identity);
+                }
+
+                if (user == null)
+                {
+                    user = await CreateExternalUserAsync(identity, request.CountryCode);
+                    if (user == null)
+                        return StatusCode(500, new { message = "Account creation failed." });
+                }
+            }
+
+            // Keep the provider-linked flags current regardless of which path we took.
+            await UpdateProviderFlagsAsync(user, identity.Provider);
+
+            await LinkDeviceToUserAsync(request.DeviceId, user.Id);
+            await EnsureProfileAndStarterAsync(user);
+
+            var token = _tokenService.GenerateToken(Guid.Parse(user.Id), user.UserName!);
+            return Ok(new AuthResponse
+            {
+                Token = token,
+                ExpiresIn = _jwtSettings.ExpiryMinutes * 60,
+                UserId = user.Id,
+                Username = user.UserName!
+            });
+        }
+
+        /// <summary>
+        /// Finds the existing guest account to upgrade: first the authenticated caller (Sub/NameIdentifier from
+        /// their current app JWT), then the account the DeviceId is registered to. Returns null for a brand-new
+        /// user, or when the resolved account already carries a Firebase login (don't double-link / hijack).
+        /// </summary>
+        private async Task<ApplicationUser> ResolveUpgradeTargetAsync(string deviceId)
+        {
+            var callerId = User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                           ?? User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            ApplicationUser candidate = null;
+            if (!string.IsNullOrWhiteSpace(callerId))
+                candidate = await _userManager.FindByIdAsync(callerId);
+
+            if (candidate == null && !string.IsNullOrWhiteSpace(deviceId) && Guid.TryParse(deviceId, out var devGuid))
+            {
+                var device = await _dbContext.DeviceRegistrations.FindAsync(devGuid);
+                if (device != null && !string.IsNullOrWhiteSpace(device.UserId))
+                    candidate = await _userManager.FindByIdAsync(device.UserId);
+            }
+
+            if (candidate == null) return null;
+
+            // Only upgrade an account that isn't already tied to a Firebase identity.
+            var logins = await _userManager.GetLoginsAsync(candidate);
+            if (logins.Any(l => l.LoginProvider == FirebaseLoginProvider)) return null;
+
+            return candidate;
+        }
+
+        private async Task LinkFirebaseAsync(ApplicationUser user, ExternalIdentity identity)
+        {
+            var info = new UserLoginInfo(FirebaseLoginProvider, identity.Uid, identity.Provider);
+            var result = await _userManager.AddLoginAsync(user, info);
+            if (!result.Succeeded)
+            {
+                var errors = string.Join("; ", result.Errors.Select(e => e.Description));
+                Console.Error.WriteLine($"[AuthController] AddLogin(firebase) failed for {user.Id}: {errors}");
+            }
+        }
+
+        private async Task<ApplicationUser> CreateExternalUserAsync(ExternalIdentity identity, string countryCode)
+        {
+            // Unique, deterministic-from-uid username; email is optional for social accounts, so synthesise a
+            // unique placeholder when the provider gives none (RequireUniqueEmail rejects duplicate nulls too).
+            var userName = "g_" + identity.Uid.Substring(0, Math.Min(20, identity.Uid.Length));
+            var email = !string.IsNullOrWhiteSpace(identity.Email)
+                ? identity.Email
+                : $"{identity.Uid}@firebase.khela.game";
+
+            var user = new ApplicationUser
+            {
+                UserName = userName,
+                Email = email,
+                EmailConfirmed = identity.EmailVerified,
+                CountryCode = string.IsNullOrWhiteSpace(countryCode) ? "bd" : countryCode,
+                AccountType = (int)AccountType.Player,
+                CreateDate = DateTime.UtcNow
+            };
+
+            var created = await _userManager.CreateAsync(user);   // no password: external-login-only account
+            if (!created.Succeeded)
+            {
+                var errors = string.Join("; ", created.Errors.Select(e => e.Description));
+                Console.Error.WriteLine($"[AuthController] external user creation failed ({identity.Uid}): {errors}");
+                return null;
+            }
+
+            await LinkFirebaseAsync(user, identity);
+            return user;
+        }
+
+        private async Task UpdateProviderFlagsAsync(ApplicationUser user, string provider)
+        {
+            var isGoogle = provider == "google.com";
+            var isFacebook = provider == "facebook.com";
+            if (!isGoogle && !isFacebook) return;
+
+            var changed = false;
+            if (isGoogle && user.IsGoogleLinked != true) { user.IsGoogleLinked = true; changed = true; }
+            if (isFacebook && user.IsFacebookLinked != true) { user.IsFacebookLinked = true; changed = true; }
+            if (changed) await _userManager.UpdateAsync(user);
         }
 
         [HttpPost("forgot-password")]

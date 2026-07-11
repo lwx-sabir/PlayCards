@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 35669c1fca11d7b44981b603e3c2c575
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/cube_gold.prefab
+  uploadId: 903436

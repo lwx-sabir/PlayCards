@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 2d936c0882990d946bc08a8cc7c9a609
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/tile_mage_red.prefab
+  uploadId: 903436

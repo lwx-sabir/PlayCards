@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 0eb3e457d0b6b07408c1e28c151b406e
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Materials/Dice/dice_yellow.mat
+  uploadId: 903436

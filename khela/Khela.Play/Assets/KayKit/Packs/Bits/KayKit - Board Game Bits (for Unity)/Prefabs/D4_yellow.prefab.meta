@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 719ca128f031f8c449f1a3931a2728e8
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/D4_yellow.prefab
+  uploadId: 903436

@@ -9,7 +9,8 @@ namespace Khela.Game.Database.Models
         Blackjack = 1,
         PokerHoldem = 2,
         PokerOmaha = 3,
-        Roulette = 4
+        Roulette = 4,
+        ThreeCardPoker = 5
     }
 
     public enum HandStatus

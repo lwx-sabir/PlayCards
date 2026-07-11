@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a1ee592adfd6df04ea0b43755c5f7d03
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/chess_black_bishop.prefab
+  uploadId: 903436

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 7eca354c414d8b24080fd2e07011413f
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/playercard_rogue_yellow.prefab
+  uploadId: 903436

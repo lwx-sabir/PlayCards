@@ -9,8 +9,16 @@ using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddControllersWithViews();
+// Add services to the container. This dashboard serves ONLY its own controllers: Khela.Game is referenced for its
+// models/services, but its API controllers must NOT be routed here — they pull game-only services this app doesn't
+// register, and a same-named controller (e.g. Cosmetics) collides with the dashboard's. Drop the game controller part.
+builder.Services.AddControllersWithViews()
+    .ConfigureApplicationPartManager(apm =>
+    {
+        var gamePart = apm.ApplicationParts
+            .FirstOrDefault(p => string.Equals(p.Name, "Khela.Game", StringComparison.OrdinalIgnoreCase));
+        if (gamePart != null) apm.ApplicationParts.Remove(gamePart);
+    });
 
 // --- Shared Khela MySQL: reuse the game backend's AppDbContext so this dashboard reads/writes the SAME database
 //     (profiles, wallets, ledger). Any money/wallet write from here MUST keep the real-money rigor: go through

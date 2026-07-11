@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: c672fff7cf79b6b4c9287e0ac4d9e9db
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/cube_red.prefab
+  uploadId: 903436

@@ -42,6 +42,17 @@ namespace PlayCard.Avatar
         public string CurrentBaseId { get; private set; }
         public bool IsBusy { get; private set; }
 
+        /// <summary>True after the last load IFF the player's REAL saved avatar was applied. False when we fell back to a
+        /// base (none saved, or it couldn't be built). Guards against clobbering a real avatar with a fallback.</summary>
+        public bool LoadedSavedAvatar { get; private set; }
+
+        /// <summary>True when the last load found a stored avatar on the server (Mine had a BaseId), whether or not it applied.</summary>
+        public bool HadStoredAvatar { get; private set; }
+
+        /// <summary>Saving now would overwrite a REAL stored avatar with a fallback base (i.e. its load failed). The wardrobe
+        /// refuses this — a load failure must never destroy the player's saved avatar.</summary>
+        public bool SaveWouldClobber => HadStoredAvatar && !LoadedSavedAvatar;
+
         private void Awake()
         {
             if (outfitSystem == null) outfitSystem = GetComponentInChildren<OutfitSystem>(true);
@@ -50,6 +61,10 @@ namespace PlayCard.Avatar
         private AvatarConfig.GenderProfile Profile => config.Profile(CurrentGender);
 
         // ---- base / gender selection ----
+
+        /// <summary>The genders the config offers bases for (roster-derived) — for a gender toggle.</summary>
+        public List<Gender> Genders()
+            => config != null ? config.roster.Select(b => b.gender).Distinct().ToList() : new List<Gender>();
 
         /// <summary>The bases the player may choose for a gender (from the config roster).</summary>
         public List<BaseChoice> BasesFor(Gender g)
@@ -63,6 +78,7 @@ namespace PlayCard.Avatar
             var baseData = AvatarService.LoadBaseData(baseId);
             if (baseData == null) return;
 
+            LoadedSavedAvatar = false;   // a base/fallback load is never the player's saved avatar
             CurrentGender = gender;
             CurrentBaseId = baseId;
 
@@ -82,10 +98,22 @@ namespace PlayCard.Avatar
         public async Task LoadSavedOrBaseAsync(Gender fallbackGender, string fallbackBaseId)
         {
             var mine = AvatarService.Instance.Mine ?? await AvatarService.Instance.LoadMineAsync();
-            if (mine == null || string.IsNullOrEmpty(mine.BaseId)) { await LoadBaseAsync(fallbackGender, fallbackBaseId); return; }
+            HadStoredAvatar = mine != null && !string.IsNullOrEmpty(mine.BaseId);
+            Debug.Log($"[AvatarCreator] LoadSavedOrBase → Mine = {(mine == null ? "NULL (not seeded — did you Play from Boot?)" : $"gender={mine.Gender} base={mine.BaseId} outfits={mine.Outfits?.Count ?? 0}")}");
+            if (!HadStoredAvatar)
+            {
+                Debug.LogWarning($"[AvatarCreator] no saved avatar → falling back to {fallbackBaseId} (first-run: saving here creates the avatar)");
+                await LoadBaseAsync(fallbackGender, fallbackBaseId); return;   // LoadedSavedAvatar=false, HadStoredAvatar=false → save allowed
+            }
 
             var data = AvatarService.BuildCharacter(mine);
-            if (data == null) { await LoadBaseAsync(fallbackGender, fallbackBaseId); return; }
+            if (data == null)
+            {
+                // We HAVE a stored avatar but couldn't build it — falling back would let a Save overwrite it with the base.
+                // Show the base so the screen isn't empty, but SaveWouldClobber stays true so Save is refused.
+                Debug.LogError($"[AvatarCreator] BuildCharacter('{mine.BaseId}') returned null — showing fallback but BLOCKING save to protect the stored avatar.");
+                await LoadBaseAsync(fallbackGender, fallbackBaseId); return;   // LoadedSavedAvatar=false, HadStoredAvatar=true → save blocked
+            }
 
             CurrentGender = string.Equals(mine.Gender, "Female", StringComparison.OrdinalIgnoreCase) ? Gender.Female : Gender.Male;
             CurrentBaseId = mine.BaseId;
@@ -95,6 +123,7 @@ namespace PlayCard.Avatar
             {
                 await BMAC_SaveSystem.LoadCharacter(outfitSystem, data);
                 EnforceLimits();
+                LoadedSavedAvatar = true;   // the real saved avatar is on the rig — safe to overwrite on save
             }
             catch (Exception e) { Debug.LogError($"[AvatarCreator] saved load failed: {e.Message}"); }
             finally { IsBusy = false; }
@@ -115,7 +144,7 @@ namespace PlayCard.Avatar
             switch (s.kind)
             {
                 case ShapeKind.Blendshape:
-                    return outfitSystem.GetShape(s.key);
+                    return outfitSystem.GetShapeValue(s.key);   // body THEN face dict (GetShape is body-only → -10000 for Face keys)
                 case ShapeKind.BoneUniform:
                     return Mod(s.key, out var m) ? m.GetData().scaleValue : s.def;
                 case ShapeKind.BoneAxis:
@@ -188,13 +217,16 @@ namespace PlayCard.Avatar
 
         // ---- outfits / colours ----
 
-        /// <summary>Attach an outfit part by Resources path (e.g. "Top/BSMC_Top_Tee"); BoZo swaps same-slot + re-merges.</summary>
+        /// <summary>Attach an outfit part by Resources path (e.g. "Top/BSMC_Top_Tee"). BoZo swaps same-slot + re-merges.</summary>
         public void SetOutfit(string resourcesPath)
         {
             if (outfitSystem == null || string.IsNullOrEmpty(resourcesPath)) return;
-            var outfit = Resources.Load<Outfit>(resourcesPath);
-            if (outfit == null) { Debug.LogWarning($"[AvatarCreator] outfit not found: {resourcesPath}"); return; }
-            outfitSystem.AttachOutfit(outfit);
+            var prefab = Resources.Load<Outfit>(resourcesPath);
+            if (prefab == null) { Debug.LogWarning($"[AvatarCreator] outfit not found: {resourcesPath}"); return; }
+            // BoZo's AttachOutfit REPARENTS the object you pass — passing the Resources prefab corrupts/errors. Match
+            // BoZo's own creator: instantiate under the rig; the Outfit's Start() self-attaches (GetComponentInParent →
+            // AttachOutfit(this)) and merges.
+            Instantiate(prefab, outfitSystem.transform);
         }
 
         /// <summary>Remove whatever occupies a slot (OutfitType name, e.g. "Hat").</summary>
@@ -203,14 +235,109 @@ namespace PlayCard.Avatar
             if (outfitSystem != null && !string.IsNullOrEmpty(slot)) outfitSystem.RemoveOutfit(slot);
         }
 
-        /// <summary>Recolour a slot's channel (1–9) — pass a curated palette swatch.</summary>
+        /// <summary>Recolour a slot's channel (1-indexed, 1–9) — pass a curated palette swatch.</summary>
         public void SetOutfitColor(string slot, int channel, Color color)
         {
             outfitSystem?.GetOutfit(slot)?.SetColor(color, channel);
         }
 
+        // ---- outfit browsing (curated: config whitelist gates what shows) ----
+
+        /// <summary>One browsable outfit part. <see cref="Path"/> is the Resources key "slot/name" (== the persisted
+        /// OutfitData.outfit), so it's the whitelist id, the equip arg, and the save key all at once.</summary>
+        public readonly struct OutfitOption
+        {
+            public readonly string Path;
+            public readonly string Label;
+            public readonly Sprite Icon;
+            public readonly string Slot;
+            public OutfitOption(string path, string label, Sprite icon, string slot)
+            { Path = path; Label = label; Icon = icon; Slot = slot; }
+        }
+
+        private Dictionary<string, List<OutfitOption>> _partsCache;
+
+        // Build the full part index once (Resources.LoadAll is expensive; results never change at runtime).
+        private void EnsureParts()
+        {
+            if (_partsCache != null) return;
+            _partsCache = new Dictionary<string, List<OutfitOption>>();
+
+            // MOBILE PATH: read the pre-built index (paths + icon sprites only — NO meshes, NO Resources.LoadAll).
+            if (config != null && config.outfitIndex != null && config.outfitIndex.entries.Count > 0)
+            {
+                foreach (var e in config.outfitIndex.entries)
+                {
+                    if (e == null || string.IsNullOrEmpty(e.slot) || string.IsNullOrEmpty(e.path)) continue;
+                    if (!_partsCache.TryGetValue(e.slot, out var list)) { list = new List<OutfitOption>(); _partsCache[e.slot] = list; }
+                    if (list.Any(o => o.Path == e.path)) continue;
+                    list.Add(new OutfitOption(e.path, string.IsNullOrEmpty(e.label) ? e.path : e.label, e.icon, e.slot));
+                }
+                return;
+            }
+
+            // FALLBACK (editor convenience only): scan Resources — HEAVY, loads every outfit mesh into RAM. Never ship this.
+            Debug.LogWarning("[AvatarCreator] No OutfitIndex on the AvatarConfig — scanning Resources (loads every outfit mesh, phone-hostile). Run Khela ▸ Avatar ▸ Build Outfit Index.");
+            foreach (var outfit in Resources.LoadAll<Outfit>(""))
+            {
+                if (outfit == null || !outfit.showCharacterCreator || outfit.Type == null || string.IsNullOrEmpty(outfit.Type.name)) continue;
+                string slot = outfit.Type.name;
+                string path = slot + "/" + outfit.name;
+                if (!_partsCache.TryGetValue(slot, out var list)) { list = new List<OutfitOption>(); _partsCache[slot] = list; }
+                if (list.Any(o => o.Path == path)) continue;
+                string label = string.IsNullOrEmpty(outfit.OutfitName) ? outfit.name : outfit.OutfitName;
+                list.Add(new OutfitOption(path, label, outfit.OutfitIcon, slot));
+            }
+        }
+
+        /// <summary>Slots to show, in config order (or all discovered slots if none configured). Empty if no config.</summary>
+        public List<string> Slots()
+        {
+            EnsureParts();
+            if (config != null && config.slots != null && config.slots.Count > 0)
+                return config.slots.Where(s => s != null && _partsCache.ContainsKey(s.slot)).Select(s => s.slot).ToList();
+            return _partsCache.Keys.OrderBy(k => k).ToList();
+        }
+
+        /// <summary>Curated parts for a slot — discovered parts gated by the config whitelist (empty ⇒ all). Never null.</summary>
+        public List<OutfitOption> PartsForSlot(string slot)
+        {
+            EnsureParts();
+            if (config != null && !config.SlotShown(slot)) return new List<OutfitOption>();
+            if (!_partsCache.TryGetValue(slot, out var all)) return new List<OutfitOption>();
+            if (config == null) return new List<OutfitOption>(all);
+            return all.Where(o => config.PartAllowed(slot, o.Path)).ToList();
+        }
+
+        /// <summary>The equipped part path ("slot/name") in a slot, or null if empty/none — for tile highlight.
+        /// Null/empty slot returns null (BoZo's GetOutfit throws on a null key).</summary>
+        public string CurrentPartPath(string slot)
+            => string.IsNullOrEmpty(slot) ? null
+             : outfitSystem?.GetOutfit(slot) is { } o ? o.GetOutfitData().outfit : null;
+
+        // ---- colour palettes (curated; route target → equipped outfit channel) ----
+
         /// <summary>Curated palettes (skin/hair/…) for the UI to render as swatches.</summary>
         public List<AvatarConfig.ColorPalette> Palettes => config != null ? config.palettes : new List<AvatarConfig.ColorPalette>();
+
+        /// <summary>Apply a palette swatch to its configured (slot, channel) + any linkedSlots with the same swatch
+        /// (e.g. skin recolours Body AND Head). No-op for slots that are empty. Silent.</summary>
+        public void ApplyPalette(AvatarConfig.ColorPalette palette, Color swatch)
+        {
+            if (palette == null) return;
+            SetOutfitColor(palette.slot, palette.channel, swatch);
+            if (palette.linkedSlots != null)
+                foreach (var linked in palette.linkedSlots)
+                    SetOutfitColor(linked, palette.channel, swatch);
+        }
+
+        /// <summary>Current colour of a palette's target (for swatch highlight), or null if that slot is empty.</summary>
+        public Color? CurrentPaletteColor(AvatarConfig.ColorPalette palette)
+            => palette != null && outfitSystem?.GetOutfit(palette.slot) is { } o ? o.GetColor(palette.channel) : (Color?)null;
+
+        /// <summary>The equipped outfit's REAL colour-channel count for a slot (0 if empty) — clamp the swatch UI to this.</summary>
+        public int ChannelCount(string slot)
+            => outfitSystem?.GetOutfit(slot) is { } o ? (o.ColorChannels != null ? o.ColorChannels.Length : 0) : 0;
 
         // ---- save ----
 
@@ -218,6 +345,11 @@ namespace PlayCard.Avatar
         public async Task<bool> SaveAsync()
         {
             if (outfitSystem == null) return false;
+            if (SaveWouldClobber)   // stored avatar failed to load — refuse rather than overwrite it with the fallback base
+            {
+                Debug.LogError("[AvatarCreator] SaveAsync refused: your saved avatar didn't load, so saving now would overwrite it with a fallback base.");
+                return false;
+            }
             var data = BMAC_SaveSystem.GetCharacterData(outfitSystem);
             var avatar = AvatarMapper.FromCharacter(data, CurrentGender.ToString(), CurrentBaseId);
             return await AvatarService.Instance.SaveAsync(avatar);

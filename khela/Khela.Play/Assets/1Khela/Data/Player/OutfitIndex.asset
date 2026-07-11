@@ -1,0 +1,491 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c6eda573f7b10a14c9afd65a0ceddf0d, type: 3}
+  m_Name: OutfitIndex
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Avatar.OutfitIndex
+  entries:
+  - path: Body/Body_BasicBody
+    slot: Body
+    label: Basic Body
+    icon: {fileID: 21300000, guid: 52e53169fd6509d4c9d2054d504b0bcb, type: 3}
+  - path: Body/Body_StrongBody
+    slot: Body
+    label: Basic Body
+    icon: {fileID: 21300000, guid: 59d3f722bf0923b4283cf076b25b07ee, type: 3}
+  - path: Bottom/BMSC_Bottom_StripedPants
+    slot: Bottom
+    label: Stripes Slacks
+    icon: {fileID: 21300000, guid: 2a93dcccb22f04249b9c6684d4a71953, type: 3}
+  - path: Bottom/BMSC_Bottom_YogaPants
+    slot: Bottom
+    label: Yoga Pants
+    icon: {fileID: 21300000, guid: fd8774e3019aeda4a8cec01b520afed6, type: 3}
+  - path: Bottom/BSMC_Bottom_BaggyPantsAnkles
+    slot: Bottom
+    label: BaggyPantsAnkles
+    icon: {fileID: 21300000, guid: 1de635d7923381f45ba3d6c088d7e9f2, type: 3}
+  - path: Bottom/BSMC_Bottom_BaggyPantsLong
+    slot: Bottom
+    label: BaggyPantsLong
+    icon: {fileID: 21300000, guid: 47ff13520c1a54d4eba5a84eb7347c20, type: 3}
+  - path: Bottom/BSMC_Bottom_BaggyPantsShort
+    slot: Bottom
+    label: BaggyPantsShort
+    icon: {fileID: 21300000, guid: 254653713af54144d8cad45085af3bc9, type: 3}
+  - path: Bottom/BSMC_Bottom_BigShorts
+    slot: Bottom
+    label: BigShorts
+    icon: {fileID: 21300000, guid: 4394f53b84cb6934badd7376495a68c3, type: 3}
+  - path: Bottom/BSMC_Bottom_CargoPants
+    slot: Bottom
+    label: CargoPants
+    icon: {fileID: 21300000, guid: 5c7f09b391a759f4aa07f4aa7037ce95, type: 3}
+  - path: Bottom/BSMC_Bottom_CargoPantsShort
+    slot: Bottom
+    label: CargoPantsShort
+    icon: {fileID: 21300000, guid: d53ca1cb09950094e96dba18c81d8726, type: 3}
+  - path: Bottom/BSMC_Bottom_DressPants
+    slot: Bottom
+    label: DressPants
+    icon: {fileID: 21300000, guid: 88b68d81ea093f14183adf8ff7a4791d, type: 3}
+  - path: Bottom/BSMC_Bottom_Jeans
+    slot: Bottom
+    label: Jeans
+    icon: {fileID: 21300000, guid: c8b7372d5641fba4c832de171e14725e, type: 3}
+  - path: Bottom/BSMC_Bottom_JeanSkirt
+    slot: Bottom
+    label: Jean Skirt
+    icon: {fileID: 21300000, guid: 898511ed1a03e9e458a87c7aae584a9e, type: 3}
+  - path: Bottom/BSMC_Bottom_LooseJeans
+    slot: Bottom
+    label: LooseJeans
+    icon: {fileID: 21300000, guid: 7d2fcd23883c0a044a5fc4a053ada042, type: 3}
+  - path: Bottom/BSMC_Bottom_PleatedSkirt
+    slot: Bottom
+    label: PleatedSkirt
+    icon: {fileID: 21300000, guid: 38c62507222ba694a9e29308809afea9, type: 3}
+  - path: Bottom/BSMC_Bottom_Shorts
+    slot: Bottom
+    label: Shorts
+    icon: {fileID: 21300000, guid: bb5e223aa94cf3041980e51b78bd0fc1, type: 3}
+  - path: Bottom/BSMC_Bottom_ShortShorts
+    slot: Bottom
+    label: ShortShorts
+    icon: {fileID: 21300000, guid: 8ea4eecf4bce50d47a27607cfa5a3580, type: 3}
+  - path: Bottom/BSMC_Bottom_Skirt
+    slot: Bottom
+    label: Skirt
+    icon: {fileID: 21300000, guid: c89049b305b71594d834c4acb94b1c51, type: 3}
+  - path: Eyes/Eyes_BasicIris
+    slot: Eyes
+    label: Basic Iris
+    icon: {fileID: 21300000, guid: b1941b48d9167fd418349389a48644ee, type: 3}
+  - path: FaceDetails/FaceDetail_Freakles
+    slot: FaceDetails
+    label: Freckles
+    icon: {fileID: 21300000, guid: 679cd71a929a9c34c86c9c9820a71e54, type: 3}
+  - path: FaceDetails/FaceDetail_FullFreakles
+    slot: FaceDetails
+    label: Freckles
+    icon: {fileID: 21300000, guid: 1b4ee6bd11913004f9596806e9a577dd, type: 3}
+  - path: Feet/BMSC_Feet_SportsShoes
+    slot: Feet
+    label: BMSC_Feet_SportsShoes
+    icon: {fileID: 21300000, guid: ee5e1ec406cd5b245972336b50d11957, type: 3}
+  - path: Feet/BSMC_Feet_BigBoots
+    slot: Feet
+    label: BSMC_Feet_BigBoots
+    icon: {fileID: 21300000, guid: 8dc91a06e8c8afe4d87678461e1001f6, type: 3}
+  - path: Feet/BSMC_Feet_ComfyShoes
+    slot: Feet
+    label: BSMC_Feet_ComfyShoes
+    icon: {fileID: 21300000, guid: b0649d3a703665e4e8a49eb91995fd29, type: 3}
+  - path: Feet/BSMC_Feet_CoolShoes
+    slot: Feet
+    label: BSMC_Feet_CoolShoes
+    icon: {fileID: 21300000, guid: 6fbc7b51f6437d148bae7181def960f5, type: 3}
+  - path: Feet/BSMC_Feet_OfficeShoes
+    slot: Feet
+    label: BSMC_Feet_OfficeShoes
+    icon: {fileID: 21300000, guid: 4d3d45dc73f12c34e80ecfdf0935768e, type: 3}
+  - path: Feet/BSMC_Feet_Sandals
+    slot: Feet
+    label: BSMC_Feet_Sandals
+    icon: {fileID: 21300000, guid: 9196715e92c11754b9d379a87a039f4b, type: 3}
+  - path: Feet/BSMC_Feet_SchoolShoes
+    slot: Feet
+    label: BSMC_Feet_SchoolShoes
+    icon: {fileID: 21300000, guid: 9bd6c21c8b1b34145b28ab350c1b1fe7, type: 3}
+  - path: Feet/BSMC_Feet_ShortBoots
+    slot: Feet
+    label: BSMC_Feet_ShortBoots
+    icon: {fileID: 21300000, guid: 174912bc9fc483044bc8b635f8f3f075, type: 3}
+  - path: Feet/BSMC_Feet_ShowerSandal
+    slot: Feet
+    label: BSMC_Feet_ShowerSandal
+    icon: {fileID: 21300000, guid: bac16c31024f48f45acb9d987a073a09, type: 3}
+  - path: Feet/BSMC_Feet_SlipOns
+    slot: Feet
+    label: BSMC_Feet_SlipOns
+    icon: {fileID: 21300000, guid: 93dd6c40aee2cc44bb68fec727a28ec7, type: 3}
+  - path: Feet/BSMC_Feet_StreetShoes
+    slot: Feet
+    label: BSMC_Feet_StreetShoes
+    icon: {fileID: 21300000, guid: fdcf9fed3bec6484fa6e96f8a81e2ea4, type: 3}
+  - path: Feet/BSMC_Feet_WorkBoots
+    slot: Feet
+    label: BSMC_Feet_WorkBoots
+    icon: {fileID: 21300000, guid: 3205ddb4e5d468147b3c9f68194a3aee, type: 3}
+  - path: Feet/Feet_HighLaceShoe
+    slot: Feet
+    label: High Lace Shoes
+    icon: {fileID: 21300000, guid: 21f40b226ac90984d9e09fd874918bbe, type: 3}
+  - path: Gloves/BSMC_Gloves_Fingerless
+    slot: Gloves
+    label: BSMC_Gloves_Fingerless
+    icon: {fileID: 21300000, guid: 2e0a599185186064198d9274875cbfd2, type: 3}
+  - path: Gloves/BSMC_Gloves_WorkGloves
+    slot: Gloves
+    label: BSMC_Gloves_WorkGloves
+    icon: {fileID: 21300000, guid: 0890ae8fe3415ed46a3f5f214ab41037, type: 3}
+  - path: Gloves/Gloves_ArmWarmers
+    slot: Gloves
+    label: Arm Warmers
+    icon: {fileID: 21300000, guid: 549b3dc104565cd46beaaf52ea838a8f, type: 3}
+  - path: HairBack/BSMC_HairBack_Buzzed
+    slot: HairBack
+    label: Buzzed
+    icon: {fileID: 21300000, guid: f7f80bb4cd964454d9045826eea004c9, type: 3}
+  - path: HairBack/BSMC_HairBack_DreadBack
+    slot: HairBack
+    label: Dread Back
+    icon: {fileID: 21300000, guid: 1782c6663b78a194d98d77728ccc664e, type: 3}
+  - path: HairBack/BSMC_HairBack_Flare
+    slot: HairBack
+    label: Flare
+    icon: {fileID: 21300000, guid: b8961005134f28c46806de35ad300600, type: 3}
+  - path: HairBack/BSMC_HairBack_LongDreads
+    slot: HairBack
+    label: Long Dreads
+    icon: {fileID: 21300000, guid: d0672dde13fbb564c8c709560d598185, type: 3}
+  - path: HairBack/BSMC_HairBack_LongStreight
+    slot: HairBack
+    label: Long Streight
+    icon: {fileID: 21300000, guid: ba60fb51f01987547808c38ec800b798, type: 3}
+  - path: HairBack/BSMC_HairBack_PonyTailLong
+    slot: HairBack
+    label: Pony Tail Long
+    icon: {fileID: 21300000, guid: e8735bdd98f0d7b47bd03b2459bbbc34, type: 3}
+  - path: HairBack/BSMC_HairBack_PonyTailShort
+    slot: HairBack
+    label: Pony Tail Short
+    icon: {fileID: 21300000, guid: 128897570eee9df41ba9c31ace2aac2b, type: 3}
+  - path: HairBack/BSMC_HairBack_Punk
+    slot: HairBack
+    label: Punk
+    icon: {fileID: 21300000, guid: c2f45a15c36879e44b56d40ba803f86e, type: 3}
+  - path: HairBack/BSMC_HairBack_Scrappy
+    slot: HairBack
+    label: Scrappy
+    icon: {fileID: 21300000, guid: c6636bc5dd60a20498adc391c794985d, type: 3}
+  - path: HairBack/BSMC_HairBack_Short
+    slot: HairBack
+    label: Short
+    icon: {fileID: 21300000, guid: 43f9914c30deec140b1fccc4ca2df4ac, type: 3}
+  - path: HairBack/BSMC_HairBack_ShortBob
+    slot: HairBack
+    label: Short Bob
+    icon: {fileID: 21300000, guid: 08521ca48effa4c4d801cbcaa5118888, type: 3}
+  - path: HairBack/BSMC_HairBack_TwinTailLong
+    slot: HairBack
+    label: Twin Tail Long
+    icon: {fileID: 21300000, guid: f8d1e0035a829654eaa74d6645e7f2be, type: 3}
+  - path: HairBack/BSMC_HairBack_TwinTailShort
+    slot: HairBack
+    label: Twin Tail Short
+    icon: {fileID: 21300000, guid: 85ecc81fa749ac34c90cf9ebd9e4ecd2, type: 3}
+  - path: HairBack/BSMC_HairBack_Wild
+    slot: HairBack
+    label: Wild
+    icon: {fileID: 21300000, guid: 55f27edd5ba41384384fd8984e22e1da, type: 3}
+  - path: HairBack/BSMC_HairBack_WildTail
+    slot: HairBack
+    label: Wild Tail
+    icon: {fileID: 21300000, guid: 04bf3c13ec50a1240945864bfe36528c, type: 3}
+  - path: HairFront/BSMC_HairFront_BangSideFlicks
+    slot: HairFront
+    label: Bangs Side Flicks
+    icon: {fileID: 21300000, guid: 124dbad47a7c1704a8323724c6c2c69c, type: 3}
+  - path: HairFront/BSMC_HairFront_Fohawk
+    slot: HairFront
+    label: Fohawk
+    icon: {fileID: 21300000, guid: dd984c0990453fe47a2001d1620f2d48, type: 3}
+  - path: HairFront/BSMC_HairFront_HangingDreads
+    slot: HairFront
+    label: Hanging Dreads
+    icon: {fileID: 21300000, guid: b1bf80063a34b8049a21dfcae0b4867d, type: 3}
+  - path: HairFront/BSMC_HairFront_Hime
+    slot: HairFront
+    label: Hime
+    icon: {fileID: 21300000, guid: 5c6908fff06bd4747a159906233a074d, type: 3}
+  - path: HairFront/BSMC_HairFront_LongSweeps
+    slot: HairFront
+    label: Long Sweeps
+    icon: {fileID: 21300000, guid: 2e7ff292138acc0469fc4cdc56582f03, type: 3}
+  - path: HairFront/BSMC_HairFront_Messy
+    slot: HairFront
+    label: Messy
+    icon: {fileID: 21300000, guid: f255c081c15236f41ad503073f547acd, type: 3}
+  - path: HairFront/BSMC_HairFront_QuicklyHair
+    slot: HairFront
+    label: Quickly Hair
+    icon: {fileID: 21300000, guid: 573fbc0b447f90f4a9a55c3516f6fbf2, type: 3}
+  - path: HairFront/BSMC_HairFront_SweaptBack
+    slot: HairFront
+    label: Sweapt Back
+    icon: {fileID: 21300000, guid: b7ea5111d43937a43a1e7aa48b15e0c9, type: 3}
+  - path: HairFront/BSMC_HairFront_SweaptDreads
+    slot: HairFront
+    label: Sweapt Dreads
+    icon: {fileID: 21300000, guid: 50d1d48b02ea35342957e6b39043902b, type: 3}
+  - path: HairFront/BSMC_HairFront_WolfCut
+    slot: HairFront
+    label: Wolf Cut
+    icon: {fileID: 21300000, guid: b509820f036979c48bc51cfea9aec020, type: 3}
+  - path: Hat/BSMC_Hat_Ballcap
+    slot: Hat
+    label: Ball Cap
+    icon: {fileID: 21300000, guid: 95f05607e0230124fb18f00729bda05c, type: 3}
+  - path: Hat/BSMC_Hat_Beanie
+    slot: Hat
+    label: Beanie
+    icon: {fileID: 21300000, guid: 5b2fc9316061c4746a9dd44da68f228d, type: 3}
+  - path: Hat/BSMC_Hat_Bucket
+    slot: Hat
+    label: Bucket Hat
+    icon: {fileID: 21300000, guid: b6b14e0071770f94ba0cfa5764c41757, type: 3}
+  - path: Hat/BSMC_Hat_Fedora
+    slot: Hat
+    label: 'Fedora '
+    icon: {fileID: 21300000, guid: dcf4dd75a0ff14c4c8cdfd8a47be45ed, type: 3}
+  - path: Hat/BSMC_Hat_SunHat
+    slot: Hat
+    label: Sun Hat
+    icon: {fileID: 21300000, guid: eea96b1921e115f47bd2389740fa70a6, type: 3}
+  - path: Head/Head_BasicHead
+    slot: Head
+    label: Basic Head
+    icon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  - path: Head/Head_SharpHead
+    slot: Head
+    label: Basic Head
+    icon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  - path: Head/Head_Stern
+    slot: Head
+    label: Basic Head
+    icon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  - path: HeadAcc/BSMC_Head_AlienAttena
+    slot: HeadAcc
+    label: Alien Attena
+    icon: {fileID: 21300000, guid: 56106f5c2290a7e409dfa9e432747797, type: 3}
+  - path: HeadAcc/BSMC_Head_Horns
+    slot: HeadAcc
+    label: Horns
+    icon: {fileID: 21300000, guid: 296607660c0950c49b8f70ee74e82864, type: 3}
+  - path: Leggings/Leggings_Stocking
+    slot: Leggings
+    label: Stocking
+    icon: {fileID: 0}
+  - path: LowerFace/BSMC_LowerFace_BushyBeard
+    slot: LowerFace
+    label: Bushy Beard
+    icon: {fileID: 21300000, guid: f2bd8de822d17e64e966f60613bada8f, type: 3}
+  - path: LowerFace/BSMC_LowerFace_ChinGoatee
+    slot: LowerFace
+    label: Chin Goatee
+    icon: {fileID: 21300000, guid: d2f2b6f0f472f784892909887a848ade, type: 3}
+  - path: LowerFace/BSMC_LowerFace_FullBeard
+    slot: LowerFace
+    label: Full Beard
+    icon: {fileID: 21300000, guid: e49d4a00868d6504d940db0d577d9ec1, type: 3}
+  - path: LowerFace/BSMC_LowerFace_Goatee
+    slot: LowerFace
+    label: Goatee
+    icon: {fileID: 21300000, guid: 64ea10875b8123e4b8bba1781eab36f7, type: 3}
+  - path: LowerFace/BSMC_LowerFace_Mustashe
+    slot: LowerFace
+    label: Mustashe
+    icon: {fileID: 21300000, guid: 85358a7370819b44f980dbaa0a360bd9, type: 3}
+  - path: LowerFace/BSMC_LowerFace_MustasheChin
+    slot: LowerFace
+    label: Mustashe Chin
+    icon: {fileID: 21300000, guid: 2508b8514ccc27b4191c46220efa082b, type: 3}
+  - path: MakeUpCheeks/MakeUpCheeks_BasicBlush
+    slot: MakeUpCheeks
+    label: Basic Blush
+    icon: {fileID: 0}
+  - path: MakeUpEyes/MakeUpEyes_BasicEyeLiner
+    slot: MakeUpEyes
+    label: Basic Eye Liner
+    icon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  - path: MakeUpLips/MakeUpLips_BasicLipstick
+    slot: MakeUpLips
+    label: Basic Lipstick
+    icon: {fileID: 21300000, guid: 97b0bd73f3ffb824f895177b55b7cab5, type: 3}
+  - path: Overall/BSMC_Overall_Overall
+    slot: Overall
+    label: Overall
+    icon: {fileID: 21300000, guid: 11a86753e10f9dd4eaa1847ef4dd8d96, type: 3}
+  - path: Overall/BSMC_Overall_SmartDress
+    slot: Overall
+    label: Smart Dress
+    icon: {fileID: 21300000, guid: 4118a6a39ab28f84b9afad2ec57ba33f, type: 3}
+  - path: Overall/BSMC_Overall_Sundress
+    slot: Overall
+    label: Sundress
+    icon: {fileID: 21300000, guid: 1e5d88fd89f226242a033985d66e824a, type: 3}
+  - path: Pupil/Pupil_BasicPupil
+    slot: Pupil
+    label: Basic Pupil
+    icon: {fileID: 0}
+  - path: Pupil/Pupil_SharpPupil
+    slot: Pupil
+    label: Sharp Pupil
+    icon: {fileID: 0}
+  - path: Socks/Socks_AnkleSocks
+    slot: Socks
+    label: Ankle Socks
+    icon: {fileID: 21300000, guid: 2dd5bfa09d20acc46b45904066f23acf, type: 3}
+  - path: Socks/Socks_BasicSocks
+    slot: Socks
+    label: Basic Socks
+    icon: {fileID: 21300000, guid: c3a5492899fff8e4bab920d5ad70949d, type: 3}
+  - path: Socks/Socks_KneeHighs
+    slot: Socks
+    label: Knee Highs
+    icon: {fileID: 21300000, guid: d5ead6ea264afb64191cfac805ed783d, type: 3}
+  - path: Socks/Socks_StripedThighHighs
+    slot: Socks
+    label: Striped Thigh Highs
+    icon: {fileID: 21300000, guid: bac1e8d6e22e9cf4cb4e162025016d29, type: 3}
+  - path: Socks/Socks_ThighHigh
+    slot: Socks
+    label: Thigh High
+    icon: {fileID: 21300000, guid: 983591bebcf99e143994e5f2a50bf104, type: 3}
+  - path: Top/BSMC_Top_CasualJacket
+    slot: Top
+    label: Casual Jacket
+    icon: {fileID: 21300000, guid: 1578ef4844eb90d4e9138c37e177f321, type: 3}
+  - path: Top/BSMC_Top_DressShirt
+    slot: Top
+    label: Dress Shirt
+    icon: {fileID: 21300000, guid: e706807f3530e7c448aef4fae89b0107, type: 3}
+  - path: Top/BSMC_Top_Hoodie
+    slot: Top
+    label: Simple Hoodie
+    icon: {fileID: 21300000, guid: 8c53ee6591beed14baa17f45cbd66dbf, type: 3}
+  - path: Top/BSMC_Top_OpenJacket
+    slot: Top
+    label: Open Jacket
+    icon: {fileID: 21300000, guid: 83aabc7b58146464a98c89b7a152a28d, type: 3}
+  - path: Top/BSMC_Top_Seifuku
+    slot: Top
+    label: Seifuku
+    icon: {fileID: 21300000, guid: 245a3d1d655fbae41a0a77682d178571, type: 3}
+  - path: Top/BSMC_Top_SeifukuShort
+    slot: Top
+    label: Seifuku
+    icon: {fileID: 21300000, guid: 7e63d04dd29b2e24ba3f54ee4fdcd9d5, type: 3}
+  - path: Top/BSMC_Top_Shirt
+    slot: Top
+    label: Shirt
+    icon: {fileID: 21300000, guid: 1b6447024a4cb9540aecdf8b43ed2619, type: 3}
+  - path: Top/BSMC_Top_SuitJacket
+    slot: Top
+    label: Suit Jacket
+    icon: {fileID: 21300000, guid: 6c3f2222c9a9f964da2488bf61dbfa60, type: 3}
+  - path: Top/BSMC_Top_Suspenders
+    slot: Top
+    label: Suspenders
+    icon: {fileID: 21300000, guid: 73d684f5510bab844a35e9ff0fdc528c, type: 3}
+  - path: Top/BSMC_Top_Sweater
+    slot: Top
+    label: Sweater
+    icon: {fileID: 21300000, guid: 02b7d72774afe6b49899407779d2fcd8, type: 3}
+  - path: Top/BSMC_Top_TankTop
+    slot: Top
+    label: TankTop
+    icon: {fileID: 21300000, guid: cc0b459e7d05fa442a17a8fca857d8ae, type: 3}
+  - path: Top/BSMC_Top_TurtleNeck
+    slot: Top
+    label: Turtleneck
+    icon: {fileID: 21300000, guid: 8847e20d2cc87934d9cb1721efa82a67, type: 3}
+  - path: Top/Outfit_Top_ButtonUp
+    slot: Top
+    label: Outfit_Top_
+    icon: {fileID: 21300000, guid: 33511cedf4c6fc6469d27bca90a1d454, type: 3}
+  - path: Top/Outfit_Top_ButtonUpShort
+    slot: Top
+    label: ButtonUpShort
+    icon: {fileID: 21300000, guid: 35727d459ebfc194ba6cf1cd4a028604, type: 3}
+  - path: Top/Outfit_Top_Henley
+    slot: Top
+    label: Henley
+    icon: {fileID: 21300000, guid: d4c162339307ebc43a90030c25d4456a, type: 3}
+  - path: Top/Outfit_Top_OpenShoulder
+    slot: Top
+    label: OpenShoulder
+    icon: {fileID: 21300000, guid: 4774579f700985649a71f7d513c54efc, type: 3}
+  - path: Top/Outfit_Top_OpenShoulder_Crop
+    slot: Top
+    label: Open CropTop
+    icon: {fileID: 21300000, guid: 53e40a4082bd4284da3197f0c78eb1af, type: 3}
+  - path: Top/Outfit_Top_OpenShoulder_Straps
+    slot: Top
+    label: OpenShoulder Straps
+    icon: {fileID: 21300000, guid: bab8de7ca92bacd4bb481ebf553a4e15, type: 3}
+  - path: Top/Outfit_Top_OpenShoulder_Strapsless
+    slot: Top
+    label: OpenShoulder Strapless
+    icon: {fileID: 21300000, guid: 7fd132f5e0ae24a42afa1210b0a0bf1f, type: 3}
+  - path: UnderLower/UnderLower_SimpleBoxers
+    slot: UnderLower
+    label: Simple Boxers
+    icon: {fileID: 21300000, guid: a847d69d7d5dd2d47998403166c1d0e3, type: 3}
+  - path: UnderLower/UnderLower_SimplePanties
+    slot: UnderLower
+    label: Simple Panties
+    icon: {fileID: 21300000, guid: 985897dffe0f4e445a149c113b55dd77, type: 3}
+  - path: UnderUpper/UnderUpper_SimpleBra
+    slot: UnderUpper
+    label: Simple Bra
+    icon: {fileID: 21300000, guid: 985897dffe0f4e445a149c113b55dd77, type: 3}
+  - path: UnderUpper/UnderUpper_SimpleUnderShirt
+    slot: UnderUpper
+    label: Simple Under Shirt
+    icon: {fileID: 21300000, guid: 9c5e584089e006440ba9ada5a9d5c873, type: 3}
+  - path: UpperFace/BSMC_Face_RoundGlasses
+    slot: UpperFace
+    label: Round Glasses
+    icon: {fileID: 21300000, guid: 3a3add11e33408844ba82ce9c7aa810b, type: 3}
+  - path: UpperFace/BSMC_Face_RoundShaded
+    slot: UpperFace
+    label: Round Shaded
+    icon: {fileID: 21300000, guid: af8034005a6173f4abb63ea67f43e3eb, type: 3}
+  - path: UpperFace/BSMC_Face_ShadedGlasses
+    slot: UpperFace
+    label: Shaded Glasses
+    icon: {fileID: 21300000, guid: 541c63b51fb0f6f49bf1423951d3abad, type: 3}
+  - path: UpperFace/BSMC_Face_SimpleGlasses
+    slot: UpperFace
+    label: Simple Glasses
+    icon: {fileID: 21300000, guid: 985ab0d035371cb4aad3dd5c3a9a55a5, type: 3}

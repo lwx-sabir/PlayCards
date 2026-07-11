@@ -174,8 +174,10 @@ namespace PlayCard.Avatar
             return null;
         }
 
-        /// <summary>Remove all Magica Cloth components from a baked prefab. A static/combined character can't build cloth
-        /// (MC2 error 20409), so the components only spam errors every load. Returns how many were removed.</summary>
+        /// <summary>Remove runtime-only BoZo components from a baked prefab: Magica Cloth (a static/combined character
+        /// can't build cloth — MC2 error 20409) and <see cref="OutfitSystem"/> itself (an isStatic body can't swap
+        /// outfits anyway, and its OnDestroy calls copyTexture.Release() which NREs on every destroyed baked instance).
+        /// Returns how many components were removed.</summary>
         public static int StripClothFromPrefab(GameObject prefabAsset)
         {
             if (prefabAsset == null) return 0;
@@ -186,8 +188,10 @@ namespace PlayCard.Avatar
             int removed = 0;
             foreach (var comp in root.GetComponentsInChildren<Component>(true))
             {
-                // Matches MagicaCloth + MagicaColliders + BoZo_MagicaClothSupport by type-name (no asmdef reference needed).
-                if (comp != null && comp.GetType().Name.Contains("Magica"))
+                if (comp == null) continue;
+                var n = comp.GetType().Name;
+                // Type-name match (no asmdef reference needed): MagicaCloth/MagicaColliders/BoZo_MagicaClothSupport + OutfitSystem.
+                if (n.Contains("Magica") || n == "OutfitSystem")
                 {
                     Object.DestroyImmediate(comp, true);
                     removed++;

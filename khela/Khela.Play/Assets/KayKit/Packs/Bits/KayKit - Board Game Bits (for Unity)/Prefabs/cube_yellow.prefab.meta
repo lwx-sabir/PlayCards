@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: f26616f00a8d7bb42970d1028cc4d8b7
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/cube_yellow.prefab
+  uploadId: 903436

@@ -130,3 +130,7 @@ mono_crash.*
 /khela/Khela.Play/Assets/Plugins/tvOS/Firebase/
 /khela/Khela.Play/Assets/Plugins/tvOS/Firebase.meta
 /khela/Khela.Play/ProjectSettings/AndroidResolverDependencies.xml
+
+# --- Secrets: OAuth client secrets must never be committed (keep server-side; rotate if leaked) ---
+**/client_secret_*.apps.googleusercontent.com.json
+**/client_secret_*.apps.googleusercontent.com.json.meta

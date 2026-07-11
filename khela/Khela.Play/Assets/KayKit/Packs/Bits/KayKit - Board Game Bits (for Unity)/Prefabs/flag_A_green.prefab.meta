@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 28c5b463206ce7f42b35cddb88b4baa5
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/flag_A_green.prefab
+  uploadId: 903436

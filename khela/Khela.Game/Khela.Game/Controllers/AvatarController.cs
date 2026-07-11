@@ -25,7 +25,13 @@ namespace Khela.Game.Controllers
     public sealed class AvatarController : ControllerBase
     {
         private readonly AppDbContext _db;
-        public AvatarController(AppDbContext db) => _db = db;
+        private readonly Services.Cosmetics.ICosmeticsService _cosmetics;
+
+        public AvatarController(AppDbContext db, Services.Cosmetics.ICosmeticsService cosmetics)
+        {
+            _db = db;
+            _cosmetics = cosmetics;
+        }
 
         private static readonly JsonSerializerOptions Json = new JsonSerializerOptions
         {
@@ -57,6 +63,12 @@ namespace Khela.Game.Controllers
             if (avatar == null) return BadRequest(new { message = "Missing avatar." });
 
             var clean = AvatarSanitizer.Sanitize(avatar);
+
+            // Entitlement gate: every cataloged outfit must be owned and legally coloured (Fixed = designed colours,
+            // Palette = the SKU's grid). A hacked client can't persist gear it didn't buy. Normalizes colours in place.
+            var entitled = await _cosmetics.ValidateEquipsAsync(me.Value, clean);
+            if (!entitled.Ok) return BadRequest(new { message = entitled.Error });
+
             var prof = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == me.Value);
             if (prof == null) return NotFound(new { message = "Profile not found." });
 

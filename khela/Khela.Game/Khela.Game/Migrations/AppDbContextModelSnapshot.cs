@@ -208,6 +208,89 @@ namespace Khela.Game.Migrations
                     b.ToTable("ChatMessages");
                 });
 
+            modelBuilder.Entity("Khela.Game.Database.Models.CosmeticSku", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("CharacterJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("ColorMode")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DefaultColorsJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Gender")
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<byte[]>("IconPng")
+                        .HasColumnType("longblob");
+
+                    b.Property<DateTime?>("IconUpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("IsExclusive")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool>("IsStarter")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("PaletteJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Path")
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<string>("PiecesJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<decimal>("Price")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<int>("PriceCurrency")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Slot")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Enabled", "Type");
+
+                    b.ToTable("CosmeticSkus");
+                });
+
             modelBuilder.Entity("Khela.Game.Database.Models.DeviceRegistration", b =>
                 {
                     b.Property<Guid>("DeviceId")
@@ -1245,6 +1328,42 @@ namespace Khela.Game.Migrations
                     b.HasKey("ItemId");
 
                     b.ToTable("StoreItems");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.UserCosmetic", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("SkuId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "SkuId")
+                        .IsUnique();
+
+                    b.ToTable("UserCosmetics");
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.UserGameStats", b =>

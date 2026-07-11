@@ -5089,7 +5089,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 9148162384233222409}
-  - component: {fileID: 4192197095796178182}
   - component: {fileID: 8871925620541335723}
   m_Layer: 0
   m_Name: Baked_DefaultFemale
@@ -5123,68 +5122,6 @@ Transform:
   - {fileID: 6053478002326020903}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 180, z: 0}
---- !u!114 &4192197095796178182
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3468962442110142838}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e9922a7632d1dd848841a5591133875f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  characterData: {fileID: 0}
-  SaveID: 
-  CharacterBody: {fileID: 1847053917115753141}
-  _Outfits: []
-  copyMaterial: {fileID: 0}
-  prefabName: Baked_DefaultFemale
-  mergeMaterial: {fileID: 2100000, guid: f5609a797c62bb7428cfba6c6556902c, type: 2}
-  data:
-    versionID: 0
-    characterName: 
-    bodyIDs: []
-    bodyShapes: []
-    faceIDs: []
-    faceShapes: []
-    bodyModsKeys: []
-    bodyMods: []
-    outfitDatas: []
-    bodyData:
-      outfit: 
-      colors: []
-      decal: 
-      decalColors: []
-      decalScale: {x: 0, y: 0, z: 0, w: 0}
-      pattern: 
-      patternColors: []
-      patternScale: {x: 0, y: 0, z: 0, w: 0}
-      partVisibility: 
-      color: {r: 1, g: 1, b: 1, a: 1}
-      swatch: 0
-      decalDatas: []
-    stance: 0
-  materialData:
-  - fromMateiralProperty: _Normal
-    toMateiralProperty: _Normal
-    backgroundColor: {r: 0.73333335, g: 0.7372549, b: 1, a: 1}
-  - fromMateiralProperty: _Specular
-    toMateiralProperty: _Specular
-    backgroundColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
-  - fromMateiralProperty: _Metalness
-    toMateiralProperty: _Metalness
-    backgroundColor: {r: 0, g: 0, b: 0, a: 1}
-  renderTextures: []
-  combinedMesh: {fileID: 4300000, guid: 12b6bd2e3324e4c42a9824802fdf540e, type: 2}
-  loadMode: 2
-  async: 0
-  isloading: 0
-  isUpdatingTexture: 0
-  cleanAfterMerge: 0
-  isMerging: 0
-  isStatic: 1
 --- !u!114 &8871925620541335723
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5198,7 +5135,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Avatar.AvatarCreator
   config: {fileID: 11400000, guid: 6df596ac500db3e439f0589161f46775, type: 2}
-  outfitSystem: {fileID: 4192197095796178182}
+  outfitSystem: {fileID: 0}
 --- !u!1 &3488984930561650294
 GameObject:
   m_ObjectHideFlags: 0

@@ -58,5 +58,9 @@ namespace Khela.Game.Database
 
         // --- Reports (AddProfileBlurbsAndReports migration) ---
         public DbSet<Report> Reports { get; set; }
+
+        // --- Cosmetics shop (AddCosmeticsShop migration; docs/AVATAR_SHOP_SPEC.md) ---
+        public DbSet<CosmeticSku> CosmeticSkus { get; set; }
+        public DbSet<UserCosmetic> UserCosmetics { get; set; }
     }
 }

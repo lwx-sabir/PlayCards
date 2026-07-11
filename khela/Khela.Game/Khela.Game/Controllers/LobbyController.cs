@@ -13,11 +13,13 @@ namespace Khela.Game.Controllers
     public class LobbyController : ControllerBase
     {
         private readonly BlackjackTableManager tableManager;
+        private readonly Khela.Game.Games.ThreeCardPoker.ThreeCardPokerTableManager threeCardTables;
         private readonly IWebHostEnvironment env;
 
-        public LobbyController(BlackjackTableManager tableManager, IWebHostEnvironment env)
+        public LobbyController(BlackjackTableManager tableManager, Khela.Game.Games.ThreeCardPoker.ThreeCardPokerTableManager threeCardTables, IWebHostEnvironment env)
         {
             this.tableManager = tableManager;
+            this.threeCardTables = threeCardTables;
             this.env = env;
         }
 
@@ -29,6 +31,15 @@ namespace Khela.Game.Controllers
         public async Task<IActionResult> Blackjack([FromQuery] BlackjackMode? mode = null)
         {
             var tables = await tableManager.GetLobbyAsync(mode);
+            return Ok(tables);
+        }
+
+        /// <summary>Browsable Three Card Poker table list for the lobby (screen 3). Own endpoint per the
+        /// plug-and-play, one-controller-per-game design — tops up the default house tables so it's never empty.</summary>
+        [HttpGet("threecard")]
+        public async Task<IActionResult> ThreeCard()
+        {
+            var tables = await threeCardTables.GetLobbyAsync();
             return Ok(tables);
         }
 

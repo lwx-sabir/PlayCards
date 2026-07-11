@@ -22,17 +22,20 @@ namespace PlayCard.Avatar
         /// <summary>The caller's avatar (null until <see cref="LoadMineAsync"/> or a save). Kept in sync with the server.</summary>
         public AvatarData Mine { get; private set; }
 
+        /// <summary>Raised whenever <see cref="Mine"/> is (re)assigned — stage/HUD binders re-render off this.</summary>
+        public event System.Action MineChanged;
+
         private readonly Dictionary<string, AvatarData> _others = new Dictionary<string, AvatarData>();
 
         /// <summary>Seed the cached "mine" from an already-fetched value (e.g. the boot router did the GET) — avoids a
         /// second round-trip. Pass null to record "fetched, has none yet".</summary>
-        public void SetMine(AvatarData avatar) => Mine = avatar;
+        public void SetMine(AvatarData avatar) { Mine = avatar; MineChanged?.Invoke(); }
 
         /// <summary>Fetch + cache the caller's avatar. Returns null if the player has none yet.</summary>
         public async Task<AvatarData> LoadMineAsync()
         {
             var r = await BlackjackRestClient.Instance.GetMyAvatarAsync();
-            if (r.Ok) Mine = r.Value;
+            if (r.Ok) { Mine = r.Value; MineChanged?.Invoke(); }
             else Debug.LogWarning($"[AvatarService] load mine failed: {r.Error}");
             return Mine;
         }
@@ -41,7 +44,7 @@ namespace PlayCard.Avatar
         public async Task<bool> SaveAsync(AvatarData avatar)
         {
             var r = await BlackjackRestClient.Instance.PutMyAvatarAsync(avatar);
-            if (r.Ok) { Mine = r.Value; return true; }
+            if (r.Ok) { Mine = r.Value; MineChanged?.Invoke(); return true; }
             Debug.LogWarning($"[AvatarService] save failed: {r.Error}");
             return false;
         }

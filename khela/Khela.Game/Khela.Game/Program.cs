@@ -168,12 +168,15 @@ builder.Services.AddMemoryCache();
 
 builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddHostedService<BlackjackRoundDriver>();   // server round-driver: auto-stand on timeout + auto-settle
+builder.Services.AddSingleton<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerTableManager>();   // plug-and-play 3CP module (own manager, reuses shared wallet/redis/audit)
+builder.Services.AddHostedService<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerRoundDriver>();   // 3CP round-driver: auto-fold on timeout + auto-settle
 builder.Services.AddHostedService<LeaderboardPruneService>();   // nightly prune of old PlayerDailyStat rows
 builder.Services.AddHostedService<Khela.Game.Services.Vip.VipTierReviewService>();   // monthly VIP tier review (gentle decay, §3.4)
 builder.Services.AddSingleton<SettlementReconciliationService>();      // one shared instance...
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconciliationService>());  // ...run as the hosted sweeper (no-op unless Reconciliation:Enabled) AND injectable for the on-demand debug endpoint
 builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
+builder.Services.AddSingleton<Khela.Game.Services.Auth.IFirebaseTokenVerifier, Khela.Game.Services.Auth.FirebaseTokenVerifier>();   // Firebase-brokered social sign-in (Google/Facebook/Apple/guest)
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; credited on claim)
@@ -193,6 +196,7 @@ builder.Services.AddScoped<IFriendsService, FriendsService>();
 builder.Services.AddScoped<IGiftService, GiftService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IReportsService, ReportsService>();
+builder.Services.AddScoped<Khela.Game.Services.Cosmetics.ICosmeticsService, Khela.Game.Services.Cosmetics.CosmeticsService>();   // cosmetics shop: catalog/purchases/entitlement gate (docs/AVATAR_SHOP_SPEC.md)
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -212,6 +216,7 @@ app.UseAuthorization();
 app.MapControllers();
  
 app.MapHub<BlackjackHub>("/blackjackhub");
+app.MapHub<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerHub>("/threecardhub");
 app.MapHub<ChatHub>("/chathub");
 
 // Seed leaderboard definitions + opening season at startup (idempotent; best-effort if the DB is down).

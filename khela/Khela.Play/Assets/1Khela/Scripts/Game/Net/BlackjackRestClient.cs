@@ -185,6 +185,15 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<bool>> UpdateProfileAsync(ProfileEditRequest edit)
             => SendOkAsync(new HttpMethod("PATCH"), "/api/profile/me", edit);
 
+        // ---- Cosmetics shop ----
+        /// <summary>The enabled cosmetics catalog + the caller's ownership flags (GET /api/shop/cosmetics).</summary>
+        public Task<ApiResult<CosmeticCatalogEnvelope>> GetCosmeticsCatalogAsync()
+            => SendAsync<CosmeticCatalogEnvelope>(HttpMethod.Get, "/api/shop/cosmetics");
+
+        /// <summary>Buy a cosmetic (wallet-debited, idempotent). correlationId makes retries safe.</summary>
+        public Task<ApiResult<CosmeticPurchaseResult>> BuyCosmeticAsync(string skuId, string correlationId)
+            => BalanceChangingAsync<CosmeticPurchaseResult>(HttpMethod.Post, $"/api/shop/cosmetics/{skuId}/buy", new { correlationId });
+
         /// <summary>Another player's PUBLIC profile (GET /api/profile/{userId}). 404/null if blocked or not found.</summary>
         public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)
             => SendAsync<PublicProfileData>(HttpMethod.Get, $"/api/profile/{userId}");

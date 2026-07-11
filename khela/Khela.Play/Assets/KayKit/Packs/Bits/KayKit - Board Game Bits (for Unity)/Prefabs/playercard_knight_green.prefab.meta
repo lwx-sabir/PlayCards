@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 06b17b62e7c9e544bbc6025d04e3829d
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 375112
+  packageName: KayKit - Board Game Bits (for Unity)
+  packageVersion: 1.0
+  assetPath: Assets/KayKit/Packs/Bits/KayKit - Board Game Bits (for Unity)/Prefabs/playercard_knight_green.prefab
+  uploadId: 903436
