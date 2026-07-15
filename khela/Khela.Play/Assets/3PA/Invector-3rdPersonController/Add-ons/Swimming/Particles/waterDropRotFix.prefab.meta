@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e28b982fb0320ba4eb09d723e1d8b159
+timeCreated: 1493233828
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 97418
+  packageName: Invector Swimming Add-on
+  packageVersion: 1.7
+  assetPath: Assets/Invector-3rdPersonController/Add-ons/Swimming/Particles/waterDropRotFix.prefab
+  uploadId: 640428

@@ -23,6 +23,8 @@ namespace PlayCard.UI
     {
         [Header("Source")]
         [SerializeField] private TableController table;
+        [Tooltip("The table view — holds the insurance offer until the animated deal has landed. Optional.")]
+        [SerializeField] private BlackjackTableView view;
 
         [Header("Refs")]
         [Tooltip("The popup VISUAL that slides + is shown/hidden. Put this on a SEPARATE object from this " +
@@ -87,8 +89,19 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= Apply;
         }
 
+        private bool _lastAnimating;
+
         private void Update()
         {
+            // Cards land BETWEEN board pushes, so re-evaluate the offer when the deal-animating state flips — otherwise
+            // the popup (shown from Apply on the board push) would pop mid-deal, or not appear until the next push.
+            bool animating = view != null && view.AnyCardAnimating();
+            if (animating != _lastAnimating)
+            {
+                _lastAnimating = animating;
+                Apply(table != null ? table.Board : null);
+            }
+
             if (!_shown || timerLabel == null) return;
             var exp = table != null && table.Board != null ? table.Board.InsuranceExpiresAt : null;
             double remaining = exp.HasValue ? (exp.Value - DateTimeOffset.UtcNow).TotalSeconds : 0d;
@@ -116,6 +129,7 @@ namespace PlayCard.UI
         {
             if (board == null || !board.RoundInProgress || !board.InsuranceExpiresAt.HasValue) return null;
             if (!DealerShowsAce(board)) return null;
+            if (view != null && view.AnyCardAnimating()) return null;   // hold the offer until the dealt cards have LANDED
 
             var me = board.Seats?.Find(s => s.SeatNumber == table.MySeat)?.Player;
             if (me?.Hands == null || me.Hands.Count == 0) return null;

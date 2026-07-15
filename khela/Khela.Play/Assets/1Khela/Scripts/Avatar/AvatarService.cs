@@ -65,6 +65,26 @@ namespace PlayCard.Avatar
             if (!string.IsNullOrEmpty(userId)) _others.Remove(userId);
         }
 
+        // ---- house dealer ----
+
+        private readonly Dictionary<string, AvatarData> _dealers = new Dictionary<string, AvatarData>();
+
+        /// <summary>Fetch + cache a house table dealer's look: the one with <paramref name="dealerId"/>, or the default
+        /// (first) dealer when null/empty. Null if that dealer doesn't exist, or the game wasn't launched from Boot (no
+        /// session to authorize the fetch). Cached per id.</summary>
+        public async Task<AvatarData> LoadDealerAsync(string dealerId = null)
+        {
+            string key = dealerId ?? "";
+            if (_dealers.TryGetValue(key, out var cached)) return cached;
+
+            var r = await BlackjackRestClient.Instance.GetDealerAsync(dealerId);
+            if (!r.Ok) { Debug.LogWarning($"[AvatarService] load dealer '{key}' failed: {r.Error}"); return null; }
+
+            var data = r.Value?.Dealer?.Character;
+            _dealers[key] = data;   // cache success (incl. a legitimately-absent dealer = null) to avoid a refetch
+            return data;
+        }
+
         // ---- base resolution + build ----
 
         /// <summary>Load a premade base's <see cref="CharacterData"/> from Resources (e.g. "Base/Mary"). Null if missing.

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 5e75e3f979522e54280495e67486fbb6
+timeCreated: 1500587439
+licenseType: Store
+DefaultImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 97418
+  packageName: Invector Swimming Add-on
+  packageVersion: 1.7
+  assetPath: Assets/Invector-3rdPersonController/Add-ons/Swimming/Invector_Addon_Swimming.unity
+  uploadId: 640428

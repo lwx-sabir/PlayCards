@@ -50,4 +50,19 @@ namespace PlayCard.Game.Net
         public bool AlreadyOwned { get; set; }
         public decimal? Balance { get; set; }
     }
+
+    /// <summary>Response envelope for GET /api/shop/cosmetics/dealer ({ "dealer": {...} }, null when the house has none).</summary>
+    public sealed class DealerEnvelope
+    {
+        public DealerDto Dealer { get; set; }
+    }
+
+    /// <summary>The house table dealer: id/name + the full character look to render (an <see cref="AvatarData"/>).</summary>
+    public sealed class DealerDto
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public AvatarData Character { get; set; }   // build via AvatarService.BuildCharacter → assemble on the dealer rig
+        public bool HasIcon { get; set; }
+    }
 }

@@ -1,15 +1,21 @@
 fileFormatVersion: 2
 guid: db76b7c4720a74542bab7d8e0ae200cc
+AssetOrigin:
+  serializedVersion: 1
+  productId: 281577
+  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
+  packageVersion: 2.5.7
+  assetPath: Assets/BoZo_StylizedModularCharacters/Outfits/Common/Body/BodyRig.fbx
+  uploadId: 941986
 ModelImporter:
-  serializedVersion: 22200
+  serializedVersion: 24200
   internalIDToNameTable: []
   externalObjects:
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
       name: BasicMatieral
-    second: {fileID: -4565884009001823619, guid: e078dfc9dcdb3534faed7ac605fa7c93,
-      type: 3}
+    second: {fileID: -4565884009001823619, guid: e078dfc9dcdb3534faed7ac605fa7c93, type: 3}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -22,10 +28,6 @@ ModelImporter:
     optimizeGameObjects: 0
     removeConstantScaleCurves: 0
     motionNodeName: 
-    rigImportErrors: 
-    rigImportWarnings: "Avatar Rig Configuration mis-match. Bone length in configuration
-      does not match position in animation file:\n\t'ball_l' : position error = 2.386634
-      mm\n\t'ball_r' : position error = 1.377651 mm\n"
     animationImportErrors: 
     animationImportWarnings: 
     animationRetargetingWarnings: 
@@ -62,10 +64,13 @@ ModelImporter:
     weldVertices: 1
     bakeAxisConversion: 0
     preserveHierarchy: 0
-    skinWeightsMode: 0
-    maxBonesPerVertex: 4
+    skinWeightsMode: 1
+    maxBonesPerVertex: 8
     minBoneWeight: 0.001
     optimizeBones: 0
+    generateMeshLods: 0
+    meshLodGenerationFlags: 0
+    maximumMeshLod: -1
     meshOptimizationFlags: -1
     indexFormat: 0
     secondaryUVAngleDistortion: 8
@@ -655,7 +660,7 @@ ModelImporter:
     - name: ring_02_l
       parentName: ring_01_l
       position: {x: -0.032144804, y: -0.000604404, z: 0.00007753586}
-      rotation: {x: -0.0013136847, y: -0.0036819545, z: -0.029154304, w: 0.9995673}
+      rotation: {x: -0.0013136851, y: -0.0036819545, z: -0.02915431, w: 0.9995673}
       scale: {x: 1, y: 1, z: 1}
     - name: ring_03_l
       parentName: ring_02_l
@@ -665,7 +670,7 @@ ModelImporter:
     - name: thumb_01_l
       parentName: hand_l
       position: {x: -0.04628769, y: 0.008034884, z: -0.030735316}
-      rotation: {x: 0.48367366, y: -0.23095183, z: 0.21595319, w: 0.8161405}
+      rotation: {x: 0.4836737, y: -0.23095183, z: 0.2159532, w: 0.8161405}
       scale: {x: 1, y: 1, z: 1}
     - name: thumb_02_l
       parentName: thumb_01_l
@@ -715,7 +720,7 @@ ModelImporter:
     - name: lowerarm_r
       parentName: upperarm_r
       position: {x: 0.26282752, y: 0.0000027076094, z: -0.00000057348666}
-      rotation: {x: 0.015690273, y: 0.024149187, z: 0.032424126, w: 0.9990592}
+      rotation: {x: 0.015690275, y: 0.024149189, z: 0.03242413, w: 0.99905926}
       scale: {x: 1, y: 1, z: 1}
     - name: hand_r
       parentName: lowerarm_r
@@ -795,7 +800,7 @@ ModelImporter:
     - name: ring_02_r
       parentName: ring_01_r
       position: {x: 0.032145295, y: 0.00060405786, z: -0.00007759437}
-      rotation: {x: -0.0013136847, y: -0.0036819545, z: -0.029154304, w: 0.9995673}
+      rotation: {x: -0.0013136851, y: -0.0036819545, z: -0.02915431, w: 0.9995673}
       scale: {x: 1, y: 1, z: 1}
     - name: ring_03_r
       parentName: ring_02_r
@@ -805,7 +810,7 @@ ModelImporter:
     - name: thumb_01_r
       parentName: hand_r
       position: {x: 0.046289448, y: -0.008035505, z: 0.030734736}
-      rotation: {x: 0.48367226, y: -0.23094365, z: 0.21594653, w: 0.81614536}
+      rotation: {x: 0.4836723, y: -0.23094365, z: 0.21594654, w: 0.81614536}
       scale: {x: 1, y: 1, z: 1}
     - name: thumb_02_r
       parentName: thumb_01_r
@@ -856,31 +861,6 @@ ModelImporter:
       parentName: neck_02
       position: {x: -0.04271587, y: -0.003412315, z: -3.3881317e-23}
       rotation: {x: 0.4801824, y: -0.5190615, z: 0.48018217, w: 0.51906174}
-      scale: {x: 1, y: 1, z: 1}
-    - name: eyeRoot_l
-      parentName: head
-      position: {x: -0.040770333, y: 0.070379205, z: 0.08976599}
-      rotation: {x: 0.0000029793312, y: 0.00000016700348, z: -4.9755865e-13, w: 1}
-      scale: {x: 1, y: 1, z: 1}
-    - name: eyeSocket_l
-      parentName: eyeRoot_l
-      position: {x: -2.6645352e-17, y: -1.7053025e-15, z: -3.1086245e-17}
-      rotation: {x: 0.0000029793312, y: 0.00000016700348, z: -4.9755865e-13, w: 1}
-      scale: {x: 0.9976169, y: 0.9976169, z: 0.9976169}
-    - name: eyeRoot_r
-      parentName: head
-      position: {x: 0.040769212, y: 0.07037527, z: 0.08976651}
-      rotation: {x: 0.0000029793312, y: 0.00000016700348, z: -4.9755865e-13, w: 1}
-      scale: {x: 1, y: 1, z: 1}
-    - name: eyeSocket_r
-      parentName: eyeRoot_r
-      position: {x: -0, y: 0, z: 0}
-      rotation: {x: 0.0000029793312, y: 0.00000016700348, z: -4.9755865e-13, w: 1}
-      scale: {x: 0.9976169, y: 0.9976169, z: 0.9976169}
-    - name: Jaw
-      parentName: head
-      position: {x: -0.0000003820584, y: 0.014574831, z: 0.066110365}
-      rotation: {x: -0.4801808, y: 0.5190602, z: -0.48018384, w: 0.5190631}
       scale: {x: 1, y: 1, z: 1}
     - name: thigh_l
       parentName: pelvis
@@ -967,6 +947,11 @@ ModelImporter:
       position: {x: -0, y: 0, z: 0}
       rotation: {x: 0, y: -0, z: -0, w: 1}
       scale: {x: 1, y: 1, z: 1}
+    - name: StylizedBody_FullBody
+      parentName: BodyRig(Clone)
+      position: {x: -2, y: 0.7686455, z: -4.48078}
+      rotation: {x: 0, y: -0, z: -0, w: 1}
+      scale: {x: 1, y: 1, z: 1}
     armTwist: 0.5
     foreArmTwist: 0.5
     upperLegTwist: 0.5
@@ -991,10 +976,3 @@ ModelImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 281577
-  packageName: 'BoZo: Stylized Modular Characters - Base Pack'
-  packageVersion: 2.5.7
-  assetPath: Assets/BoZo_StylizedModularCharacters/Outfits/Common/Body/BodyRig.fbx
-  uploadId: 941986

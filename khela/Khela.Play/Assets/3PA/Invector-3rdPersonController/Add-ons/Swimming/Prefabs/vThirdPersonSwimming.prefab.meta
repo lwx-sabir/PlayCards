@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 0c4ec3ea45428464f88f946793078947
+timeCreated: 1505755749
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 97418
+  packageName: Invector Swimming Add-on
+  packageVersion: 1.7
+  assetPath: Assets/Invector-3rdPersonController/Add-ons/Swimming/Prefabs/vThirdPersonSwimming.prefab
+  uploadId: 640428

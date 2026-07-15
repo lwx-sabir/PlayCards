@@ -1,0 +1,11 @@
+fileFormatVersion: 2
+guid: 9abd6c2e7a229c74fa3ba0ece6363f4c
+NativeFormatImporter:
+  userData: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Shooter/Prefabs/Particles/Explosion/Materials/Smoke_static.mat
+  uploadId: 948174

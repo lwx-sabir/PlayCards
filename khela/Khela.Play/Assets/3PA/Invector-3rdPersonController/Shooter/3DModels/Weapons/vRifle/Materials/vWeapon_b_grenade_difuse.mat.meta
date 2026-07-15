@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: a7593b22638106c4cb5c538e2d89153f
+timeCreated: 1511302091
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Shooter/3DModels/Weapons/vRifle/Materials/vWeapon_b_grenade_difuse.mat
+  uploadId: 948174

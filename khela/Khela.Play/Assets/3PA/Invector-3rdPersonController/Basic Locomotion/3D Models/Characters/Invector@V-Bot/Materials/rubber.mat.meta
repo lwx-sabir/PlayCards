@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 8423017f5dc8db74e89724fca7ab915f
+timeCreated: 1439757627
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Basic Locomotion/3D Models/Characters/Invector@V-Bot/Materials/rubber.mat
+  uploadId: 948174

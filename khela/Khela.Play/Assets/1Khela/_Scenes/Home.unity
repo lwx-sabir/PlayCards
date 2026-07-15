@@ -76486,6 +76486,7 @@ MonoBehaviour:
   profilePanel: {fileID: 4503513070974076664}
   rewardsButton: {fileID: 2813493838782603890}
   rewardsPanel: {fileID: 268416590072157205}
+  worldButton: {fileID: 2813493838295185906}
 --- !u!224 &2813928095475224726
 RectTransform:
   m_ObjectHideFlags: 0

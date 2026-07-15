@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: aff5240f92a2042f0abba16cebeb9581
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Basic Locomotion/Editor/Resources/vTopDownAddon.unitypackage
+  uploadId: 948174

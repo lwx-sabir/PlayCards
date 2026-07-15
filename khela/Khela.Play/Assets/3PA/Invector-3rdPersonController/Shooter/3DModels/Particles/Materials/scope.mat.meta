@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: db72c2d5ee90cb74a93631822e36cd03
+timeCreated: 1431400013
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Shooter/3DModels/Particles/Materials/scope.mat
+  uploadId: 948174

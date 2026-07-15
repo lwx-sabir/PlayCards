@@ -14,12 +14,20 @@ namespace PlayCard.App
         public const string Lobby = "Lobby";
         public const string Table = "Table";
         public const string Wardrobe = "Wardrobe";
+        public const string World = "DiveBar_01";   // the 3D virtual-world scene (temp: single hardcoded world)
 
         /// <summary>Avatar customization (full edit — shapes/outfits/colours). Re-entrant from Home. Must be in Build Settings.</summary>
         public static void GoToWardrobe()
         {
             KhelaAnalytics.LogScreen(Wardrobe);
             SceneManager.LoadScene(Wardrobe);
+        }
+
+        /// <summary>Enter the 3D virtual world (social hub). Must be in Build Settings. Temp: hardcoded to the DiveBar scene.</summary>
+        public static void GoToWorld()
+        {
+            KhelaAnalytics.LogScreen(World);
+            SceneManager.LoadScene(World);
         }
 
         /// <summary>First-run avatar picker (shown only when the player has no saved avatar). Must be in Build Settings.</summary>

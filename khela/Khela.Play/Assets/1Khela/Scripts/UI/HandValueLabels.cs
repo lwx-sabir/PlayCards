@@ -122,10 +122,14 @@ namespace PlayCard.UI
             var anchor = view.SeatAnchor(seat);
             if (anchor == null) return;   // seat beyond our authored anchors — skip
 
+            int last = cards.Count - 1;
+            // Gate on the ANIMATION: hold the value / Blackjack / bust badge until this hand's last card has LANDED, so
+            // the score reveals in step with the dealt cards instead of the instant the server pushes the final hand.
+            // Not adding it to _desired here leaves it hidden until it settles; LateUpdate re-checks every frame.
+            if (!view.CardSettled(seat, handIndex, last)) return;
+
             int key = SlotKey(seat, handIndex);
             _desired.Add(key);
-
-            int last = cards.Count - 1;
             view.CardLocalTRS(seat, handIndex, handCount, last, cards.Count, out var pos, out var rot, out var scale);
             Vector3 cardWorldPos = anchor.TransformPoint(pos);
             Quaternion cardWorldRot = anchor.rotation * rot;

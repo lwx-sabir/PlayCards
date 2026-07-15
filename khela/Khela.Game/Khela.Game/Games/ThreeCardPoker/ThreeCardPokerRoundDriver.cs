@@ -24,6 +24,7 @@ namespace Khela.Game.Games.ThreeCardPoker
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            long tick = 0;
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
@@ -35,9 +36,18 @@ namespace Khela.Game.Games.ThreeCardPoker
                         try { await _tables.TickTableAsync(id); }
                         catch (Exception ex) { _logger.LogWarning(ex, "3CP round-driver tick failed for table {TableId}", id); }
                     }
+
+                    // Low-cadence stranded-stake reconciliation (~every 2 min at a 2s tick). No-op unless
+                    // Reconciliation:Enabled — the heavy DB scan never runs in prod until explicitly opted in.
+                    if (tick % 60 == 0)
+                    {
+                        try { await _tables.ReconcileStrandedStakesAsync(); }
+                        catch (Exception ex) { _logger.LogWarning(ex, "3CP reconciliation sweep failed"); }
+                    }
                 }
                 catch (Exception ex) { _logger.LogError(ex, "3CP round-driver loop error"); }
 
+                tick++;
                 try { await Task.Delay(TickInterval, stoppingToken); }
                 catch (OperationCanceledException) { break; }
             }

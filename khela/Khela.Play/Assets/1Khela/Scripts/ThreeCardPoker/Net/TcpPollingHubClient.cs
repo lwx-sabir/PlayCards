@@ -79,9 +79,13 @@ namespace PlayCard.ThreeCardPoker.Net
                 OnTableUpdated?.Invoke(res.Value);
         }
 
-        /// <summary>No-op on the polling transport: 3CP has no REST heartbeat endpoint, the poll keeps state fresh,
-        /// and the server's round-driver auto-folds an undecided seat on timeout (money-safe).</summary>
-        public Task HeartbeatAsync(string tableId) => Task.CompletedTask;
+        /// <summary>Seated keep-alive over REST (the polling transport has no socket to ping) so the server's
+        /// stalled-seat reaper doesn't drop us. Fire-and-forget — a missed ping is retried next heartbeat tick.</summary>
+        public async Task HeartbeatAsync(string tableId)
+        {
+            try { await TcpRestClient.Instance.HeartbeatAsync(tableId); }
+            catch (Exception ex) { Debug.LogWarning($"[TcpPollingHub] heartbeat failed: {ex.Message}"); }
+        }
 
         private void StartPolling(string tableId)
         {

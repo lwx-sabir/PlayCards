@@ -57,6 +57,7 @@ namespace PlayCard.Avatar.EditorTools
         // character mode
         private AvatarConfig.Gender _gender = AvatarConfig.Gender.Male;
         private int _baseIndex;
+        private bool _isDealer;   // house-only dealer avatar (Character mode ONLY) — hidden from players
 
         // server
         private string _apiUrl, _jwt = "";
@@ -215,7 +216,7 @@ namespace PlayCard.Avatar.EditorTools
                 GUI.color = prev;
                 GUILayout.Label(s.id, EditorStyles.miniBoldLabel, GUILayout.Width(190));
                 GUILayout.Label(s.type, EditorStyles.miniLabel, GUILayout.Width(64));
-                GUILayout.Label(s.isStarter || s.price <= 0 ? "Free" : $"{s.price:0} {s.priceCurrency}", EditorStyles.miniLabel, GUILayout.Width(96));
+                GUILayout.Label(s.isDealer ? "DEALER" : (s.isStarter || s.price <= 0 ? "Free" : $"{s.price:0} {s.priceCurrency}"), EditorStyles.miniLabel, GUILayout.Width(96));
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUI.indentLevel--;
@@ -345,6 +346,10 @@ namespace PlayCard.Avatar.EditorTools
             _baseIndex = EditorGUILayout.Popup("Base loaded on the rig", _baseIndex, bases.Select(b => b.id).ToArray());
             EditorGUILayout.HelpBox("Pick the SAME base you loaded in the creator — the export stores the rig as a diff over it.", MessageType.None);
 
+            EditorGUILayout.Space();
+            _isDealer = EditorGUILayout.ToggleLeft("Save as Dealer  (house-only — hidden from players, used as a table dealer)", _isDealer);
+            if (_isDealer) EditorGUILayout.HelpBox("Dealer avatars never appear in any player list or the shop — only admin tools list them.", MessageType.Info);
+
             DrawLivePreview("c|" + (_rig != null ? _rig.GetInstanceID() : 0), BakeRigTexture);
             if (GUILayout.Button("Refresh character preview")) _liveKey = null;
 
@@ -359,6 +364,7 @@ namespace PlayCard.Avatar.EditorTools
                 var avatar = AvatarMapper.FromCharacter(data, _gender.ToString(), bases[_baseIndex].id);
                 var sku = NewSku("character");
                 sku.character = CharacterDef.From(avatar);
+                sku.isDealer = _isDealer;   // Character-only; server forces false for item/set anyway
                 SaveSku(sku, BakeRigPng());
             }
         }
@@ -444,7 +450,19 @@ namespace PlayCard.Avatar.EditorTools
             if (code < 200 || code >= 300) { _serverSkus = new List<ServerSku>(); _serverErr = $"({code}) {body}"; return; }
 
             var wrap = JsonUtility.FromJson<ServerCatalog>(body);
-            _serverSkus = wrap?.skus ?? new List<ServerSku>();
+            var list = wrap?.skus ?? new List<ServerSku>();
+
+            // Dealers are hidden from the player catalog above — pull them from the admin route so THIS tool still shows
+            // what's on the server (and the "already on server?" hint works for dealer ids).
+            var (dcode, dbody) = Get("/api/shop/cosmetics/dealers");
+            if (dcode >= 200 && dcode < 300)
+            {
+                var dwrap = JsonUtility.FromJson<ServerCatalog>(dbody);
+                if (dwrap?.skus != null)
+                    foreach (var d in dwrap.skus) { d.isDealer = true; list.Add(d); }
+            }
+
+            _serverSkus = list;
             _serverErr = null;
         }
 
@@ -820,6 +838,7 @@ namespace PlayCard.Avatar.EditorTools
             public string priceCurrency = "Kash";
             public bool isStarter;
             public bool exclusive;
+            public bool isDealer;                                     // character mode only — house-only dealer avatar
             public bool enabled = true;
             public int sortOrder;
         }
@@ -862,6 +881,7 @@ namespace PlayCard.Avatar.EditorTools
             public double price;
             public bool isStarter;
             public bool hasIcon;
+            public bool isDealer;
         }
     }
 }

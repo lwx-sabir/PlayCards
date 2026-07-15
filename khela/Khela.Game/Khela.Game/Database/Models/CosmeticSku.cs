@@ -90,6 +90,11 @@ namespace Khela.Game.Database.Models
 
         public bool IsExclusive { get; set; }
 
+        /// <summary>House-only premade avatar (a table Dealer look). Character SKUs ONLY. Hidden from every
+        /// player-facing list (catalog + entitlement) and never purchasable — only admin tools list these, to author
+        /// and assign table dealers. Never set true for Item/Set.</summary>
+        public bool IsDealer { get; set; }
+
         /// <summary>Disabled SKUs are hidden from the shop and can't be bought; existing owners keep them.</summary>
         public bool Enabled { get; set; } = true;
 

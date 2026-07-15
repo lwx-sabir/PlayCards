@@ -20,6 +20,8 @@ namespace PlayCard.UI
         [SerializeField] private TableController table;
         [Tooltip("Chip-bet accumulator. DEAL places its running total, then deals.")]
         [SerializeField] private BetBuilder betBuilder;
+        [Tooltip("The table view — holds Hit/Stand/… until the animated deal (or the last action's card) has landed. Optional.")]
+        [SerializeField] private BlackjackTableView view;
 
         [Header("Betting")]
         [SerializeField] private Button dealButton;
@@ -133,11 +135,14 @@ namespace PlayCard.UI
                 repeatLabel.text = last > 0 ? $"REPEAT {ChipView.Format(last)}" : "REPEAT";
             }
 
-            Set(hitButton, myTurn);
-            Set(standButton, myTurn);
-            Set(doubleButton, myTurn && hand != null && hand.Cards.Count == 2);
-            Set(splitButton, myTurn && CanSplit(hand));
-            Set(insuranceButton, myTurn && hand != null && hand.Insurance == 0 && DealerShowsAce(board));
+            // Hold the action buttons until the deal (or the last action's card) has LANDED, so you can't act while
+            // cards are still flying in. Re-gated from Update when the animating state flips (cards settle off-board).
+            bool act = myTurn && (view == null || !view.AnyCardAnimating());
+            Set(hitButton, act);
+            Set(standButton, act);
+            Set(doubleButton, act && hand != null && hand.Cards.Count == 2);
+            Set(splitButton, act && CanSplit(hand));
+            Set(insuranceButton, act && hand != null && hand.Insurance == 0 && DealerShowsAce(board));
 
             // The server round-driver auto-settles ~2s after everyone has acted (and auto-stands a player whose
             // turn timer expired). This Dealer Play button is an optional "settle now" shortcut, shown once all
@@ -148,11 +153,23 @@ namespace PlayCard.UI
             if (statusText != null) statusText.text = BuildStatus(board);
         }
 
+        private bool _lastAnimating;
+
         private void Update()
         {
+            if (table == null) return;
             // Re-render each frame during a round so the turn countdown actually ticks.
-            if (table != null && table.Board != null && table.Board.RoundInProgress && statusText != null)
+            if (table.Board != null && table.Board.RoundInProgress && statusText != null)
                 statusText.text = BuildStatus(table.Board);
+
+            // Cards land BETWEEN board pushes, so re-gate the buttons when the deal-animating state flips — otherwise
+            // Refresh (board-driven) would leave Hit/Stand a beat behind the cards.
+            bool animating = view != null && view.AnyCardAnimating();
+            if (animating != _lastAnimating)
+            {
+                _lastAnimating = animating;
+                Refresh(table.Board);
+            }
         }
 
         // Human-readable state for testing: bet phase, whose turn (+ countdown), dealer, and an end-of-round

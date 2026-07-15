@@ -85,36 +85,6 @@ MonoBehaviour:
       def: 100
       deformRisk: 0
       locked: 0
-    - key: BodyType
-      label: Face Masculinity
-      kind: 0
-      category: 1
-      axis: 
-      min: 40
-      max: 100
-      def: 50
-      deformRisk: 0
-      locked: 0
-    - key: Weight
-      label: Face Weight
-      kind: 0
-      category: 1
-      axis: 
-      min: 0
-      max: 70
-      def: 0
-      deformRisk: 0
-      locked: 0
-    - key: Muscle
-      label: Face Muscle
-      kind: 0
-      category: 1
-      axis: 
-      min: 0
-      max: 70
-      def: 50
-      deformRisk: 0
-      locked: 0
     - key: Squareness
       label: Jaw Squareness
       kind: 0
@@ -138,7 +108,7 @@ MonoBehaviour:
     - key: LashLength
       label: Lash Length
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 60
@@ -148,7 +118,7 @@ MonoBehaviour:
     - key: BrowsThickness
       label: Brow Thickness
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 100
@@ -218,7 +188,7 @@ MonoBehaviour:
     - key: EyesOuterCornersLow
       label: Eye Corner Down
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 25
@@ -228,7 +198,7 @@ MonoBehaviour:
     - key: EyesOuterCornersHigh
       label: Eye Corner Up
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 25
@@ -238,7 +208,7 @@ MonoBehaviour:
     - key: EyesSquare
       label: Eye Squareness
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 20
@@ -268,9 +238,9 @@ MonoBehaviour:
     - key: root
       label: Height / Scale
       kind: 1
-      category: 2
+      category: 0
       axis: 
-      min: 0.97
+      min: 1.03
       max: 1.06
       def: 1.05
       deformRisk: 0
@@ -278,9 +248,9 @@ MonoBehaviour:
     - key: spine_04
       label: Torso
       kind: 1
-      category: 2
+      category: 0
       axis: 
-      min: 0.95
+      min: 0.989
       max: 1.08
       def: 1.06
       deformRisk: 0
@@ -288,7 +258,7 @@ MonoBehaviour:
     - key: clavicle_l
       label: Shoulder Width
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.97
       max: 1.12
@@ -298,7 +268,7 @@ MonoBehaviour:
     - key: shoulder_twist_l
       label: Shoulders
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.25
@@ -308,7 +278,7 @@ MonoBehaviour:
     - key: upperarm_twist_02_l
       label: Upper Arm
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.95
       max: 1.2
@@ -318,7 +288,7 @@ MonoBehaviour:
     - key: lowerarm_twist_02_l
       label: Forearm / Biceps
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.22
@@ -328,7 +298,7 @@ MonoBehaviour:
     - key: thigh_twist_01_l
       label: Thigh
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.9
       max: 1.15
@@ -338,7 +308,7 @@ MonoBehaviour:
     - key: calf_twist_01_l
       label: Calf
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.25
@@ -348,7 +318,7 @@ MonoBehaviour:
     - key: head
       label: Head Size
       kind: 1
-      category: 2
+      category: 1
       axis: 
       min: 0.95
       max: 1.05
@@ -358,7 +328,7 @@ MonoBehaviour:
     - key: eyeRoot_l
       label: Eye Width
       kind: 2
-      category: 2
+      category: 3
       axis: x
       min: 0.88
       max: 1
@@ -368,7 +338,7 @@ MonoBehaviour:
     - key: eyeRoot_l
       label: Eye Height
       kind: 2
-      category: 2
+      category: 3
       axis: y
       min: 0.85
       max: 1
@@ -439,36 +409,6 @@ MonoBehaviour:
       def: 100
       deformRisk: 0
       locked: 0
-    - key: BodyType
-      label: Face Femininity
-      kind: 0
-      category: 1
-      axis: 
-      min: 0
-      max: 40
-      def: 0
-      deformRisk: 0
-      locked: 0
-    - key: Weight
-      label: Face Weight
-      kind: 0
-      category: 1
-      axis: 
-      min: 0
-      max: 70
-      def: 0
-      deformRisk: 0
-      locked: 0
-    - key: Muscle
-      label: Face Muscle
-      kind: 0
-      category: 1
-      axis: 
-      min: 0
-      max: 50
-      def: 0
-      deformRisk: 0
-      locked: 0
     - key: Squareness
       label: Jaw Squareness
       kind: 0
@@ -492,7 +432,7 @@ MonoBehaviour:
     - key: LashLength
       label: Lash Length
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 100
@@ -502,7 +442,7 @@ MonoBehaviour:
     - key: BrowsThickness
       label: Brow Thickness
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 90
@@ -572,7 +512,7 @@ MonoBehaviour:
     - key: EyesOuterCornersLow
       label: Eye Corner Down
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 25
@@ -582,7 +522,7 @@ MonoBehaviour:
     - key: EyesOuterCornersHigh
       label: Eye Corner Up
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 30
@@ -592,7 +532,7 @@ MonoBehaviour:
     - key: EyesSquare
       label: Eye Squareness
       kind: 0
-      category: 1
+      category: 3
       axis: 
       min: 0
       max: 20
@@ -622,9 +562,9 @@ MonoBehaviour:
     - key: root
       label: Height / Scale
       kind: 1
-      category: 2
+      category: 0
       axis: 
-      min: 0.96
+      min: 0.99
       max: 1.04
       def: 1
       deformRisk: 0
@@ -632,9 +572,9 @@ MonoBehaviour:
     - key: spine_04
       label: Torso
       kind: 1
-      category: 2
+      category: 0
       axis: 
-      min: 0.9
+      min: 0.939
       max: 1.03
       def: 0.955
       deformRisk: 0
@@ -642,7 +582,7 @@ MonoBehaviour:
     - key: clavicle_l
       label: Shoulder Width
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.95
       max: 1.02
@@ -652,7 +592,7 @@ MonoBehaviour:
     - key: shoulder_twist_l
       label: Shoulders
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.8
       max: 1.08
@@ -662,7 +602,7 @@ MonoBehaviour:
     - key: upperarm_twist_02_l
       label: Upper Arm
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 0.95
       max: 1.22
@@ -672,7 +612,7 @@ MonoBehaviour:
     - key: lowerarm_twist_02_l
       label: Forearm
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.2
@@ -682,7 +622,7 @@ MonoBehaviour:
     - key: thigh_twist_01_l
       label: Thigh
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.15
@@ -692,7 +632,7 @@ MonoBehaviour:
     - key: calf_twist_01_l
       label: Calf
       kind: 1
-      category: 2
+      category: 0
       axis: 
       min: 1
       max: 1.25
@@ -702,7 +642,7 @@ MonoBehaviour:
     - key: head
       label: Head Size
       kind: 1
-      category: 2
+      category: 1
       axis: 
       min: 0.96
       max: 1.04
@@ -712,7 +652,7 @@ MonoBehaviour:
     - key: eyeRoot_l
       label: Eye Width
       kind: 2
-      category: 2
+      category: 3
       axis: x
       min: 0.95
       max: 1.05
@@ -722,7 +662,7 @@ MonoBehaviour:
     - key: eyeRoot_l
       label: Eye Height
       kind: 2
-      category: 2
+      category: 3
       axis: y
       min: 0.9
       max: 1.12
@@ -742,12 +682,12 @@ MonoBehaviour:
     allowedPartIds: []
   - slot: Hat
     label: Hat
-    group: Face
+    group: Outfit
     extraSlots: []
     allowedPartIds: []
   - slot: UpperFace
     label: Glasses
-    group: Face
+    group: Outfit
     extraSlots: []
     allowedPartIds: []
   - slot: LowerFace

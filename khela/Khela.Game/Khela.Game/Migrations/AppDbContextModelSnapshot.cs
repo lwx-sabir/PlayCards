@@ -243,6 +243,9 @@ namespace Khela.Game.Migrations
                     b.Property<DateTime?>("IconUpdatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<bool>("IsDealer")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<bool>("IsExclusive")
                         .HasColumnType("tinyint(1)");
 

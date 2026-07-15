@@ -42,15 +42,8 @@ namespace Khela.Game.Controllers
             => Run(uid => _tables.PlaceBetsAsync(tableId, uid, req));
 
         [HttpPost("{tableId}/deal")]
-        public async Task<IActionResult> Deal(string tableId)
-        {
-            try
-            {
-                var t = await _tables.DealAsync(tableId);
-                return t == null ? NotFound("Table not found or expired.") : Ok(ThreeCardPokerBoard.Build(t));
-            }
-            catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
-        }
+        public Task<IActionResult> Deal(string tableId)
+            => Run(uid => _tables.DealAsync(tableId, uid));   // seated-player check is enforced in the manager
 
         [HttpPost("{tableId}/play/{seatNumber:int}")]
         public Task<IActionResult> Play(string tableId, int seatNumber)
@@ -65,6 +58,17 @@ namespace Khela.Game.Controllers
         {
             var t = await _tables.GetTableAsync(tableId);
             return t == null ? NotFound("Table not found or expired.") : Ok(ThreeCardPokerBoard.Build(t));
+        }
+
+        /// <summary>Seated keep-alive — tells the server we're still here so the stalled-seat reaper doesn't drop us.
+        /// The live (SignalR) transport pings the hub; the polling fallback hits this REST endpoint.</summary>
+        [HttpPost("{tableId}/heartbeat")]
+        public async Task<IActionResult> Heartbeat(string tableId)
+        {
+            var uid = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(uid)) return Unauthorized("Missing user id.");
+            try { await _tables.RecordHeartbeatAsync(tableId, uid); return Ok(new { ok = true }); }
+            catch (Exception ex) { return BadRequest(new { message = ex.Message }); }
         }
 
         /// <summary>Resolve the caller's userId, run the manager op, and return the board (mapping errors to 400/404).</summary>

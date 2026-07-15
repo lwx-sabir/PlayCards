@@ -24,12 +24,15 @@ namespace PlayCard.UI
         [SerializeField] private Button rewardsButton;
         [Tooltip("The Rewards_Daily / Missions panel to show — its binders fetch + paint on enable.")]
         [SerializeField] private GameObject rewardsPanel;
+        [Tooltip("Enters the 3D virtual world (DiveBar) on click — temporary world entry.")]
+        [SerializeField] private Button worldButton;
 
         private void Awake()
         {
             if (playButton != null) playButton.onClick.AddListener(SceneNavigator.GoToLobby);
             if (profileButton != null) profileButton.onClick.AddListener(OpenProfile);
             if (rewardsButton != null) rewardsButton.onClick.AddListener(OpenRewards);
+            if (worldButton != null) worldButton.onClick.AddListener(SceneNavigator.GoToWorld);
         }
 
         /// <summary>Show the user-profile panel; its ProfilePanelBinder fetches + repaints when it enables.</summary>

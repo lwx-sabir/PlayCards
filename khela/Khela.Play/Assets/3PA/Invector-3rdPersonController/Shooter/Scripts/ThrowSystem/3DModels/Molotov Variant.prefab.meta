@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cabdbc8bb69b103499d59a5319d76d33
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Shooter/Scripts/ThrowSystem/3DModels/Molotov
+    Variant.prefab
+  uploadId: 948174

@@ -28,6 +28,8 @@ namespace Khela.Game.Services.Cosmetics
         public string PriceCurrency { get; set; }         // "Coins" | "Gems" | "Kash" | "Chips" — NEVER "Tokens"
         public bool IsStarter { get; set; }
         public bool Exclusive { get; set; }
+        /// <summary>Character SKUs only: a house-only Dealer avatar, hidden from players. Ignored for item/set.</summary>
+        public bool IsDealer { get; set; }
         public bool Enabled { get; set; } = true;
         public int SortOrder { get; set; }
     }
@@ -91,6 +93,8 @@ namespace Khela.Game.Services.Cosmetics
         public string PriceCurrency { get; set; }
         public bool IsStarter { get; set; }
         public bool Exclusive { get; set; }
+        /// <summary>House-only Dealer avatar. Always false on player-facing catalog responses; set on the admin dealers list.</summary>
+        public bool IsDealer { get; set; }
         public int SortOrder { get; set; }
         public bool Owned { get; set; }
         /// <summary>True when a baked product-shot exists — fetch it from GET /api/shop/cosmetics/{id}/icon.</summary>

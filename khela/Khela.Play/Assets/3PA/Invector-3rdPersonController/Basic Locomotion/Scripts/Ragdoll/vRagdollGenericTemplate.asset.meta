@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b212dcbbabae4364fa28f5188c894060
+timeCreated: 1505424966
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Basic Locomotion/Scripts/Ragdoll/vRagdollGenericTemplate.asset
+  uploadId: 948174

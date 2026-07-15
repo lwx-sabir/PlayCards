@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: d80a6c3b7bfe549d9a839d1ee56cd2c9
+DefaultImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Basic Locomotion/Editor/Resources/vMobileAddon.unitypackage
+  uploadId: 948174

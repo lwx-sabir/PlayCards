@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cf7f70800caa9e741ab6852f5100cf9c
+timeCreated: 1492616121
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 97418
+  packageName: Invector Swimming Add-on
+  packageVersion: 1.7
+  assetPath: Assets/Invector-3rdPersonController/Add-ons/Swimming/Prefabs/Pool.prefab
+  uploadId: 640428

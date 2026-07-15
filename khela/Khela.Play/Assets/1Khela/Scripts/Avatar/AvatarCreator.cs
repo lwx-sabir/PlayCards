@@ -344,15 +344,23 @@ namespace PlayCard.Avatar
         /// <summary>Snapshot the live rig and push it to the server (source of truth). Returns success.</summary>
         public async Task<bool> SaveAsync()
         {
-            if (outfitSystem == null) return false;
+            if (outfitSystem == null) { Debug.LogError("[AvatarCreator] SaveAsync: outfitSystem is NULL — nothing to snapshot."); return false; }
             if (SaveWouldClobber)   // stored avatar failed to load — refuse rather than overwrite it with the fallback base
             {
                 Debug.LogError("[AvatarCreator] SaveAsync refused: your saved avatar didn't load, so saving now would overwrite it with a fallback base.");
                 return false;
             }
+            if (AvatarService.Instance == null)
+            {
+                Debug.LogError("[AvatarCreator] SaveAsync: AvatarService.Instance is NULL — no session. Launch from the Boot scene so login/session exist.");
+                return false;
+            }
             var data = BMAC_SaveSystem.GetCharacterData(outfitSystem);
             var avatar = AvatarMapper.FromCharacter(data, CurrentGender.ToString(), CurrentBaseId);
-            return await AvatarService.Instance.SaveAsync(avatar);
+            Debug.Log($"[AvatarCreator] SaveAsync → POSTing: base={CurrentBaseId} gender={CurrentGender} outfits={avatar.Outfits?.Count ?? -1} body={avatar.Body?.Count ?? -1} face={avatar.Face?.Count ?? -1} mods={avatar.Mods?.Count ?? -1}");
+            var ok = await AvatarService.Instance.SaveAsync(avatar);
+            Debug.Log($"[AvatarCreator] SaveAsync result = {ok}");
+            return ok;
         }
     }
 }

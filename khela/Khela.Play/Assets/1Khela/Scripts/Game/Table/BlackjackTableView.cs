@@ -98,6 +98,9 @@ namespace PlayCard.Game.Table
         [Tooltip("Delay between each PLAYER/DEALER's cards being collected — a seat's cards leave TOGETHER, seats one " +
                  "after another. 0 = all collect at once.")]
         [SerializeField] private float collectStagger = 0.1f;
+        [Tooltip("After the round's LAST card lands (e.g. a bust), hold this long before sweeping the felt — so the " +
+                 "final hand is readable and the round doesn't clear the instant the server resolves. 0 = clear immediately.")]
+        [SerializeField] private float roundEndHold = 0.7f;
 
         private CardPool _pool;
         private Vector3 _cardBaseScale = Vector3.one;   // the card prefab's localScale — split cards shrink from this
@@ -105,11 +108,20 @@ namespace PlayCard.Game.Table
         private readonly Dictionary<int, Slot> _rendered = new Dictionary<int, Slot>();
         private readonly HashSet<int> _desired = new HashSet<int>();
         private readonly List<int> _stale = new List<int>();
-        private readonly HashSet<int> _pendingDeal = new HashSet<int>();    // new cards parked at the shoe, awaiting their staggered deal
+        private readonly HashSet<int> _pendingDeal = new HashSet<int>();    // new cards parked at the shoe, awaiting their deal (timer or throw)
         private readonly List<NewCard> _newThisPass = new List<NewCard>();  // new cards seen this Render, to schedule in deal order
 
+        // Throw-gated dealing: while a conductor (the dealer) is registered, each parked card waits in its SEAT's FIFO
+        // and flies only when the conductor calls ReleaseNextCard(seat) at a throw's release. With no conductor these
+        // stay empty and the view self-deals on its own stagger (fallback).
+        private readonly Dictionary<int, Queue<NewCard>> _releaseQueues = new Dictionary<int, Queue<NewCard>>();
+        private MonoBehaviour _conductor;                       // the dealer, when present (held as MonoBehaviour → no hard dependency on it)
+        private bool ConductorActive => _conductor != null;     // Unity-null aware: a destroyed/disabled dealer falls back automatically
+        private bool _collectPending;                           // a round-end sweep is held until the last card LANDS (so a bust/final card isn't cleared mid-flight)
+        private float _collectReadyAt = -1f;                    // unscaled time the held sweep may run (after roundEndHold); -1 = not armed
+
         private struct Slot { public CardVisual Card; public CardView Data; }
-        private struct NewCard { public int Key; public CardMover Mover; public Vector3 Pos; public Quaternion Rot; public Vector3 Scale; public int Order; }
+        private struct NewCard { public int Key; public int Seat; public CardMover Mover; public Vector3 Pos; public Quaternion Rot; public Vector3 Scale; public int Order; }
 
         private void Awake()
         {
@@ -157,6 +169,39 @@ namespace PlayCard.Game.Table
         /// <summary>The world anchor for a seat (1-based) or the dealer (0). Null if not authored.</summary>
         public Transform SeatAnchor(int seat) => seat <= 0 ? dealerAnchor : AnchorForSeat(seat);
 
+        /// <summary>
+        /// True when the card at (seat, handIndex, cardIndex) is DEALT AND LANDED — created, no longer parked in the
+        /// shoe/hand, and not mid-flight. Board-derived UI (the value / Blackjack / bust badge) gates on this so score
+        /// reveals in step with the ANIMATED deal instead of the instant the server pushes the final hand. Cards deal
+        /// in order, so a hand's last card being settled means the whole hand is on the felt.
+        /// </summary>
+        public bool CardSettled(int seat, int handIndex, int cardIndex)
+        {
+            int key = SlotKey(seat, handIndex, cardIndex);
+            if (_pendingDeal.Contains(key)) return false;                                     // still parked (awaiting throw/stagger)
+            if (!_rendered.TryGetValue(key, out var slot) || slot.Card == null) return false; // not created yet
+            var mover = slot.Card.GetComponent<CardMover>();
+            return mover == null || !mover.Animating;                                         // landed (not gliding in)
+        }
+
+        /// <summary>
+        /// True while ANY card is still coming in — parked at the shoe/hand awaiting its throw, or gliding to its spot.
+        /// Turn-driven UI (action buttons, the decision-pose/FOV camera) holds on this so it activates only once the
+        /// ANIMATED deal has fully landed, not the instant the server pushes the resolved board.
+        /// </summary>
+        public bool AnyCardAnimating()
+        {
+            if (_pendingDeal.Count > 0) return true;                        // parked, awaiting a throw/stagger
+            foreach (var kv in _rendered)
+            {
+                var card = kv.Value.Card;
+                if (card == null) continue;
+                var mover = card.GetComponent<CardMover>();
+                if (mover != null && mover.Animating) return true;         // gliding in
+            }
+            return false;
+        }
+
         // Per-seat fan params: a seat's override if ticked, else the shared default. seat 0 (dealer) = default.
         private void ResolveFan(int seat, out Vector2 gap, out float anglePer, out float lift, out bool mirror)
         {
@@ -199,16 +244,43 @@ namespace PlayCard.Game.Table
                 }
             }
 
-            // Deal this pass's new cards in ONE BY ONE, in real dealing order (sorted, then staggered).
+            // Deal this pass's new cards in ONE BY ONE, in real dealing order. With a conductor present each card waits
+            // in its seat's release queue for the dealer's throw; otherwise the view self-deals on its own stagger.
             if (_newThisPass.Count > 0)
             {
                 _newThisPass.Sort((a, b) => a.Order.CompareTo(b.Order));
-                for (int i = 0; i < _newThisPass.Count; i++)
-                    StartCoroutine(DealRoutine(_newThisPass[i], i * Mathf.Max(0f, dealStagger)));
+                if (ConductorActive)
+                    for (int i = 0; i < _newThisPass.Count; i++) EnqueueForRelease(_newThisPass[i]);
+                else
+                    for (int i = 0; i < _newThisPass.Count; i++)
+                        StartCoroutine(DealRoutine(_newThisPass[i], i * Mathf.Max(0f, dealStagger)));
                 _newThisPass.Clear();
             }
 
             // Anything no longer on the board leaves — collected per seat (a seat's cards together), seats staggered.
+            // BUT hold the sweep while a card is still coming in (e.g. a just-dealt BUST/final card), so the round
+            // doesn't clear the felt before that card lands. Update() finishes the deferred sweep once it settles.
+            _stale.Clear();
+            foreach (var kv in _rendered)
+                if (!_desired.Contains(kv.Key)) _stale.Add(kv.Key);
+            // Defer the sweep to Update, which waits for the last card to LAND then holds — so a bust/final card isn't
+            // cleared mid-flight, and a re-push of the settled board can't skip the hold. (Collected cards leave
+            // _rendered, so they won't be re-swept.)
+            if (_stale.Count > 0) _collectPending = true;
+            else { _collectPending = false; _collectReadyAt = -1f; }
+        }
+
+        private void Update()
+        {
+            // Complete a deferred round-end sweep once the last card has LANDED, then hold roundEndHold so the final
+            // hand (e.g. a bust) is readable. Render is board-driven, but a bust/final card lands BETWEEN pushes —
+            // without this the felt would clear the instant the server resolves.
+            if (!_collectPending) { _collectReadyAt = -1f; return; }
+            if (AnyCardAnimating()) { _collectReadyAt = -1f; return; }              // still landing → keep waiting
+            if (_collectReadyAt < 0f) { _collectReadyAt = Time.unscaledTime + Mathf.Max(0f, roundEndHold); return; }
+            if (Time.unscaledTime < _collectReadyAt) return;                        // hold so the final hand is visible
+
+            _collectPending = false; _collectReadyAt = -1f;
             _stale.Clear();
             foreach (var kv in _rendered)
                 if (!_desired.Contains(kv.Key)) _stale.Add(kv.Key);
@@ -224,14 +296,117 @@ namespace PlayCard.Game.Table
         // Real dealing order for a card: round by round (cardIndex), players (seat asc) then the dealer (seat 0) LAST.
         private static int DealOrder(int seat, int cardIndex) => cardIndex * 1000 + (seat == 0 ? 999 : seat);
 
-        // Deal one queued card in on its turn: wait its stagger, reveal it at the shoe, slide it to its fan spot.
-        private IEnumerator DealRoutine(NewCard nc, float delay)
+        // Reveal ONE parked card: drop it from the pending set, activate it, and slide it from the shoe to its fan
+        // spot. Idempotent — guarded on _pendingDeal so a double release (fast push / stale queue entry) is a no-op.
+        // Shared by the conductor's ReleaseNextCard and the no-conductor DealRoutine fallback.
+        private void Release(NewCard nc)
         {
-            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
-            if (nc.Mover == null || !_rendered.ContainsKey(nc.Key)) yield break;   // collected / gone while waiting
+            if (nc.Mover == null || !_pendingDeal.Contains(nc.Key)) return;   // collected, or already released
             _pendingDeal.Remove(nc.Key);
             nc.Mover.gameObject.SetActive(true);
             nc.Mover.Target(nc.Pos, nc.Rot, nc.Scale, dealSeconds);
+        }
+
+        // FALLBACK (no conductor): deal one queued card in on its turn — wait its stagger, then release it.
+        private IEnumerator DealRoutine(NewCard nc, float delay)
+        {
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            Release(nc);
+        }
+
+        // Park a card in its SEAT's release FIFO (conductor path). Cards arrive here already sorted by deal order, so a
+        // seat's queue holds its cards — spanning EVERY split hand at that seat — in the order the dealer throws them.
+        private void EnqueueForRelease(NewCard nc)
+        {
+            if (!_releaseQueues.TryGetValue(nc.Seat, out var q)) { q = new Queue<NewCard>(); _releaseQueues[nc.Seat] = q; }
+            q.Enqueue(nc);
+        }
+
+        /// <summary>
+        /// Fly the EARLIEST-dealt still-parked card for <paramref name="seat"/> from the dealer's hand to its fan spot.
+        /// The deal conductor (<see cref="DealerAnimator"/>) calls this at each throw's RELEASE moment, so exactly one
+        /// card leaves her hand per throw. No-op when nothing is parked for the seat (a board push that outran the
+        /// throws, a seat with no throw clip, or a double release) so a card is never lost or dealt twice. Ignored
+        /// entirely when no conductor is registered (the view self-deals instead).
+        /// </summary>
+        public void ReleaseNextCard(int seat)
+        {
+            if (!ConductorActive) return;
+            if (!_releaseQueues.TryGetValue(seat, out var q)) return;
+            while (q.Count > 0)
+            {
+                var nc = q.Dequeue();
+                if (_pendingDeal.Contains(nc.Key)) { Release(nc); return; }   // still parked → fly exactly this one
+                // otherwise it was collected / already released — discard and try the seat's next parked card
+            }
+        }
+
+        // Rebuild each release FIFO keeping only cards still parked (in _pendingDeal), preserving order. Runs after
+        // CollectStale has removed collected keys from _pendingDeal, so a card abandoned mid-deal can't strand a stale
+        // (pooled) entry that a later round's identical SlotKey would wrongly release.
+        private void PurgeReleaseQueues()
+        {
+            if (_releaseQueues.Count == 0) return;
+            foreach (var q in _releaseQueues.Values)
+            {
+                int n = q.Count;
+                for (int i = 0; i < n; i++)
+                {
+                    var nc = q.Dequeue();
+                    if (_pendingDeal.Contains(nc.Key)) q.Enqueue(nc);
+                }
+            }
+        }
+
+        // ---- Deal conductor registration (optional; no hard dependency on the dealer) ----
+
+        /// <summary>
+        /// Register the deal conductor (the dealer). While one is registered, newly dealt cards PARK at the shoe and
+        /// fly only when the conductor calls <see cref="ReleaseNextCard"/> at a throw's release — so cards visibly
+        /// leave her hand as she throws. Idempotent; a later conductor replaces an earlier one.
+        /// </summary>
+        public void RegisterConductor(MonoBehaviour conductor)
+        {
+            if (conductor != null) _conductor = conductor;
+        }
+
+        /// <summary>
+        /// Clear the deal conductor (dealer disabled / destroyed). The view reverts to its own staggered self-deal, and
+        /// anything still parked is released at once so a vanishing dealer can never strand a card. Only clears if
+        /// <paramref name="conductor"/> is the one currently registered.
+        /// </summary>
+        public void UnregisterConductor(MonoBehaviour conductor)
+        {
+            if (_conductor != conductor) return;
+            _conductor = null;
+            FlushReleaseQueues();
+        }
+
+        // Release everything still parked immediately (no throw left to wait for) — used when the conductor goes away.
+        private void FlushReleaseQueues()
+        {
+            foreach (var q in _releaseQueues.Values)
+                while (q.Count > 0) Release(q.Dequeue());
+            _releaseQueues.Clear();
+        }
+
+        /// <summary>
+        /// Show every currently-PARKED card INSTANTLY in its fan spot (SNAP, no deal-in, no throw). The conductor calls
+        /// this on its baseline board so a mid-round JOIN reveals the already-dealt cards at once, instead of leaving
+        /// them parked hidden waiting on throws that (correctly) never fire for cards dealt before we arrived.
+        /// </summary>
+        public void SnapParkedCards()
+        {
+            foreach (var q in _releaseQueues.Values)
+                while (q.Count > 0)
+                {
+                    var nc = q.Dequeue();
+                    if (nc.Mover == null || !_pendingDeal.Contains(nc.Key)) continue;
+                    _pendingDeal.Remove(nc.Key);
+                    nc.Mover.gameObject.SetActive(true);
+                    nc.Mover.Snap(nc.Pos, nc.Rot, nc.Scale);
+                }
+            _releaseQueues.Clear();
         }
 
         // Cards left the board: group by seat so a hand's cards leave TOGETHER, and stagger the seats (dealer last).
@@ -248,6 +423,8 @@ namespace PlayCard.Game.Table
                 if (!groups.TryGetValue(seat, out var list)) { list = new List<CardVisual>(); groups[seat] = list; }
                 list.Add(card);
             }
+
+            PurgeReleaseQueues();   // drop collected cards from the release FIFOs so a reused SlotKey can't fly a pooled card
 
             if (discardTarget == null || collectSeconds <= 0f)
             {
@@ -313,13 +490,16 @@ namespace PlayCard.Game.Table
                     var mover = EnsureMover(card);
                     _rendered[key] = new Slot { Card = card, Data = data };
 
-                    if (dealSource != null && dealSeconds > 0f && dealStagger > 0f)
+                    if (dealSource != null && dealSeconds > 0f && (ConductorActive || dealStagger > 0f))
                     {
-                        // Sequential deal: park HIDDEN at the shoe; Render queues it to slide in on its turn.
+                        // Sequential deal: park HIDDEN at the shoe. Render then either hands it to the dealer's
+                        // per-seat release queue (conductor present → flies on her throw) or slides it in on the
+                        // view's own stagger (fallback) — both drain _newThisPass in real deal order. A conductor drives
+                        // the timing, so we park regardless of dealStagger (that value is only the fallback's cadence).
                         mover.Snap(anchor.InverseTransformPoint(dealSource.position), rot, targetScale);
                         card.gameObject.SetActive(false);
                         _pendingDeal.Add(key);
-                        _newThisPass.Add(new NewCard { Key = key, Mover = mover, Pos = pos, Rot = rot, Scale = targetScale, Order = DealOrder(seat, i) });
+                        _newThisPass.Add(new NewCard { Key = key, Seat = seat, Mover = mover, Pos = pos, Rot = rot, Scale = targetScale, Order = DealOrder(seat, i) });
                     }
                     else if (dealSource != null && dealSeconds > 0f)
                     {

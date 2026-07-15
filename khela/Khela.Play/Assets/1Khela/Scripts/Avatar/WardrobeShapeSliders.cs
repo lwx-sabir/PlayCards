@@ -27,8 +27,11 @@ namespace PlayCard.Avatar
         [SerializeField] private WardrobeTabBar rail;
         [Tooltip("The creator whose shapes these sliders edit.")]
         [SerializeField] private AvatarCreator creator;
+        [Tooltip("Colour-palette row prefab (has a WardrobePaletteRow). Shown at the TOP of tabs that have a palette (Body → Skin).")]
+        [SerializeField] private WardrobePaletteRow paletteRowPrefab;
 
         private readonly List<WardrobeSliderItem> _items = new List<WardrobeSliderItem>();
+        private readonly List<WardrobePaletteRow> _paletteRows = new List<WardrobePaletteRow>();
 
         private void OnEnable() { if (rail != null) rail.OnSelected += OnTab; }
         private void OnDisable() { if (rail != null) rail.OnSelected -= OnTab; }
@@ -58,6 +61,9 @@ namespace PlayCard.Avatar
                 return;
             }
 
+            // Colour palette row(s) FIRST — e.g. the Body tab leads with the Skin palette.
+            SpawnPalettes(category);
+
             var shapes = creator.EditableShapes(category);
             Debug.Log($"[WardrobeShapeSliders] {key} → category={category}, gender={creator.CurrentGender}, {shapes.Count} sliders.");
 
@@ -73,10 +79,29 @@ namespace PlayCard.Avatar
             }
         }
 
+        // Which curated palette (by target) leads a shape tab, or null for none. Body → Skin; extend as needed (e.g. Eyes → Eyes).
+        private static string PaletteTargetFor(ShapeCategory category)
+            => category == ShapeCategory.Body ? "Skin" : null;
+
+        /// <summary>Spawn the tab's colour palette row at the top of the list (before the sliders).</summary>
+        private void SpawnPalettes(ShapeCategory category)
+        {
+            string target = PaletteTargetFor(category);
+            if (target == null || paletteRowPrefab == null || creator == null) return;
+            var pal = creator.Palettes?.Find(p => p != null && string.Equals(p.target, target, StringComparison.OrdinalIgnoreCase));
+            if (pal == null) return;
+            var row = Instantiate(paletteRowPrefab, container);
+            row.transform.SetAsFirstSibling();   // keep it above the sliders even if spawn order shifts
+            row.Bind(pal, creator);
+            _paletteRows.Add(row);
+        }
+
         private void Clear()
         {
             foreach (var i in _items) if (i != null) Destroy(i.gameObject);
             _items.Clear();
+            foreach (var r in _paletteRows) if (r != null) Destroy(r.gameObject);
+            _paletteRows.Clear();
         }
     }
 }

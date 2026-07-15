@@ -45,6 +45,23 @@ namespace Khela.Game.Controllers
             return result.Ok ? Ok(result) : BadRequest(result);
         }
 
+        /// <summary>Admin: the house-only Dealer avatars (hidden from players) — to author + assign table dealers.</summary>
+        [HttpGet("dealers")]
+        [Authorize(Policy = "Admin")]
+        public async Task<IActionResult> Dealers()
+            => Ok(new { skus = await _cosmetics.GetDealersAsync() });
+
+        /// <summary>A single table dealer's look, readable by any player so the client can render the dealer at the
+        /// table: the one with <paramref name="id"/> (dealer/{id}), or the default (first) when omitted (dealer). Not
+        /// the browsable roster (that's the Admin /dealers route above).</summary>
+        [HttpGet("dealer")]
+        public async Task<IActionResult> DefaultDealer()
+            => Ok(new { dealer = await _cosmetics.GetDealerAsync(null) });
+
+        [HttpGet("dealer/{id}")]
+        public async Task<IActionResult> Dealer(string id)
+            => Ok(new { dealer = await _cosmetics.GetDealerAsync(id) });
+
         /// <summary>Admin: upsert the authored catalog JSON (khela/catalog/cosmetics.json from the exporter tool).</summary>
         [HttpPost("import")]
         [Authorize(Policy = "Admin")]

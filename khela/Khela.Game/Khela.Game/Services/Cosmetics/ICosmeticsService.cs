@@ -12,8 +12,17 @@ namespace Khela.Game.Services.Cosmetics
     /// </summary>
     public interface ICosmeticsService
     {
-        /// <summary>The enabled catalog with the caller's ownership flags (starters count as owned).</summary>
+        /// <summary>The enabled catalog with the caller's ownership flags (starters count as owned). Excludes dealers.</summary>
         Task<List<CatalogSkuDto>> GetCatalogAsync(Guid userId);
+
+        /// <summary>Admin: the house-only Dealer avatars (Character SKUs flagged IsDealer, with their character payload).
+        /// Never returned to players — used to author and assign table dealers.</summary>
+        Task<List<CatalogSkuDto>> GetDealersAsync();
+
+        /// <summary>A SINGLE Dealer avatar's look, readable by any player to render the table dealer: the one with
+        /// <paramref name="dealerId"/>, or the default (first by sort order) when null/empty. Only ever returns a SKU
+        /// that IS a dealer (never an arbitrary, unowned Character SKU). Not the browsable roster. Null if no such dealer.</summary>
+        Task<CatalogSkuDto> GetDealerAsync(string dealerId = null);
 
         /// <summary>Admin: upsert the authored catalog JSON (from the Unity Cosmetic Exporter). Rejects Tokens pricing.</summary>
         Task<ImportResultDto> ImportAsync(CatalogImportDto file);

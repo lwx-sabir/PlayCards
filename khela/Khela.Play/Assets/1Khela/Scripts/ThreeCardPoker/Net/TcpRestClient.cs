@@ -77,7 +77,18 @@ namespace PlayCard.ThreeCardPoker.Net
         public Task<ApiResult<TcpBoard>> GetBoardAsync(string tableId)
             => SendAsync<TcpBoard>(HttpMethod.Get, $"/api/threecard/{tableId}/board");
 
+        /// <summary>Seated keep-alive over REST (the polling transport has no socket to ping) so the server's
+        /// stalled-seat reaper doesn't drop us.</summary>
+        public Task<ApiResult<bool>> HeartbeatAsync(string tableId)
+            => SendOkAsync(HttpMethod.Post, $"/api/threecard/{tableId}/heartbeat");
+
         // ---------- core (mirrors BlackjackRestClient) ----------
+
+        private async Task<ApiResult<bool>> SendOkAsync(HttpMethod method, string path, object body = null)
+        {
+            var raw = await SendRawAsync(method, path, body);
+            return raw.Ok ? ApiResult<bool>.Success(true, raw.Status) : ApiResult<bool>.Fail(raw.Status, raw.Error);
+        }
 
         private async Task<ApiResult<T>> SendAsync<T>(HttpMethod method, string path, object body = null)
         {

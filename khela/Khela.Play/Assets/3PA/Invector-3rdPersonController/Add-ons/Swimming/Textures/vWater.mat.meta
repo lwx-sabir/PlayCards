@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cffa990fb696b9d4abeb4e2ba6f423b1
+timeCreated: 1492611117
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 97418
+  packageName: Invector Swimming Add-on
+  packageVersion: 1.7
+  assetPath: Assets/Invector-3rdPersonController/Add-ons/Swimming/Textures/vWater.mat
+  uploadId: 640428

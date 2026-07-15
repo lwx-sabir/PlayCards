@@ -25,7 +25,7 @@ namespace PlayCard.Avatar
         /// <summary>Blendshape = OutfitSystem.SetShape(key,0-100). BoneUniform = BodyShapeModifier.scaleValue (~1.0).
         /// BoneAxis = a single per-axis scale on a bone (e.g. eyeRoot x/y — the "animal eyes" control).</summary>
         public enum ShapeKind { Blendshape, BoneUniform, BoneAxis }
-        public enum ShapeCategory { Body, Face, BodyMod }
+        public enum ShapeCategory { Body, Face, BodyMod, Eyes }
 
         [Serializable]
         public sealed class ShapeLimit

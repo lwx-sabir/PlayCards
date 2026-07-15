@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 31da8d6358270ee479acd43cec8112a7
+timeCreated: 1486657347
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 84583
+  packageName: Invector Third Person Controller - Shooter Template
+  packageVersion: 2.6.6
+  assetPath: Assets/Invector-3rdPersonController/Shooter/3DModels/Props/vBarrel/3DModel/Materials/vBarrel_DifuseC.mat
+  uploadId: 948174

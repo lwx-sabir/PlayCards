@@ -23,6 +23,8 @@ namespace PlayCard.Game.Table
         }
 
         [SerializeField] private TableController table;
+        [Tooltip("The table view — holds the DECISION framing until the animated deal has landed. Optional (null = react to the board directly).")]
+        [SerializeField] private BlackjackTableView view;
 
         [Tooltip("One entry per seat — element 0 = seat 1, element 1 = seat 2, …")]
         [SerializeField] private SeatView[] seats;
@@ -42,6 +44,7 @@ namespace PlayCard.Game.Table
         private float _targetFov;
         private Vector3 _posVel;
         private float _fovVel;
+        private BoardSnapshot _board;
 
         private void Awake()
         {
@@ -68,25 +71,32 @@ namespace PlayCard.Game.Table
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
-        private void OnBoard(BoardSnapshot board)
+        private void OnBoard(BoardSnapshot board) { _board = board; Resolve(); }
+
+        // Choose the camera pose + FOV from the cached board. Called on every board push AND every LateUpdate, so the
+        // DECISION framing (close, on my turn) waits until the animated deal has LANDED instead of snapping in the
+        // instant the server resolves the round. Betting close is unaffected (no cards in flight during betting).
+        private void Resolve()
         {
+            var board = _board;
             int seat = table.MySeat;                 // 1-based, or -1 if not seated
-            // Close in (bet pose + bet fov) both while BETTING and while it's the local player's TURN, so acting on
-            // your hand gets the same focused framing as placing a bet; wide table pose otherwise.
+            bool dealt = view == null || !view.AnyCardAnimating();
+            // Close in (bet pose + bet fov) while BETTING, and on my TURN — but only ONCE the deal has landed, so the
+            // deal itself is watched from the wide table pose and we zoom in for the decision after the cards settle.
             bool betting = board != null && !board.RoundInProgress;
-            bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat;
+            bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat && dealt;
             bool close = betting || myTurn;
 
             // Use the local player's seat pose. If they're NOT seated (MySeat == -1) or that seat isn't authored,
             // fall back to the spectate pose — NOT seats[0], which would silently park everyone at the first seat
             // (that was the "always goes left" bug).
-            SeatView? view = null;
+            SeatView? seatView = null;
             if (seats != null && seat >= 1 && seat <= seats.Length)
-                view = seats[seat - 1];
+                seatView = seats[seat - 1];
 
-            if (view.HasValue)
+            if (seatView.HasValue)
             {
-                var v = view.Value;
+                var v = seatView.Value;
                 var pose = close ? v.betPose : v.tablePose;
                 if (pose == null) pose = v.tablePose ?? v.betPose;   // fall back to whichever is set
                 if (pose != null) _target = pose;
@@ -106,6 +116,7 @@ namespace PlayCard.Game.Table
 
         private void LateUpdate()
         {
+            Resolve();   // re-evaluate every frame so the decision framing waits for the animated deal to land
             if (_target == null) return;
 
             transform.position = Vector3.SmoothDamp(transform.position, _target.position, ref _posVel, moveTime);

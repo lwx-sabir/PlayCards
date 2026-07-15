@@ -194,6 +194,13 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<CosmeticPurchaseResult>> BuyCosmeticAsync(string skuId, string correlationId)
             => BalanceChangingAsync<CosmeticPurchaseResult>(HttpMethod.Post, $"/api/shop/cosmetics/{skuId}/buy", new { correlationId });
 
+        /// <summary>A table dealer's avatar look (GET /api/shop/cosmetics/dealer[/{id}]) — a SPECIFIC dealer by id, or
+        /// the default (first) house dealer when id is null/empty. Rendered read-only at the table. Dealer is null in
+        /// the value when that dealer doesn't exist.</summary>
+        public Task<ApiResult<DealerEnvelope>> GetDealerAsync(string dealerId = null)
+            => SendAsync<DealerEnvelope>(HttpMethod.Get,
+                string.IsNullOrEmpty(dealerId) ? "/api/shop/cosmetics/dealer" : $"/api/shop/cosmetics/dealer/{dealerId}");
+
         /// <summary>Another player's PUBLIC profile (GET /api/profile/{userId}). 404/null if blocked or not found.</summary>
         public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)
             => SendAsync<PublicProfileData>(HttpMethod.Get, $"/api/profile/{userId}");
@@ -318,8 +325,11 @@ namespace PlayCard.Game.Net
                     req.UploadSettings.UploadStream = new MemoryStream(Encoding.UTF8.GetBytes(json));
                 }
 
-                // Best HTTP throws AsyncHTTPException on any non-2xx (and on network/timeout); 2xx returns the response.
                 var resp = await req.GetHTTPResponseAsync();
+                // Do NOT assume non-2xx throws — Best HTTP returns 4xx/5xx as a normal response. Treat any non-2xx as
+                // failure so a rejected save (e.g. the entitlement gate's 400) can't be reported to callers as success.
+                if (resp.StatusCode < 200 || resp.StatusCode >= 300)
+                    return new Raw(false, resp.StatusCode, resp.DataAsText, ExtractMessage(resp.DataAsText) ?? $"HTTP {resp.StatusCode}");
                 return new Raw(true, resp.StatusCode, resp.DataAsText, null);
             }
             catch (AsyncHTTPException hex)

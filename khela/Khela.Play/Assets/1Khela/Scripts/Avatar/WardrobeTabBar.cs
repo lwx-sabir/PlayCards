@@ -40,6 +40,7 @@ namespace PlayCard.Avatar
         [Header("Shape-tab icons (Body/Face/Shape — sliders have no BoZo thumbnail, assign your own)")]
         [SerializeField] private Sprite bodyIcon;
         [SerializeField] private Sprite faceIcon;
+        [SerializeField] private Sprite eyeIcon;
         [SerializeField] private Sprite shapeIcon;
 
         [Header("Sets tab (full costumes — Outfit group)")]
@@ -81,7 +82,7 @@ namespace PlayCard.Avatar
             foreach (var st in ShapeTabs)
             {
                 if (!InGroup(st.group)) continue;
-                Sprite icon = st.category == "Body" ? bodyIcon : st.category == "Face" ? faceIcon : shapeIcon;
+                Sprite icon = st.category == "Body" ? bodyIcon : st.category == "Face" ? faceIcon : st.category == "Eyes" ? eyeIcon : shapeIcon;
                 SpawnTab(ShapePrefix + st.category, st.label, icon);
             }
             if (showSetsTab && InGroup("Outfit")) SpawnTab(SetsKey, "Sets", setsIcon);
@@ -122,7 +123,7 @@ namespace PlayCard.Avatar
         {
             new ShapeTab { category = "Body",    label = "Body",  group = "Body" },
             new ShapeTab { category = "Face",    label = "Face",  group = "Body" },
-            new ShapeTab { category = "BodyMod", label = "Shape", group = "Body" },
+            new ShapeTab { category = "Eyes",    label = "Eyes",  group = "Body" },
         };
 
         /// <summary>Refresh the rail to show only a group's slots — the group bar calls this on a group click. Empty = all.</summary>

@@ -37,8 +37,9 @@ namespace Khela.Game.Services.Cosmetics
         public async Task<List<CatalogSkuDto>> GetCatalogAsync(Guid userId)
         {
             // Projection on purpose: never pull IconPng blobs into a catalog listing.
+            // Dealers are house-only avatars — never in a player-facing list.
             var skus = await _db.CosmeticSkus.AsNoTracking()
-                .Where(s => s.Enabled)
+                .Where(s => s.Enabled && !s.IsDealer)
                 .OrderBy(s => s.SortOrder).ThenBy(s => s.Id)
                 .Select(s => new
                 {
@@ -73,9 +74,62 @@ namespace Khela.Game.Services.Cosmetics
                 IsStarter = s.IsStarter,
                 Exclusive = s.IsExclusive,
                 SortOrder = s.SortOrder,
-                Owned = s.IsStarter || owned.Contains(s.Id),
+                Owned = s.IsStarter || s.Price <= 0 || owned.Contains(s.Id),
                 HasIcon = s.HasIcon,
             }).ToList();
+        }
+
+        // ---- dealers (admin only) ----
+
+        public async Task<List<CatalogSkuDto>> GetDealersAsync()
+        {
+            // House-only avatars: include the character payload so a dealer can be rendered/assigned. Admin-gated at
+            // the controller — never reachable from a player-facing route.
+            var skus = await _db.CosmeticSkus.AsNoTracking()
+                .Where(s => s.IsDealer)
+                .OrderBy(s => s.SortOrder).ThenBy(s => s.Id)
+                .Select(s => new { s.Id, s.Type, s.Name, s.Description, s.Gender, s.CharacterJson, HasIcon = s.IconPng != null })
+                .ToListAsync();
+
+            return skus.Select(s => new CatalogSkuDto
+            {
+                Id = s.Id,
+                Type = s.Type.ToString().ToLowerInvariant(),
+                Name = s.Name,
+                Description = s.Description,
+                Gender = s.Gender,
+                Character = FromJson<CharacterImportDto>(s.CharacterJson),
+                IsDealer = true,
+                HasIcon = s.HasIcon,
+            }).ToList();
+        }
+
+        /// <summary>A single dealer's look, readable by players to render the table dealer: the one with
+        /// <paramref name="dealerId"/>, or the default (first by sort order) if null/empty. Filtered to IsDealer, so a
+        /// player can never use this to fetch a normal (unowned) Character SKU. NOT a roster listing.</summary>
+        public async Task<CatalogSkuDto> GetDealerAsync(string dealerId = null)
+        {
+            var q = _db.CosmeticSkus.AsNoTracking().Where(x => x.IsDealer);
+            q = string.IsNullOrWhiteSpace(dealerId)
+                ? q.OrderBy(x => x.SortOrder).ThenBy(x => x.Id)   // default = the first dealer
+                : q.Where(x => x.Id == dealerId);
+
+            var s = await q
+                .Select(x => new { x.Id, x.Type, x.Name, x.Description, x.Gender, x.CharacterJson, HasIcon = x.IconPng != null })
+                .FirstOrDefaultAsync();
+            if (s == null) return null;
+
+            return new CatalogSkuDto
+            {
+                Id = s.Id,
+                Type = s.Type.ToString().ToLowerInvariant(),
+                Name = s.Name,
+                Description = s.Description,
+                Gender = s.Gender,
+                Character = FromJson<CharacterImportDto>(s.CharacterJson),
+                IsDealer = true,
+                HasIcon = s.HasIcon,
+            };
         }
 
         // ---- import (admin) ----
@@ -122,7 +176,10 @@ namespace Khela.Game.Services.Cosmetics
                     ? JsonSerializer.Serialize(dto.Character, Json) : null;
                 sku.Price = dto.Price;
                 sku.PriceCurrency = currency;
-                sku.IsStarter = dto.IsStarter;
+                // Dealer is a house-only FULL AVATAR — Character SKUs only; never let an item/set be flagged one.
+                sku.IsDealer = type == CosmeticSkuType.Character && dto.IsDealer;
+                // price 0 = free ⇒ implicitly a starter (owned by all) — but a house dealer is never a player starter.
+                sku.IsStarter = !sku.IsDealer && (dto.IsStarter || dto.Price <= 0);
                 sku.IsExclusive = dto.Exclusive;
                 sku.Enabled = dto.Enabled;
                 sku.SortOrder = dto.SortOrder;
@@ -186,10 +243,10 @@ namespace Khela.Game.Services.Cosmetics
                 return new PurchaseResultDto { Ok = false, Error = "Missing/invalid correlationId." };
 
             var sku = await _db.CosmeticSkus.AsNoTracking().FirstOrDefaultAsync(s => s.Id == skuId);
-            if (sku == null || !sku.Enabled)
+            if (sku == null || !sku.Enabled || sku.IsDealer)   // dealers are house-only — invisible + unbuyable to players
                 return new PurchaseResultDto { Ok = false, Error = "Unknown item." };
-            if (sku.IsStarter)
-                return new PurchaseResultDto { Ok = true, AlreadyOwned = true };   // starters are implicitly owned
+            if (sku.IsStarter || sku.Price <= 0)
+                return new PurchaseResultDto { Ok = true, AlreadyOwned = true };   // starters / price-0 are implicitly owned
             if (sku.PriceCurrency == CurrencyType.Tokens)   // belt-and-braces: import already forbids this
                 return new PurchaseResultDto { Ok = false, Error = "Item is not purchasable." };
 
@@ -240,12 +297,13 @@ namespace Khela.Game.Services.Cosmetics
             if (avatar?.Outfits == null || avatar.Outfits.Count == 0) return EquipValidationResult.Pass();
 
             // Projection on purpose: never pull IconPng blobs into the equip gate.
-            var skus = await _db.CosmeticSkus.AsNoTracking().Where(s => s.Enabled)
+            // Dealers are house-only avatars — they never participate in a player's entitlement.
+            var skus = await _db.CosmeticSkus.AsNoTracking().Where(s => s.Enabled && !s.IsDealer)
                 .Select(s => new SkuSlim
                 {
                     Id = s.Id, Type = s.Type, Name = s.Name, Gender = s.Gender, Path = s.Path,
                     ColorMode = s.ColorMode, DefaultColorsJson = s.DefaultColorsJson, PaletteJson = s.PaletteJson,
-                    PiecesJson = s.PiecesJson, CharacterJson = s.CharacterJson, IsStarter = s.IsStarter,
+                    PiecesJson = s.PiecesJson, CharacterJson = s.CharacterJson, IsStarter = s.IsStarter, Price = s.Price,
                 })
                 .ToListAsync();
             if (skus.Count == 0) return EquipValidationResult.Pass();   // bootstrap: no catalog yet → everything is free
@@ -259,13 +317,14 @@ namespace Khela.Game.Services.Cosmetics
             var cataloged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var s in skus)
             {
+                // ONLY standalone Item SKUs are commerce-controlled. Set/Character BUNDLES are sold as a whole, and their
+                // pieces include BASE DEFAULT parts (Pupil, Eyes/Iris, base hands/body) that EVERY avatar has — cataloging
+                // those blocked every player's save. Owning a bundle still justifies its pieces via the Set/Character
+                // cases in IsJustified below; wearing a base part you didn't buy is not a violation.
                 if (s.Type == CosmeticSkuType.Item && !string.IsNullOrEmpty(s.Path)) cataloged.Add(s.Path);
-                foreach (var p in FromJson<List<PieceImportDto>>(s.PiecesJson) ?? Empty) cataloged.Add(p.Path);
-                var ch = FromJson<CharacterImportDto>(s.CharacterJson);
-                if (ch?.Outfits != null) foreach (var p in ch.Outfits) cataloged.Add(p.Path);
             }
 
-            var ownedSkus = skus.Where(s => s.IsStarter || ownedIds.Contains(s.Id)).ToList();
+            var ownedSkus = skus.Where(s => s.IsStarter || s.Price <= 0 || ownedIds.Contains(s.Id)).ToList();
 
             foreach (var outfit in avatar.Outfits.Where(o => o != null && !string.IsNullOrEmpty(o.Path)))
             {
@@ -286,6 +345,7 @@ namespace Khela.Game.Services.Cosmetics
             public CosmeticColorMode ColorMode;
             public string DefaultColorsJson, PaletteJson, PiecesJson, CharacterJson;
             public bool IsStarter;
+            public decimal Price;
         }
 
         /// <summary>True when an owned SKU covers this equip (and its colours are legal for that SKU). Gender-locked
@@ -307,6 +367,7 @@ namespace Khela.Game.Services.Cosmetics
                     case CosmeticSkuType.Item when string.Equals(sku.Path, outfit.Path, StringComparison.OrdinalIgnoreCase):
                     {
                         sawPath = true;
+                        if (sku.Price <= 0) return true;   // free item: any colour is allowed (nothing to protect)
                         var defaults = FromJson<List<string>>(sku.DefaultColorsJson) ?? new List<string>();
                         if (outfit.Colors == null || outfit.Colors.Count == 0)
                         {
@@ -333,6 +394,7 @@ namespace Khela.Game.Services.Cosmetics
                             .FirstOrDefault(p => string.Equals(p.Path, outfit.Path, StringComparison.OrdinalIgnoreCase));
                         if (piece == null) break;
                         sawPath = true;
+                        if (sku.Price <= 0) return true;   // free bundle: pieces may be recoloured freely
                         if (outfit.Colors == null || outfit.Colors.Count == 0)
                         {
                             outfit.Colors = new List<string>(piece.Colors ?? new List<string>());
@@ -349,6 +411,7 @@ namespace Khela.Game.Services.Cosmetics
                         var piece = ch?.Outfits?.FirstOrDefault(p => string.Equals(p.Path, outfit.Path, StringComparison.OrdinalIgnoreCase));
                         if (piece == null) break;
                         sawPath = true;
+                        if (sku.Price <= 0) return true;   // free bundle: pieces may be recoloured freely
                         if (outfit.Colors == null || outfit.Colors.Count == 0)
                         {
                             outfit.Colors = new List<string>(piece.Colors ?? new List<string>());

@@ -37,9 +37,11 @@ namespace Khela.Game.Games.ThreeCardPoker
         private readonly IHubContext<ThreeCardPokerHub> _hub;
         private readonly ILogger<ThreeCardPokerTableManager> _logger;
         private readonly bool _progressionEnabled;   // master switch for the game-extension layer (XP/VIP/loyalty/missions), shared with blackjack
+        private readonly bool _reconciliationEnabled;   // opt-in stranded-stake sweeper (mirrors blackjack's Reconciliation:Enabled; default OFF)
 
         private const string LobbySet = "threecard:tables";
         private static readonly TimeSpan TableTtl = TimeSpan.FromHours(2);
+        private static readonly TimeSpan StalledTimeout = TimeSpan.FromSeconds(30);   // no heartbeat for this long → seat is dark (heartbeat-based reaper)
         private static string TableKey(string id) => $"threecard:table:{id}";
         private static string LockKey(string id) => $"tcplock:{id}";
 
@@ -47,6 +49,7 @@ namespace Khela.Game.Games.ThreeCardPoker
         {
             _scopes = scopes; _redis = redis; _hub = hub; _logger = logger;
             _progressionEnabled = config.GetValue("Progression:Enabled", true);
+            _reconciliationEnabled = config.GetValue("Reconciliation:Enabled", false);
         }
 
         // ─────────────────────────────── table state (Redis) ───────────────────────────────
@@ -295,7 +298,7 @@ namespace Khela.Game.Games.ThreeCardPoker
 
         // ─────────────────────────────── deal (debit-on-bet) ───────────────────────────────
 
-        public async Task<ThreeCardPokerTable> DealAsync(string tableId)
+        public async Task<ThreeCardPokerTable> DealAsync(string tableId, string userId)
         {
             var token = await AcquireLockAsync(tableId);
             try
@@ -303,6 +306,10 @@ namespace Khela.Game.Games.ThreeCardPoker
                 var t = await GetTableAsync(tableId);
                 if (t == null) return null;
                 if (t.Phase != "betting") throw new InvalidOperationException("A round is already in progress.");
+                // Authorization: only a player SEATED at this table may start the deal — closes the open-deal hole
+                // where any authenticated user (a spectator, or someone at another table) could force a deal.
+                if (!t.Seats.Any(s => s.Player?.Id == userId))
+                    throw new InvalidOperationException("Only a seated player can deal this table.");
 
                 var betters = t.Seats.Where(s => s.Player != null && s.InRound && s.Ante > 0m).ToList();
                 if (betters.Count == 0) throw new InvalidOperationException("No seats have posted an Ante.");
@@ -310,11 +317,18 @@ namespace Khela.Game.Games.ThreeCardPoker
                 var roundId = Guid.NewGuid().ToString();
 
                 // Reserve every pre-deal stake up front (Ante + side bets). A seat that can't cover is refunded
-                // whatever it managed to debit and dropped from the round — its chips are never stranded.
+                // whatever it managed to debit and dropped from the round. We also remember every committed
+                // reservation so the WHOLE deal can be rolled back if persisting the round then fails.
                 var dealt = new List<TcpSeat>();
+                var reserved = new List<(string uid, int seat, decimal amt, decimal gifted, string suffix)>();
                 foreach (var seat in betters)
                 {
-                    try { await ReserveSeatStakesAsync(seat, tableId, roundId); dealt.Add(seat); }
+                    try
+                    {
+                        var debits = await ReserveSeatStakesAsync(seat, tableId, roundId);
+                        foreach (var d in debits) reserved.Add((seat.Player.Id, seat.SeatNumber, d.amt, d.gifted, d.suffix));
+                        dealt.Add(seat);
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "3CP seat {Seat} could not reserve stakes; sitting out round {Round}.", seat.SeatNumber, roundId);
@@ -323,29 +337,48 @@ namespace Khela.Game.Games.ThreeCardPoker
                 }
                 if (dealt.Count == 0) throw new InvalidOperationException("No seat could cover its stake.");
 
-                // Deal from the provably-fair shuffle: one hand per reserved seat + the dealer's 3.
-                var seed = ProvableShuffle.DeriveSeed(Convert.FromHexString(t.ServerSeed), t.ClientSeed ?? "", t.RoundNonce);
-                var game = new ThreeCardPokerGame();
-                game.DealNewGame(dealt.Count, seed);
-                for (int i = 0; i < dealt.Count; i++) dealt[i].Cards = game.Seats[i].Cards;
-                t.DealerCards = game.DealerCards;
-                t.CurrentDeckHash = game.DeckHash();
+                try
+                {
+                    // Deal from the provably-fair shuffle: one hand per reserved seat + the dealer's 3.
+                    var seed = ProvableShuffle.DeriveSeed(Convert.FromHexString(t.ServerSeed), t.ClientSeed ?? "", t.RoundNonce);
+                    var game = new ThreeCardPokerGame();
+                    game.DealNewGame(dealt.Count, seed);
+                    for (int i = 0; i < dealt.Count; i++) dealt[i].Cards = game.Seats[i].Cards;
+                    t.DealerCards = game.DealerCards;
+                    t.CurrentDeckHash = game.DeckHash();
 
-                t.CurrentRoundId = roundId;
-                t.RoundInProgress = true;
-                t.RoundStartedAt = DateTime.UtcNow;
-                t.DealerRevealed = false;
-                t.Phase = "acting";
-                t.DecideExpiresAt = DateTime.UtcNow.AddSeconds(t.DecideDurationSeconds);
-                foreach (var s in dealt) { s.Decided = false; s.Played = false; s.Outcome = null; s.LastReturn = 0m; }
+                    t.CurrentRoundId = roundId;
+                    t.RoundInProgress = true;
+                    t.RoundStartedAt = DateTime.UtcNow;
+                    t.DealerRevealed = false;
+                    t.Phase = "acting";
+                    t.DecideExpiresAt = DateTime.UtcNow.AddSeconds(t.DecideDurationSeconds);
+                    foreach (var s in dealt) { s.Decided = false; s.Played = false; s.Outcome = null; s.LastReturn = 0m; }
 
-                await SaveTableAsync(t);
-                return t;
+                    await SaveTableAsync(t);
+                    return t;
+                }
+                catch (Exception saveEx)
+                {
+                    // The reservation debits committed to MySQL but the round never became durable in Redis. Refund
+                    // every reservation so no chips are stranded, then surface the failure. (A hard process death in
+                    // this exact gap is the residual the opt-in stranded-stake sweeper heals.)
+                    _logger.LogError(saveEx, "3CP deal persist failed for round {Round}; refunding {N} committed reservations.", roundId, reserved.Count);
+                    foreach (var r in reserved)
+                    {
+                        try { await RefundStakeAsync(r.uid, r.amt, tableId, roundId, r.seat, r.gifted, r.suffix + "drf"); }
+                        catch (Exception rex) { _logger.LogError(rex, "3CP deal-fail refund failed for seat {Seat} round {Round}", r.seat, roundId); }
+                    }
+                    throw;
+                }
             }
             finally { await ReleaseLockAsync(tableId, token); }
         }
 
-        private async Task ReserveSeatStakesAsync(TcpSeat seat, string tableId, string roundId)
+        /// <summary>Reserves a seat's stakes (Ante + side bets) and RETURNS the committed debits so the caller can
+        /// compensate if the round later fails to persist. On a partial-reservation failure it rolls back only this
+        /// seat's own debits (distinct <c>rf</c> key) and rethrows.</summary>
+        private async Task<List<(decimal amt, decimal gifted, string suffix)>> ReserveSeatStakesAsync(TcpSeat seat, string tableId, string roundId)
         {
             var uid = seat.Player.Id;
             var debited = new List<(decimal amt, decimal gifted, string suffix)>();
@@ -361,6 +394,7 @@ namespace Khela.Game.Games.ThreeCardPoker
                 await Reserve(seat.PairPlus, "pp");
                 await Reserve(seat.Prime, "prime");
                 await Reserve(seat.SixCard, "six");
+                return debited;
             }
             catch
             {
@@ -395,6 +429,12 @@ namespace Khela.Game.Games.ThreeCardPoker
                     seat.Played = true;
                 }
                 seat.Decided = true;
+
+                // Persist the decision to Redis BEFORE settling. The play debit already committed to MySQL; saving
+                // now makes the "this seat played/decided" fact durable, so a settle failure (or crash) can't lose
+                // it — a retry re-settles with the true decision, and the timeout auto-fold can never overwrite a
+                // Played seat with a fold. Closes the play-forfeit + stale-payout money windows.
+                await SaveTableAsync(t);
 
                 await MaybeSettleAsync(t);   // reveal + settle once every seat has acted
                 await SaveTableAsync(t);
@@ -502,20 +542,117 @@ namespace Khela.Game.Games.ThreeCardPoker
         public async Task TickTableAsync(string tableId)
         {
             var peek = await GetTableAsync(tableId);
-            if (peek == null || peek.Phase != "acting" || peek.DecideExpiresAt == null || peek.DecideExpiresAt > DateTime.UtcNow) return;
+            if (peek == null)
+            {
+                await _redis.GetDatabase().SetRemoveAsync(LobbySet, tableId);   // key TTL-expired → drop from the index
+                return;
+            }
+
+            // Keep every lobby table alive while the server runs: an idle table is never re-saved, so its 2h key TTL
+            // would lapse and it would silently vanish from the lobby. Refresh it each tick (cheap O(1)) — this is the
+            // same idle-expiry fix blackjack's driver applies.
+            await _redis.GetDatabase().KeyExpireAsync(TableKey(tableId), TableTtl);
+
+            // Cheap unlocked peek: only take the lock when there's real work — a round ready to settle (timer lapsed
+            // OR everyone already decided, which also heals a settle that was interrupted after decisions were saved),
+            // or a heartbeat-stalled seat that still needs reaping.
+            bool actingReady = peek.Phase == "acting" &&
+                (peek.Seats.Where(s => s.InRound).All(s => s.Decided)
+                 || (peek.DecideExpiresAt != null && peek.DecideExpiresAt <= DateTime.UtcNow));
+            bool anyStaleWork = peek.Seats.Any(s => s.Player != null
+                && (DateTime.UtcNow - s.LastHeartbeatAt > StalledTimeout)
+                && !(peek.RoundInProgress && s.InRound && s.IsStalled));   // already-flagged live-stake seats need no re-lock
+            if (!actingReady && !anyStaleWork) return;
 
             var token = await AcquireLockAsync(tableId);
             try
             {
                 var t = await GetTableAsync(tableId);
-                if (t == null || t.Phase != "acting" || t.DecideExpiresAt == null || t.DecideExpiresAt > DateTime.UtcNow) return;
+                if (t == null) return;
+                bool changed = false;
 
-                // Timeout = auto-FOLD every undecided seat (never risk more money without consent).
-                foreach (var seat in t.Seats.Where(s => s.InRound && !s.Decided)) { seat.Played = false; seat.Decided = true; }
-                await MaybeSettleAsync(t);
-                await SaveTableAsync(t);
+                // Heartbeat-based reaper. Money-safety §5: NEVER pull a live-stake seat mid-round — only flag it
+                // stalled (the auto-fold/settle below resolves it); free only seats with NO live stake so a
+                // join-then-vanish ghost can't squat the seat forever.
+                foreach (var seat in t.Seats.Where(s => s.Player != null).ToList())
+                {
+                    if (DateTime.UtcNow - seat.LastHeartbeatAt <= StalledTimeout) continue;
+                    if (t.RoundInProgress && seat.InRound)
+                    {
+                        if (!seat.IsStalled) { seat.IsStalled = true; seat.IsConnected = false; changed = true; }
+                    }
+                    else { ClearSeatRound(seat); seat.Player = null; changed = true; }
+                }
+
+                if (t.Phase == "acting")
+                {
+                    var live = t.Seats.Where(s => s.InRound).ToList();
+                    // Timeout = auto-FOLD every still-undecided seat (never risk more money without consent).
+                    if (t.DecideExpiresAt != null && t.DecideExpiresAt <= DateTime.UtcNow)
+                        foreach (var seat in live.Where(s => !s.Decided)) { seat.Played = false; seat.Decided = true; }
+                    // Settle once everyone has decided — covers the timeout auto-fold AND heals a settle that was
+                    // interrupted after the decisions were durably saved (the per-seat :pay credits are idempotent).
+                    if (live.Count > 0 && live.All(s => s.Decided)) { await MaybeSettleAsync(t); changed = true; }
+                }
+
+                if (changed) await SaveTableAsync(t);
             }
             finally { await ReleaseLockAsync(tableId, token); }
+        }
+
+        // ─────────────────────────────── stranded-stake reconciliation (opt-in; process-death residual) ───────────────────────────────
+
+        /// <summary>
+        /// Opt-in safety net (gated on <c>Reconciliation:Enabled</c>, default OFF): refunds 3CP reservation debits
+        /// committed to MySQL whose round never settled — the residual of a hard process death between a committed
+        /// debit and the Redis round-state write (the compensating refund in <see cref="DealAsync"/> already handles
+        /// a graceful Redis fault). Conservative by construction: only Bet debits older than a few minutes, whose
+        /// round has NO settled audit header (a settle always attempts one), are refunded — with an idempotent
+        /// <c>:rec</c> key so a re-run is a no-op and never double-refunds.
+        /// </summary>
+        public async Task ReconcileStrandedStakesAsync()
+        {
+            if (!_reconciliationEnabled) return;
+            try
+            {
+                using var scope = _scopes.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var now = DateTime.UtcNow;
+                var upper = now.AddMinutes(-3);    // never touch a possibly-live round
+                var lower = now.AddHours(-24);     // bound the scan; anything older was already swept or is ancient
+
+                var candidates = await db.WalletTransactions.AsNoTracking()
+                    .Where(x => x.Type == TransactionType.Bet && x.CreatedAt < upper && x.CreatedAt > lower
+                                && x.RoundId != null && x.CorrelationId != null && x.CorrelationId.StartsWith("3cp:"))
+                    .Select(x => new { x.WalletId, x.RoundId, x.Amount, x.GiftedDelta, x.CorrelationId })
+                    .ToListAsync();
+                if (candidates.Count == 0) return;
+
+                foreach (var group in candidates.GroupBy(c => c.RoundId))
+                {
+                    var roundId = group.Key;
+                    // A settled round always ATTEMPTS an audit header — its presence means the debits were consumed
+                    // by settlement, so they must NOT be refunded.
+                    if (await db.GameHandHeaders.AsNoTracking().AnyAsync(h => h.RoundId == roundId)) continue;
+
+                    foreach (var c in group)
+                    {
+                        var parts = c.CorrelationId.Split(':');   // 3cp:{round}:{seat}:{suffix}
+                        if (parts.Length < 4 || !int.TryParse(parts[2], out var seat)) continue;
+                        var uid = await db.PlayerWallets.AsNoTracking().Where(w => w.WalletId == c.WalletId)
+                            .Select(w => w.UserId).FirstOrDefaultAsync();
+                        if (uid == Guid.Empty) continue;
+                        try
+                        {
+                            // Idempotent on the :rec key — the wallet dedupes so repeated sweeps never double-refund.
+                            await RefundStakeAsync(uid.ToString(), Math.Abs(c.Amount), null, roundId, seat, Math.Abs(c.GiftedDelta), parts[3] + "rec");
+                            _logger.LogWarning("3CP reconciliation refunded stranded stake: round {Round} seat {Seat} suffix {Suffix} amount {Amt}", roundId, seat, parts[3], Math.Abs(c.Amount));
+                        }
+                        catch (Exception ex) { _logger.LogError(ex, "3CP reconciliation refund failed round {Round} seat {Seat}", roundId, seat); }
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.LogError(ex, "3CP stranded-stake reconciliation sweep failed."); }
         }
 
         // ─────────────────────────────── wallet helpers (mirror blackjack) ───────────────────────────────
