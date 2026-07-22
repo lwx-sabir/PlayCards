@@ -34,6 +34,11 @@ namespace PlayCard.Game.Dtos
         /// <summary>When the current turn auto-expires (UTC), or null when no turn is active.</summary>
         public DateTimeOffset? TurnExpiresAt { get; set; }
 
+        /// <summary>The configured decision length. <see cref="TurnExpiresAt"/> is stamped as a GENEROUS ceiling until
+        /// our client calls /presented (see TableController), so the countdown is CLAMPED to this — we never show more
+        /// than a real turn, even in the moment before the collapse lands or if that call never happens.</summary>
+        public int TurnDurationSeconds { get; set; }
+
         /// <summary>While set, the round is in its INSURANCE phase (its own countdown); play hasn't started.</summary>
         public DateTimeOffset? InsuranceExpiresAt { get; set; }
 

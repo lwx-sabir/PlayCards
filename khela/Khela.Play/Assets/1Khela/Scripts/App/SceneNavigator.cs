@@ -1,3 +1,4 @@
+using UnityEngine.AddressableAssets;
 using UnityEngine.SceneManagement;
 using PlayCard.Core;
 
@@ -23,11 +24,11 @@ namespace PlayCard.App
             SceneManager.LoadScene(Wardrobe);
         }
 
-        /// <summary>Enter the 3D virtual world (social hub). Must be in Build Settings. Temp: hardcoded to the DiveBar scene.</summary>
+        /// <summary>Enter the 3D virtual world (social hub). Temp: hardcoded to the DiveBar scene.</summary>
         public static void GoToWorld()
         {
             KhelaAnalytics.LogScreen(World);
-            SceneManager.LoadScene(World);
+            Addressables.LoadSceneAsync("worlds/divebar_01", LoadSceneMode.Single);
         }
 
         /// <summary>First-run avatar picker (shown only when the player has no saved avatar). Must be in Build Settings.</summary>

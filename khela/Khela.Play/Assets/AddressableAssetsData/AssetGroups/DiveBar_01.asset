@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbb281ee3bf0b054c82ac2347e9e782c, type: 3}
+  m_Name: DiveBar_01
+  m_EditorClassIdentifier: Unity.Addressables.Editor::UnityEditor.AddressableAssets.Settings.AddressableAssetGroup
+  m_GroupName: DiveBar_01
+  m_GUID: 85fa21af3e5a4ba4095ebc066ace35ea
+  m_SerializeEntries:
+  - m_GUID: 89cfc83fdc9ea6e4d860ac4a136a2106
+    m_Address: worlds/divebar_01
+    m_ReadOnly: 0
+    m_SerializedLabels: []
+    FlaggedDuringContentUpdateRestriction: 0
+  m_ReadOnly: 0
+  m_Settings: {fileID: 11400000, guid: 9137210054e99de4b8621085cbcf573d, type: 2}
+  m_SchemaSet:
+    m_Schemas:
+    - {fileID: 11400000, guid: 98d3ce43118274243a57b33c4177ee36, type: 2}
+    - {fileID: 11400000, guid: 4490c86ea55fa2f49b1ed17044602af7, type: 2}
+    - {fileID: 11400000, guid: 862c1e989c8c68f44b0e4fe3193ec1b2, type: 2}

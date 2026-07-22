@@ -29,6 +29,23 @@ namespace PlayCard.UI
 
         private CanvasGroup group;
 
+        // Round-end HOLD: with a RoundEndDirector presenting the round-end, the WIN / LOSE / +delta banner is the loudest
+        // "you got paid" signal — so it must wait for the director's PAY beat, NOT flash at the raw settle push. Held as a
+        // MonoBehaviour so there's no hard type dependency on the director. Null = inert, shows at settle as before.
+        private MonoBehaviour _settleDirector;
+        private bool _revealed;
+
+        /// <summary>The director arms deferral (called at its OnEnable): the banner waits for the PAY beat.</summary>
+        public void RegisterSettleDirector(MonoBehaviour director) => _settleDirector = director;
+        public void UnregisterSettleDirector(MonoBehaviour director) { if (_settleDirector == director) _settleDirector = null; }
+
+        /// <summary>Director's PAY beat: show the result banner now.</summary>
+        public void RevealNow(BoardSnapshot board)
+        {
+            _revealed = true;
+            ShowResult(board ?? (table != null ? table.Board : null));
+        }
+
         private void Awake()
         {
             // Get/add a CanvasGroup on the panel so we can fade visibility without deactivating the object.
@@ -52,8 +69,19 @@ namespace PlayCard.UI
 
         private void OnBoard(BoardSnapshot board)
         {
-            // Only after a round has settled (not in progress) and we have our seat's result.
-            if (board == null || board.RoundInProgress || table.MySeat <= 0) { Hide(); return; }
+            // In-round (or no seat) → hidden, and re-arm the deferral for the next settle.
+            if (board == null || board.RoundInProgress || table.MySeat <= 0) { Hide(); _revealed = false; return; }
+
+            // Settle push: with a director presenting, stay hidden until it calls RevealNow on the PAY beat. (It was
+            // already hidden by the in-round push above, so we simply don't reveal yet.)
+            if (_settleDirector != null && !_revealed) return;
+
+            ShowResult(board);
+        }
+
+        private void ShowResult(BoardSnapshot board)
+        {
+            if (board == null || table == null || table.MySeat <= 0) { Hide(); return; }
 
             SeatResultView r = board.LastResults?.Find(x => x.SeatNumber == table.MySeat);
             if (r == null) { Hide(); return; }

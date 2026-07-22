@@ -46,6 +46,7 @@ namespace PlayCard.UI
         private void OnEnable()
         {
             CaptureBaseScale();
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be bypassed
             if (table == null) { WarnUnwired(); return; }
             table.OnBoardChanged += OnBoard;
             OnBoard(table.Board);   // board may have arrived before we enabled (Board null is handled)
@@ -56,12 +57,27 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
+        private bool _lastReady;
+
+        // Cards land BETWEEN board pushes, so re-evaluate when the active hand's deal-in settles — otherwise the glow
+        // (placed from OnBoard on the push) would pop mid-deal, a beat before that seat's cards are down.
+        private void Update()
+        {
+            if (table == null || view == null) return;
+            int seat = table.Board != null ? table.Board.CurrentSeatNumber : -1;
+            bool ready = seat <= 0 || view.SeatSettled(seat);
+            if (ready != _lastReady) { _lastReady = ready; OnBoard(table.Board); }
+        }
+
         private void OnBoard(BoardSnapshot board)
         {
             if (glow == null || view == null) { WarnUnwired(); return; }
 
             int seat = board != null ? board.CurrentSeatNumber : -1;   // 1-based active seat; -1 between hands / dealer
-            bool active = board != null && board.RoundInProgress && seat > 0;
+            // Gate on the ANIMATION: don't glow a hand until its cards have LANDED (a natural-BJ / instant deal would
+            // otherwise flash the glow before the card is even on the felt). The active seat's own cards are enough —
+            // no need to wait on the whole table, so a remote seat can't hold my turn glow.
+            bool active = board != null && board.RoundInProgress && seat > 0 && view.SeatSettled(seat);
             var anchor = active ? view.SeatAnchor(seat) : null;
             if (anchor == null) { Show(false); return; }
 

@@ -68,6 +68,10 @@ namespace PlayCard.UI
         private const string PreviewName = "__winflypreview";
 
         private bool _wasInRound;
+        // When a RoundEndDirector is registered it presents the round-end and fires this juice on its PAY beat
+        // (PlayForLocalWin) — NOT the raw settle push, else chips fly into the balance before the dealer has paid.
+        // Held as a MonoBehaviour so there's no hard dependency on the director. Null = inert, old immediate behaviour.
+        private MonoBehaviour _settleDirector;
         private Coroutine _pop;
         private Vector3 _targetBaseScale = Vector3.one;
         private readonly List<RectTransform> _preview = new List<RectTransform>();
@@ -116,10 +120,19 @@ namespace PlayCard.UI
 #endif
         }
 
+        /// <summary>The director arms deferral (called at its OnEnable): the juice waits for the PAY beat.</summary>
+        public void RegisterSettleDirector(MonoBehaviour director) => _settleDirector = director;
+        public void UnregisterSettleDirector(MonoBehaviour director) { if (_settleDirector == director) _settleDirector = null; }
+
+        /// <summary>Director's PAY beat: burst the win juice now (no-op if the local player didn't win this round).</summary>
+        public void PlayForLocalWin(BoardSnapshot board) => TryFly(board);
+
         private void OnBoard(BoardSnapshot board)
         {
             bool inRound = board != null && board.RoundInProgress;
-            if (!inRound && _wasInRound) TryFly(board);   // just settled → celebrate a win
+            // With a director presenting, it drives the juice on its PAY beat via PlayForLocalWin — don't self-fire at
+            // the settle push. With no director, celebrate the instant the round settles (unchanged).
+            if (!inRound && _wasInRound && _settleDirector == null) TryFly(board);
             _wasInRound = inRound;
         }
 

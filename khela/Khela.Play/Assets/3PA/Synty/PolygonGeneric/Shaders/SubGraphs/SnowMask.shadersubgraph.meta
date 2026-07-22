@@ -10,8 +10,8 @@ ScriptedImporter:
   script: {fileID: 11500000, guid: 60072b568d64c40a485e0fc55012dc9f, type: 3}
 AssetOrigin:
   serializedVersion: 1
-  productId: 216721
-  packageName: POLYGON - Nightclubs Pack - Art by Synty
-  packageVersion: 1.9.1
-  assetPath: Assets/Synty/PolygonGeneric/Shaders/SubGraphs/SnowMask.shadersubgraph
-  uploadId: 924214
+  productId: 120152
+  packageName: POLYGON - Nature Pack - Art by Synty
+  packageVersion: 1.2.0
+  assetPath: Assets/3PA/Synty/PolygonGeneric/Shaders/SubGraphs/SnowMask.shadersubgraph
+  uploadId: 915458

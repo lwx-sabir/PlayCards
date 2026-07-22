@@ -66,6 +66,7 @@ namespace PlayCard.UI
         private void OnEnable()
         {
             CaptureScale();
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be silently bypassed
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             if (table.Board != null) OnBoard(table.Board);
@@ -93,20 +94,25 @@ namespace PlayCard.UI
             if (board == null || view == null || labelPrefab == null) return;
             _desired.Clear();
 
-            if (board.RoundInProgress)
-            {
-                if (includeDealer && board.Dealer != null)
-                    Place(0, 0, 1, board.Dealer.Cards, board.Dealer.HandValue);
+            // Follow the CARDS, not RoundInProgress: each banner is gated in Place on its hand's LAST card being
+            // rendered + landed (view.CardSettled), so it pops WITH the card and persists through the round-end window
+            // (the server leaves settled hands on the board; the felt still shows them during the deferred sweep), then
+            // clears when the cards are collected. Gating on RoundInProgress hid the BUST banner entirely — the server
+            // flips RoundInProgress false the instant the player busts, but the bust card only lands ~1s later.
+            // Hold the DEALER's banner until her hole card is actually FLIPPED. The settle board carries her full total
+            // the instant the round resolves, so popping "BLACKJACK" here would announce the face-down card before it's
+            // turned. Not adding it to _desired keeps it hidden; the reveal beat releases it.
+            if (includeDealer && board.Dealer != null && !(view.RoundEndHeld && !view.DealerHoleRevealed))
+                Place(0, 0, 1, board.Dealer.Cards, board.Dealer.HandValue);
 
-                if (board.Seats != null)
+            if (board.Seats != null)
+            {
+                foreach (var seat in board.Seats)
                 {
-                    foreach (var seat in board.Seats)
-                    {
-                        var hands = seat?.Player?.Hands;
-                        if (hands == null) continue;
-                        for (int h = 0; h < hands.Count; h++)
-                            Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].HandValue);
-                    }
+                    var hands = seat?.Player?.Hands;
+                    if (hands == null) continue;
+                    for (int h = 0; h < hands.Count; h++)
+                        Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].HandValue);
                 }
             }
 
@@ -124,6 +130,10 @@ namespace PlayCard.UI
             if (!isBJ && !isBust) return;                                    // banner only on BJ or bust
             var anchor = view.SeatAnchor(seat);
             if (anchor == null) return;
+
+            // Gate on the ANIMATION: hold the BJ/Bust banner until the hand's LAST card has LANDED, so it pops WITH the
+            // dealt/bust card, not the instant the server pushes the resolved hand. LateUpdate re-checks every frame.
+            if (!view.CardSettled(seat, handIndex, cards.Count - 1)) return;
 
             int key = SlotKey(seat, handIndex);
             _desired.Add(key);

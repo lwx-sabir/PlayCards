@@ -110,6 +110,8 @@ namespace PlayCard.Game.Table
         private readonly List<int> _stale = new List<int>();
         private readonly HashSet<int> _pendingDeal = new HashSet<int>();    // new cards parked at the shoe, awaiting their deal (timer or throw)
         private readonly List<NewCard> _newThisPass = new List<NewCard>();  // new cards seen this Render, to schedule in deal order
+        private readonly Dictionary<int, CardView> _desiredData = new Dictionary<int, CardView>();  // key -> data this pass, for split re-key
+        private readonly List<int> _movableKeys = new List<int>();          // rendered cards a split may migrate (scratch)
 
         // Throw-gated dealing: while a conductor (the dealer) is registered, each parked card waits in its SEAT's FIFO
         // and flies only when the conductor calls ReleaseNextCard(seat) at a throw's release. With no conductor these
@@ -119,8 +121,10 @@ namespace PlayCard.Game.Table
         private bool ConductorActive => _conductor != null;     // Unity-null aware: a destroyed/disabled dealer falls back automatically
         private bool _collectPending;                           // a round-end sweep is held until the last card LANDS (so a bust/final card isn't cleared mid-flight)
         private float _collectReadyAt = -1f;                    // unscaled time the held sweep may run (after roundEndHold); -1 = not armed
+        private bool _roundEndHeld;                             // a RoundEndDirector owns the felt: Render is frozen + the deferred sweep cancelled until it calls EndRoundEnd
+        private bool _peekHeld;                                 // the dealer is peeking at her hole card → decisions (and the turn clock) wait
 
-        private struct Slot { public CardVisual Card; public CardView Data; }
+        private struct Slot { public CardVisual Card; public CardView Data; public CardMover Mover; }
         private struct NewCard { public int Key; public int Seat; public CardMover Mover; public Vector3 Pos; public Quaternion Rot; public Vector3 Scale; public int Order; }
 
         private void Awake()
@@ -180,27 +184,83 @@ namespace PlayCard.Game.Table
             int key = SlotKey(seat, handIndex, cardIndex);
             if (_pendingDeal.Contains(key)) return false;                                     // still parked (awaiting throw/stagger)
             if (!_rendered.TryGetValue(key, out var slot) || slot.Card == null) return false; // not created yet
-            var mover = slot.Card.GetComponent<CardMover>();
-            return mover == null || !mover.Animating;                                         // landed (not gliding in)
+            return slot.Mover == null || !slot.Mover.Animating;                               // landed (not gliding in)
         }
 
         /// <summary>
         /// True while ANY card is still coming in — parked at the shoe/hand awaiting its throw, or gliding to its spot.
-        /// Turn-driven UI (action buttons, the decision-pose/FOV camera) holds on this so it activates only once the
-        /// ANIMATED deal has fully landed, not the instant the server pushes the resolved board.
+        /// Used for the WHOLE-TABLE gate: the round-end sweep waits on this so the felt clears only after the last card
+        /// lands. (Per-player UI gates on <see cref="SeatSettled"/> instead, so it isn't held by a remote seat.)
         /// </summary>
         public bool AnyCardAnimating()
         {
             if (_pendingDeal.Count > 0) return true;                        // parked, awaiting a throw/stagger
             foreach (var kv in _rendered)
             {
-                var card = kv.Value.Card;
-                if (card == null) continue;
-                var mover = card.GetComponent<CardMover>();
+                var mover = kv.Value.Mover;
                 if (mover != null && mover.Animating) return true;         // gliding in
             }
             return false;
         }
+
+        /// <summary>
+        /// True when SEAT's cards are all on the felt — none parked, none gliding. The LOCAL player's turn-driven UI
+        /// (actions, decision camera, insurance) gates on its OWN seat (+ seat 0 = dealer) so it isn't held hostage by a
+        /// REMOTE seat's animation, and its own decision window (e.g. insurance) isn't eaten by the rest of the table's
+        /// deal. SlotKey packs seat as key/10000.
+        /// </summary>
+        public bool SeatSettled(int seat)
+        {
+            foreach (var key in _pendingDeal) if (key / 10000 == seat) return false;   // a card for this seat still parked
+            foreach (var kv in _rendered)
+            {
+                if (kv.Key / 10000 != seat) continue;
+                if (kv.Value.Mover != null && kv.Value.Mover.Animating) return false;   // gliding in
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// True when the LOCAL decision inputs are on the felt: <paramref name="seat"/>'s own cards AND the dealer's
+        /// (seat 0). The dealer is dealt LAST (see <see cref="DealOrder"/>), so the dealer being settled means the whole
+        /// opening deal has finished — while still NOT waiting on OTHER players' seats, so a remote player's hit can
+        /// never eat your turn timer. ALSO false while the dealer is PEEKING at her hole card, so you can't act (and the
+        /// turn clock can't start) until she's finished checking. Decision UI (action buttons, turn prompt, decision
+        /// camera, insurance) and the /presented turn-clock handshake all gate on this.
+        /// </summary>
+        public bool DecisionReady(int seat) => !_peekHeld && SeatSettled(seat) && SeatSettled(0);
+
+        /// <summary>True while the dealer's PEEK is playing — see <see cref="DecisionReady"/>.</summary>
+        public bool PeekHeld => _peekHeld;
+
+        /// <summary>The dealer peek takes the decision gate for its duration, so the player can't act mid-peek.
+        /// ALWAYS pair with <see cref="EndPeek"/> (the peek driver does so, including on teardown).</summary>
+        public void BeginPeek() => _peekHeld = true;
+
+        /// <summary>Release the peek hold — decisions (and the turn clock) resume.</summary>
+        public void EndPeek() => _peekHeld = false;
+
+        /// <summary>
+        /// True while the round-END presentation is still playing out — the final/bust card is still landing, the
+        /// deferred sweep is armed (roundEndHold), or cards are gliding to the discard. Phase UI (the bet-pose camera)
+        /// holds off returning to the betting framing until this clears, so it doesn't pull back mid-bust.
+        /// </summary>
+        public bool RoundEndSettling => _roundEndHeld || _collectPending || AnyCardAnimating();
+
+        /// <summary>True while a <see cref="RoundEndDirector"/> owns the felt (Render frozen, deferred sweep cancelled).
+        /// The deal conductor skips board pushes while this is set, so it can't advance its per-seat baseline off pushes
+        /// the frozen Render dropped; the director re-baselines it on release.</summary>
+        public bool RoundEndHeld => _roundEndHeld;
+
+        /// <summary>True once the director has actually FLIPPED the dealer's hole card this round-end (see
+        /// <see cref="RevealDealerHole"/>); cleared when it takes over (<see cref="BeginRoundEnd"/>). The settle board
+        /// carries the dealer's FULL total the instant the round resolves, so score / blackjack badges gate on this —
+        /// otherwise they'd print the hidden card's value before it is visually turned.</summary>
+        public bool DealerHoleRevealed { get; private set; }
+
+        /// <summary>The shoe / dealer-hand point cards deal from — the round-end director uses it as the fallback hub for
+        /// collect (chips fly here) and pay (chips fly from here) when no dedicated dealer-hand anchor is assigned.</summary>
+        public Transform DealSource => dealSource;
 
         // Per-seat fan params: a seat's override if ticked, else the shared default. seat 0 (dealer) = default.
         private void ResolveFan(int seat, out Vector2 gap, out float anglePer, out float lift, out bool mirror)
@@ -218,6 +278,9 @@ namespace PlayCard.Game.Table
         public void Render(BoardSnapshot board)
         {
             if (board == null || cardPrefab == null || _pool == null) return;
+            if (_roundEndHeld) return;   // the round-end director owns the felt — ignore board pushes until it releases the hold
+
+            ReclaimMovedCards(board);    // SPLIT: migrate the moved card to its new slot BEFORE positional layout
 
             _desired.Clear();
 
@@ -246,16 +309,7 @@ namespace PlayCard.Game.Table
 
             // Deal this pass's new cards in ONE BY ONE, in real dealing order. With a conductor present each card waits
             // in its seat's release queue for the dealer's throw; otherwise the view self-deals on its own stagger.
-            if (_newThisPass.Count > 0)
-            {
-                _newThisPass.Sort((a, b) => a.Order.CompareTo(b.Order));
-                if (ConductorActive)
-                    for (int i = 0; i < _newThisPass.Count; i++) EnqueueForRelease(_newThisPass[i]);
-                else
-                    for (int i = 0; i < _newThisPass.Count; i++)
-                        StartCoroutine(DealRoutine(_newThisPass[i], i * Mathf.Max(0f, dealStagger)));
-                _newThisPass.Clear();
-            }
+            ScheduleNewCards();
 
             // Anything no longer on the board leaves — collected per seat (a seat's cards together), seats staggered.
             // BUT hold the sweep while a card is still coming in (e.g. a just-dealt BUST/final card), so the round
@@ -276,15 +330,89 @@ namespace PlayCard.Game.Table
             // hand (e.g. a bust) is readable. Render is board-driven, but a bust/final card lands BETWEEN pushes —
             // without this the felt would clear the instant the server resolves.
             if (!_collectPending) { _collectReadyAt = -1f; return; }
-            if (AnyCardAnimating()) { _collectReadyAt = -1f; return; }              // still landing → keep waiting
+            if (AnyCardAnimating()) { _collectReadyAt = -1f; return; }
             if (_collectReadyAt < 0f) { _collectReadyAt = Time.unscaledTime + Mathf.Max(0f, roundEndHold); return; }
-            if (Time.unscaledTime < _collectReadyAt) return;                        // hold so the final hand is visible
+            if (Time.unscaledTime < _collectReadyAt) return;
 
             _collectPending = false; _collectReadyAt = -1f;
             _stale.Clear();
             foreach (var kv in _rendered)
                 if (!_desired.Contains(kv.Key)) _stale.Add(kv.Key);
             if (_stale.Count > 0) CollectStale();
+        }
+
+        // SPLIT reconciliation. The view keys cards positionally — (seat, hand, cardIndex). A split re-shapes the hands:
+        // hand H's 2nd card becomes hand H+1's 1st card (same PHYSICAL card). Positional layout alone would MORPH the old
+        // slot's face into the freshly-dealt card AND deal the moved card again at its new slot. So BEFORE layout, find any
+        // already-rendered card whose identity now belongs at a DIFFERENT slot (same seat) with no card there yet, and
+        // RE-KEY it — then LayOutHand just glides it across, and the genuinely new card deals into the freed slot.
+        private void ReclaimMovedCards(BoardSnapshot board)
+        {
+            if (board == null || !board.RoundInProgress || board.Seats == null) return;   // splits only happen mid-round
+
+            // desired key -> data for the whole live board
+            _desiredData.Clear();
+            if (board.Dealer?.Cards != null)
+                for (int i = 0; i < board.Dealer.Cards.Count; i++)
+                    _desiredData[SlotKey(0, 0, i)] = board.Dealer.Cards[i];
+            foreach (var seat in board.Seats)
+            {
+                if (seat?.Player?.Hands == null || AnchorForSeat(seat.SeatNumber) == null) continue;
+                var hands = seat.Player.Hands;
+                for (int h = 0; h < hands.Count; h++)
+                {
+                    var cards = hands[h].Cards;
+                    if (cards == null) continue;
+                    for (int i = 0; i < cards.Count; i++)
+                        _desiredData[SlotKey(seat.SeatNumber, h, i)] = cards[i];
+                }
+            }
+
+            // movable = a rendered, NON-parked card that is NOT already correctly placed (its slot's desired card differs
+            // or its slot is gone). These are the candidates a split may have relocated.
+            _movableKeys.Clear();
+            foreach (var kv in _rendered)
+            {
+                if (_pendingDeal.Contains(kv.Key)) continue;
+                if (_desiredData.TryGetValue(kv.Key, out var want) && SameCard(kv.Value.Data, want)) continue;
+                _movableKeys.Add(kv.Key);
+            }
+            if (_movableKeys.Count == 0) return;   // nothing moved — the common (no-split) path
+
+            // For each desired slot that is EMPTY (no rendered card), claim a movable card of matching identity from the
+            // SAME seat and re-key it there. Only fill empty slots — occupied ones are left to LayOutHand.
+            foreach (var d in _desiredData)
+            {
+                int destKey = d.Key;
+                if (_rendered.ContainsKey(destKey)) continue;   // occupied → LayOutHand reconciles it
+                int destSeat = destKey / 10000;
+
+                for (int m = 0; m < _movableKeys.Count; m++)
+                {
+                    int srcKey = _movableKeys[m];
+                    if (srcKey / 10000 != destSeat) continue;
+                    if (!_rendered.TryGetValue(srcKey, out var slot) || !SameCard(slot.Data, d.Value)) continue;
+                    _rendered.Remove(srcKey);
+                    _rendered[destKey] = slot;    // move the REAL card; LayOutHand will glide it to the new fan spot
+                    _movableKeys.RemoveAt(m);
+                    break;
+                }
+            }
+        }
+
+        // Drain this pass's freshly-parked cards (sorted into real deal order) into either the conductor's per-seat
+        // release FIFO (dealer throws them one per throw) or the view's own staggered self-deal. Extracted from Render
+        // so the round-end director can park the dealer's final draws (LayOutDealerFinal) and route them the same way.
+        private void ScheduleNewCards()
+        {
+            if (_newThisPass.Count == 0) return;
+            _newThisPass.Sort((a, b) => a.Order.CompareTo(b.Order));
+            if (ConductorActive)
+                for (int i = 0; i < _newThisPass.Count; i++) EnqueueForRelease(_newThisPass[i]);
+            else
+                for (int i = 0; i < _newThisPass.Count; i++)
+                    StartCoroutine(DealRoutine(_newThisPass[i], i * Mathf.Max(0f, dealStagger)));
+            _newThisPass.Clear();
         }
 
         private static CardMover EnsureMover(CardVisual card)
@@ -454,7 +582,7 @@ namespace PlayCard.Game.Table
             _pool.Release(card);
         }
 
-        private void LayOutHand(List<CardView> cards, Transform anchor, int seat, int handIndex, int handCount)
+        private void LayOutHand(List<CardView> cards, Transform anchor, int seat, int handIndex, int handCount, bool snapNew = false)
         {
             if (cards == null) return;
             int count = cards.Count;
@@ -488,9 +616,15 @@ namespace PlayCard.Game.Table
                     if (skin != null) card.Skin = skin;
                     card.SetCard(data);
                     var mover = EnsureMover(card);
-                    _rendered[key] = new Slot { Card = card, Data = data };
+                    _rendered[key] = new Slot { Card = card, Data = data, Mover = mover };   // cache the mover (no per-frame GetComponent)
 
-                    if (dealSource != null && dealSeconds > 0f && (ConductorActive || dealStagger > 0f))
+                    if (snapNew)
+                    {
+                        // Round-end: a FINAL card that arrived on the settle push (e.g. a bust that ends the round)
+                        // appears in place — no deal-in and no parking, since the director isn't throwing player cards.
+                        mover.Snap(pos, rot, targetScale);
+                    }
+                    else if (dealSource != null && dealSeconds > 0f && (ConductorActive || dealStagger > 0f))
                     {
                         // Sequential deal: park HIDDEN at the shoe. Render then either hands it to the dealer's
                         // per-seat release queue (conductor present → flies on her throw) or slides it in on the
@@ -527,6 +661,110 @@ namespace PlayCard.Game.Table
 
         private static bool SameCard(CardView a, CardView b)
             => a != null && b != null && a.FaceVal == b.FaceVal && a.Suit == b.Suit && a.IsCardUp == b.IsCardUp;
+
+        // ---- Round-end director commands (ONLY a RoundEndDirector calls these; see that class) ----
+        // While the director HOLDS, it owns the felt: Render is frozen (above) so the view never independently reacts
+        // to the settle push — it just exposes these small commands the director drives in sequence.
+
+        /// <summary>
+        /// The director takes over for the settle sequence: FREEZE board-driven render and CANCEL the deferred sweep the
+        /// just-processed settle push armed, so the final hands stay on the felt until the director plays it out.
+        /// <see cref="RoundEndSettling"/> stays latched (the camera keeps holding the bet framing) for the whole hold.
+        /// </summary>
+        public void BeginRoundEnd()
+        {
+            _roundEndHeld = true;
+            DealerHoleRevealed = false;   // hole is down again until the reveal beat turns it — badges hold their total
+            _collectPending = false;   // cancel the settle-push sweep synchronously, before Update() can run it
+            _collectReadyAt = -1f;
+        }
+
+        /// <summary>Release the director's hold — board pushes render again. Cards are already gone via <see cref="SweepNow"/>.</summary>
+        public void EndRoundEnd() => _roundEndHeld = false;
+
+        /// <summary>
+        /// Snap every seated player's FINAL hand into place (no deal-in, no parking) — covers a round-ender card that
+        /// arrived on the SAME settle push (e.g. a bust that ends the round), which the gated <see cref="Render"/>
+        /// (cards only while RoundInProgress) skipped. Existing cards are left as-is; only genuinely new cards snap in.
+        /// The dealer is handled separately by <see cref="RevealDealerHole"/> + <see cref="LayOutDealerFinal"/>.
+        /// </summary>
+        public void ShowFinalPlayerHands(BoardSnapshot board)
+        {
+            if (board?.Seats == null) return;
+            foreach (var seat in board.Seats)
+            {
+                if (seat?.Player == null) continue;
+                var anchor = AnchorForSeat(seat.SeatNumber);
+                if (anchor == null) continue;
+                var hands = seat.Player.Hands;
+                if (hands == null) continue;
+                for (int h = 0; h < hands.Count; h++)
+                    LayOutHand(hands[h].Cards, anchor, seat.SeatNumber, h, hands.Count, snapNew: true);
+            }
+        }
+
+        /// <summary>
+        /// The dealer's currently-rendered HOLE card (seat 0, card index 1) — the face-down card the reveal beat flips.
+        /// Null if the dealer has fewer than 2 cards on the felt.
+        /// </summary>
+        public CardVisual DealerHoleCard()
+            => _rendered.TryGetValue(SlotKey(0, 0, 1), out var slot) ? slot.Card : null;
+
+        /// <summary>
+        /// Swap the dealer hole card (seat 0, index 1) to its revealed face. The director calls this at the APEX of the
+        /// reveal flip (so the art changes while the card is edge-on), or directly as a fallback when the card isn't
+        /// visible. No-op if the hole card isn't rendered.
+        /// </summary>
+        public void RevealDealerHole(CardView revealed)
+        {
+            if (revealed == null) return;
+            DealerHoleRevealed = true;   // badges may now show the dealer's real total
+            int key = SlotKey(0, 0, 1);
+            if (!_rendered.TryGetValue(key, out var slot) || slot.Card == null) return;
+            slot.Card.SetCard(revealed);
+            slot.Data = revealed;
+            _rendered[key] = slot;
+        }
+
+        /// <summary>
+        /// Lay out the dealer's FINAL hand: her opening two cards glide to re-centre and every card BEYOND them (her
+        /// draws to 17) PARKS at the shoe like a normal deal, queued under seat 0. Returns how many draws were parked so
+        /// the director throws exactly that many through the deal conductor. The hole card is NOT revealed here —
+        /// <see cref="RevealDealerHole"/> owns that. If she stands (no draws) this parks nothing and returns 0. If no
+        /// deal source is configured the draws simply snap in place (and 0 is returned — nothing to throw).
+        /// </summary>
+        public int LayOutDealerFinal(DealerView dealer)
+        {
+            if (dealer?.Cards == null || dealerAnchor == null) return 0;
+            int before = CountPendingForSeat(0);
+            LayOutHand(dealer.Cards, dealerAnchor, 0, 0, 1);   // new cards (index >= 2) park at the shoe
+            ScheduleNewCards();                                 // hand the parked draws to seat 0's release FIFO
+            return CountPendingForSeat(0) - before;
+        }
+
+        /// <summary>
+        /// Sweep EVERY card on the felt to the discard immediately (the director's final beat). Bypasses the board diff —
+        /// at round end all hands leave regardless of what the last snapshot still carries.
+        /// </summary>
+        public void SweepNow()
+        {
+            _collectPending = false;
+            _collectReadyAt = -1f;
+            _stale.Clear();
+            foreach (var kv in _rendered) _stale.Add(kv.Key);
+            if (_stale.Count > 0) CollectStale();
+        }
+
+        /// <summary>Rough seconds for <see cref="SweepNow"/> to play out — the director waits this before dropping the hold.</summary>
+        public float SweepDuration => Mathf.Max(0f, collectSeconds) + Mathf.Max(0f, collectStagger);
+
+        // Cards still PARKED (awaiting a throw) for a seat — the delta across a LayOutDealerFinal call is the draw count.
+        private int CountPendingForSeat(int seat)
+        {
+            int n = 0;
+            foreach (var key in _pendingDeal) if (key / 10000 == seat) n++;
+            return n;
+        }
 
         /// <summary>
         /// Instantiate ONE real card (the actual prefab + skin) for the editor anchor preview, so the Scene view

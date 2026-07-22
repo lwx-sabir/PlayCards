@@ -270,6 +270,30 @@ namespace Khela.Game.Controllers
             }
         }
 
+        /// <summary>
+        /// Presentation handshake: the current player's client calls this once it has finished animating the deal (or a
+        /// drawn card) and can actually act. Collapses the generously-stamped turn deadline to the REAL turn length from
+        /// now, so the decision clock is the full configured turn on any device / table size. Cheat-safe (can only
+        /// shorten, never extend) and idempotent per turn, so a stray or repeated call is harmless.
+        /// </summary>
+        [HttpPost("{tableId}/presented/{seatNumber:int}")]
+        public async Task<IActionResult> Presented(string tableId, int seatNumber)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+
+            try
+            {
+                var table = await tableManager.PresentedAsync(tableId, userId, seatNumber);
+                if (table == null) return NotFound("Table not found or expired.");
+                return Ok(BlackjackBoard.Build(table));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
         [HttpPost("{tableId}/dealerPlay")]
         public async Task<IActionResult> DealerPlay(string tableId)
         {

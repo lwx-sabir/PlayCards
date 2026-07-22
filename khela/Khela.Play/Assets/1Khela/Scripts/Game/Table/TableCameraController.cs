@@ -20,6 +20,12 @@ namespace PlayCard.Game.Table
             public Transform tablePose;
             [Tooltip("Close zoom on this seat's bet spot (while betting).")]
             public Transform betPose;
+
+            [Tooltip("OPTIONAL per-seat wide FOV. Leave 0 to use the shared Table Fov. Set it when a seat sits at a " +
+                     "different distance/angle and needs its own framing.")]
+            public float tableFovOverride;
+            [Tooltip("OPTIONAL per-seat bet FOV. Leave 0 to use the shared Bet Fov.")]
+            public float betFovOverride;
         }
 
         [SerializeField] private TableController table;
@@ -59,6 +65,7 @@ namespace PlayCard.Game.Table
 
         private void OnEnable()
         {
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be silently bypassed
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             // Ease to the local player's seat immediately (resolved from the lobby pick) — don't wait for the first
@@ -80,10 +87,12 @@ namespace PlayCard.Game.Table
         {
             var board = _board;
             int seat = table.MySeat;                 // 1-based, or -1 if not seated
-            bool dealt = view == null || !view.AnyCardAnimating();
-            // Close in (bet pose + bet fov) while BETTING, and on my TURN — but only ONCE the deal has landed, so the
-            // deal itself is watched from the wide table pose and we zoom in for the decision after the cards settle.
-            bool betting = board != null && !board.RoundInProgress;
+            bool dealt = view == null || view.DecisionReady(seat);   // MY cards + the DEALER's landed (= deal finished)
+            // Close in (bet pose + bet fov) while BETTING, and on my TURN — but only ONCE the relevant cards have landed:
+            // the deal is watched from the wide table pose; we zoom for the decision after MY cards settle; and on round
+            // END we stay wide until the final/bust card lands + the felt clears, instead of snapping to bet mid-bust.
+            bool roundEndSettling = view != null && view.RoundEndSettling;
+            bool betting = board != null && !board.RoundInProgress && !roundEndSettling;
             bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat && dealt;
             bool close = betting || myTurn;
 
@@ -100,7 +109,12 @@ namespace PlayCard.Game.Table
                 var pose = close ? v.betPose : v.tablePose;
                 if (pose == null) pose = v.tablePose ?? v.betPose;   // fall back to whichever is set
                 if (pose != null) _target = pose;
-                _targetFov = close ? betFov : tableFov;
+
+                // Per-seat FOV when authored (non-zero), else the shared default — so a seat at an odd distance can be
+                // framed on its own without forcing every other seat off the shared value.
+                float wideFov = v.tableFovOverride > 0f ? v.tableFovOverride : tableFov;
+                float closeFov = v.betFovOverride > 0f ? v.betFovOverride : betFov;
+                _targetFov = close ? closeFov : wideFov;
             }
             else if (spectatePose != null)
             {

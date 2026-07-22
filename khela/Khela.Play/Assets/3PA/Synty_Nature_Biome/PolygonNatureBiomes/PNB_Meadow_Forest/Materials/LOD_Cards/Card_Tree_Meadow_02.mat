@@ -1,0 +1,103 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-2297857215136542001
+MonoBehaviour:
+  m_ObjectHideFlags: 11
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  version: 10
+--- !u!114 &-1686408435430014889
+MonoBehaviour:
+  m_ObjectHideFlags: 11
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 639247ca83abc874e893eb93af2b5e44, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  version: 0
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: Card_Tree_Meadow_02
+  m_Shader: {fileID: -6465566751694194690, guid: 9b98a126c8d4d7a4baeb81b16e4f7b97, type: 3}
+  m_Parent: {fileID: 2100000, guid: a01cda932070b964d85e5835371a3cc6, type: 2}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _ALPHATEST_ON
+  m_InvalidKeywords:
+  - _CARDTOGGLE_ON
+  - _EMISSION
+  - _LEAFFLATCOLOURSWITCH_ON
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses:
+  - MOTIONVECTORS
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _Leaf_Normal:
+        m_Texture: {fileID: 2800000, guid: 157405f27c221e9438dec9a4c6019378, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Leaf_Texture:
+        m_Texture: {fileID: 2800000, guid: 0e1cc2c64ee9fdc448abe33c5a5e5baf, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Trunk_Normal:
+        m_Texture: {fileID: 2800000, guid: 157405f27c221e9438dec9a4c6019378, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Trunk_Texture:
+        m_Texture: {fileID: 2800000, guid: 0e1cc2c64ee9fdc448abe33c5a5e5baf, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AlphaClip: 1
+    - _ColourNoiseLargeScale: 0.139
+    - _ColourNoiseScale: 0
+    - _ColourNoiseSmallScale: 0.155
+    - _Float0: 0
+    - _JitterAmount: 0.241
+    - _JitterFreq: 0.093
+    - _LeafBigNoiseAmount: 0.5
+    - _LeafFlatColourSwitch: 1
+    - _LeafNoiseAmount: 0.2
+    - _LeafSmoothness: 0
+    - _Leaf_Flat_Color: 1
+    - _Leaf_Smoothness: 0
+    - _NormalAmount: 1
+    - _TrunkSmoothness: 0
+    - _Trunk_Smoothness: 0
+    - _WindNoiseScale: 0.018
+    m_Colors:
+    - _GustHighlight: {r: 0, g: 0, b: 0, a: 0}
+    - _LeafBaseColour: {r: 0.26274526, g: 0.4056604, b: 0, a: 0}
+    - _LeafNoiseColour: {r: 1, g: 0.9864793, b: 0, a: 0}
+    - _LeafNoiseLargeColour: {r: 0.28000888, g: 0.38679248, b: 0, a: 0}
+    - _Leaf_Base_Color: {r: 0.26274523, g: 0.40566036, b: 0, a: 0}
+    - _Leaf_Noise_Large_Color: {r: 0.2627451, g: 0.4039216, b: 0, a: 0}
+    - _TrunkBaseColour: {r: 0, g: 0, b: 0, a: 0}
+    - _TrunkNoiseColour: {r: 0.6132076, g: 0.4729219, b: 0.3326362, a: 0}
+    - _Trunk_Base_Color: {r: 0, g: 0, b: 0, a: 0}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: bdffc66125d9b2142baa97af7460de1e
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 234255
+  packageName: POLYGON - Meadow Forest - Nature Biomes - 3D Environment Art by Synty
+  packageVersion: 1.10.3
+  assetPath: Assets/Synty/PolygonNatureBiomes/PNB_Meadow_Forest/FX/Animations/RotateZ.controller
+  uploadId: 866644

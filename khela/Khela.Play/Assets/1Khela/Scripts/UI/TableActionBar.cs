@@ -62,6 +62,7 @@ namespace PlayCard.UI
 
         private void OnEnable()
         {
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be silently bypassed
             if (table != null)
             {
                 table.OnBoardChanged += Refresh;
@@ -120,14 +121,19 @@ namespace PlayCard.UI
 
             bool seated = table.MySeat > 0;
             bool inRound = board != null && board.RoundInProgress;
+            // The round-end ceremony (reveal → collect → pay → sweep) still owns the felt. A blackjack settles the round
+            // INSTANTLY, so inRound flips false while the ceremony is only starting — without this the bet bar would pop
+            // up over the payout. Hold ALL controls until the director has finished.
+            bool settling = view != null && view.RoundEndSettling;
             bool myTurn = table.IsMyTurn;
             var hand = MyCurrentHand();
 
+            bool canBet = !inRound && !settling && seated;   // between rounds AND the previous round-end fully done
             // DEAL is live only when seated, between rounds, and the dropped chips meet the table minimum.
-            Set(dealButton, !inRound && seated && betBuilder != null && betBuilder.MeetsMinimum);
+            Set(dealButton, canBet && betBuilder != null && betBuilder.MeetsMinimum);
             // REPEAT is live between rounds once there's a remembered bet; CLEAR whenever there are chips down.
-            Set(repeatButton, !inRound && seated && betRepeater != null && betRepeater.CanRepeat);
-            Set(clearButton, !inRound && seated && betBuilder != null && betBuilder.Total > 0m);
+            Set(repeatButton, canBet && betRepeater != null && betRepeater.CanRepeat);
+            Set(clearButton, canBet && betBuilder != null && betBuilder.Total > 0m);
 
             if (repeatLabel != null)
             {
@@ -135,9 +141,10 @@ namespace PlayCard.UI
                 repeatLabel.text = last > 0 ? $"REPEAT {ChipView.Format(last)}" : "REPEAT";
             }
 
-            // Hold the action buttons until the deal (or the last action's card) has LANDED, so you can't act while
-            // cards are still flying in. Re-gated from Update when the animating state flips (cards settle off-board).
-            bool act = myTurn && (view == null || !view.AnyCardAnimating());
+            // Hold the action buttons until MY cards AND the DEALER's have landed (the dealer is dealt last, so that's
+            // the whole deal finished) — but NOT other players' seats, so a remote hit can't eat my turn timer. Also OFF
+            // during the round-end ceremony (a blackjack can leave a stale my-turn flag as it auto-resolves).
+            bool act = myTurn && !settling && (view == null || view.DecisionReady(table.MySeat));
             Set(hitButton, act);
             Set(standButton, act);
             Set(doubleButton, act && hand != null && hand.Cards.Count == 2);
@@ -154,6 +161,7 @@ namespace PlayCard.UI
         }
 
         private bool _lastAnimating;
+        private bool _lastSettling;
 
         private void Update()
         {
@@ -162,12 +170,16 @@ namespace PlayCard.UI
             if (table.Board != null && table.Board.RoundInProgress && statusText != null)
                 statusText.text = BuildStatus(table.Board);
 
-            // Cards land BETWEEN board pushes, so re-gate the buttons when the deal-animating state flips — otherwise
-            // Refresh (board-driven) would leave Hit/Stand a beat behind the cards.
-            bool animating = view != null && view.AnyCardAnimating();
-            if (animating != _lastAnimating)
+            // Cards land BETWEEN board pushes, so re-gate the buttons when my decision inputs (my cards + the dealer's)
+            // settle — otherwise Refresh (board-driven) would leave Hit/Stand a beat behind the dealt cards. The round-end
+            // ceremony ALSO ends between pushes (the director drops its hold, no board fires), so watch RoundEndSettling
+            // too — else the bet bar would stay dark until the next server push.
+            bool localUnsettled = view != null && !view.DecisionReady(table.MySeat);
+            bool settling = view != null && view.RoundEndSettling;
+            if (localUnsettled != _lastAnimating || settling != _lastSettling)
             {
-                _lastAnimating = animating;
+                _lastAnimating = localUnsettled;
+                _lastSettling = settling;
                 Refresh(table.Board);
             }
         }
@@ -191,9 +203,15 @@ namespace PlayCard.UI
             }
 
             string timer = string.Empty;
-            if (board.TurnExpiresAt.HasValue)
+            // Don't tick the turn clock while the deal is still animating in — show it only once MY cards + the dealer's
+            // have LANDED (DecisionReady), so the countdown starts when I can actually act, not mid-deal. (The server
+            // also grants a deal-presentation buffer so the shown time starts near the full turn.)
+            if (board.TurnExpiresAt.HasValue && (view == null || view.DecisionReady(table.MySeat)))
             {
                 double remaining = (board.TurnExpiresAt.Value - System.DateTimeOffset.UtcNow).TotalSeconds;
+                // CLAMP to a real turn: the deadline is a generous ceiling until our /presented call collapses it, so
+                // without this we'd flash the ceiling for the round-trip (or forever, if that call ever fails).
+                if (board.TurnDurationSeconds > 0) remaining = System.Math.Min(remaining, board.TurnDurationSeconds);
                 if (remaining > 0) timer = $" ({remaining:0}s)";
             }
 

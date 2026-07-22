@@ -23,9 +23,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/1Khela/_Scenes/Wardrobe.unity
     guid: f90d5bdb27a77bf4381d69e9946ba8ca
-  - enabled: 1
-    path: Assets/1Khela/_Scenes/Virtual_Worlds/DiveBar_01/DiveBar_01.unity
-    guid: 89cfc83fdc9ea6e4d860ac4a136a2106
   m_configObjects:
+    com.unity.addressableassets: {fileID: 11400000, guid: 91b0a3b5904917442aeb98828cc6c2d9, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0

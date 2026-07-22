@@ -6,15 +6,20 @@ using UnityEngine;
 namespace PlayCard.UI
 {
     /// <summary>
-    /// Smoothly fades the other-player avatar cards OUT while betting (when the camera eases in to the bet pose)
-    /// and back IN when the round starts and the camera returns to the table pose. Both react to the same board
-    /// change as the camera, so the fade and the camera move stay in sync. Put this on the parent that holds the
-    /// avatar layouts (NOT the local bottom HUD) — it adds a CanvasGroup and tweens its alpha.
+    /// Smoothly fades the other-player avatar cards OUT while the camera is CLOSED IN (betting + the local player's
+    /// turn) and back IN whenever it pulls WIDE — including the deal-in and the whole round-end ceremony. It mirrors
+    /// <see cref="TableCameraController"/>'s "close" state EXACTLY (same betting / my-turn / RoundEndSettling /
+    /// DecisionReady rules), so the fade and the camera move together and the avatars always come back when the FOV
+    /// releases. Put this on the parent that holds the avatar layouts (NOT the local bottom HUD) — it adds a
+    /// CanvasGroup and tweens its alpha.
     /// </summary>
     [RequireComponent(typeof(CanvasGroup))]
     public sealed class BettingAvatarFader : MonoBehaviour
     {
         [SerializeField] private TableController table;
+        [Tooltip("The table view — so the fade tracks the camera through the DEAL and the ROUND-END (DecisionReady / " +
+                 "RoundEndSettling), not just the raw board. Auto-found if empty.")]
+        [SerializeField] private BlackjackTableView view;
         [SerializeField] private CanvasGroup group;
         [Tooltip("Fade time in seconds — match the camera's Move Time so they move together.")]
         [SerializeField] private float fadeDuration = 0.45f;
@@ -23,14 +28,16 @@ namespace PlayCard.UI
         [SerializeField] private CanvasGroup playerAvatar;
 
         private Coroutine _fade;
+        private bool _closeInit;
+        private bool _lastClose;
 
         private void Awake() { if (group == null) group = GetComponent<CanvasGroup>(); }
 
         private void OnEnable()
         {
-            if (table == null) return;
-            table.OnBoardChanged += OnBoard;
-            if (table.Board != null) OnBoard(table.Board);
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();
+            if (table != null) table.OnBoardChanged += OnBoard;
+            Refresh();
         }
 
         private void OnDisable()
@@ -38,14 +45,36 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
-        private void OnBoard(BoardSnapshot board)
+        private void OnBoard(BoardSnapshot board) => Refresh();
+
+        // DecisionReady + RoundEndSettling change BETWEEN board pushes (cards land; the round-end ceremony ends), so a
+        // board-only trigger would leave the fade a beat behind the camera. Re-check every frame; the change-guard in
+        // Refresh keeps it free when nothing moved.
+        private void Update() => Refresh();
+
+        // TRUE when the camera is closed in — betting, OR my turn once my cards have landed. It stays WIDE (false)
+        // through the deal-in and the whole round-end ceremony, so this must NOT treat those as "betting". Matches
+        // TableCameraController.Resolve exactly. The OLD check used raw !RoundInProgress, so it faded the avatars out
+        // the instant a round settled and left them out through the entire round-end — the "never comes back" bug.
+        private bool ComputeClose()
         {
-            // Fade the other-player avatars OUT both while BETTING and while it's the local player's TURN (the camera
-            // closes in for both), and back IN otherwise — kept in sync with TableCameraController's `close`.
+            var board = table != null ? table.Board : null;
+            if (board == null) return false;
             int seat = table != null ? table.MySeat : -1;
-            bool betting = board != null && !board.RoundInProgress;
-            bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat;
-            FadeTo((betting || myTurn) ? 0f : 1f);
+            bool roundEndSettling = view != null && view.RoundEndSettling;
+            bool dealt = view == null || view.DecisionReady(seat);
+            bool betting = !board.RoundInProgress && !roundEndSettling;
+            bool myTurn = board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat && dealt;
+            return betting || myTurn;
+        }
+
+        private void Refresh()
+        {
+            bool close = ComputeClose();
+            if (_closeInit && close == _lastClose) return;
+            _closeInit = true;
+            _lastClose = close;
+            FadeTo(close ? 0f : 1f);
         }
 
         private void FadeTo(float target)

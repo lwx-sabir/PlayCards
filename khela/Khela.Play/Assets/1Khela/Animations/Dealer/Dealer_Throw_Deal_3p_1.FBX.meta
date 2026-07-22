@@ -66,8 +66,8 @@ ModelImporter:
       name: Deal_Throw_P1
       takeName: Unreal Take
       internalID: -3832985876365397432
-      firstFrame: 0
-      lastFrame: 150
+      firstFrame: 14
+      lastFrame: 145
       wrapMode: 0
       orientationOffsetY: 0
       level: 0
@@ -125,7 +125,7 @@ ModelImporter:
       takeName: Unreal Take
       internalID: -7675148277510182533
       firstFrame: 547
-      lastFrame: 724
+      lastFrame: 690
       wrapMode: 0
       orientationOffsetY: 0
       level: 0

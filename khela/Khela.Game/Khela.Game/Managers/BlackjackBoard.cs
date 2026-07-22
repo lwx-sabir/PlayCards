@@ -22,6 +22,10 @@ namespace Khela.Game.Managers
             table.CurrentSeatNumber,
             table.CurrentHandIndex,
             table.TurnExpiresAt,
+            // The configured decision length. TurnExpiresAt is stamped as a GENEROUS ceiling until the player's client
+            // calls /presented, so the client clamps its countdown to this — it never shows more than a real turn, even
+            // in the moment before the collapse lands (or if that call never happens).
+            table.TurnDurationSeconds,
             table.InsuranceExpiresAt, // when set, the round is in its insurance phase (its own countdown)
             table.LastHandId, // id of the most recently settled hand — feeds GET /verify/{handId}
             table.LastResults, // per-seat outcome of the last settled round (drives the client result banner)

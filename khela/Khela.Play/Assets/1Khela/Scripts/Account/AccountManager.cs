@@ -35,6 +35,10 @@ namespace PlayCard.Account
         public string JwtToken => _authSave.Token;
         public string UserId => _authSave.UserId;
 
+        /// <summary>Server-side device registration id — sent on social sign-in so the server can link the
+        /// social identity onto THIS device's existing guest account (guest -> social upgrade).</summary>
+        public string DeviceId => _authSave.DeviceId;
+
         public event Action OnReady;
         public event Action OnTokenRefreshed;
 
@@ -198,6 +202,22 @@ namespace PlayCard.Account
         }
 
         /// <summary>
+        /// Adopts the token returned by an external/social sign-in (see KhelaAuthService). The server has
+        /// already resolved which account this identity belongs to — including upgrading this device's guest
+        /// account in place — so we simply cache the new token and carry on as that user.
+        /// </summary>
+        public void ApplyExternalAuth(AuthResponse auth, string analyticsMethod)
+        {
+            if (auth == null || string.IsNullOrEmpty(auth.Token)) return;
+
+            CacheAuth(auth);
+            KhelaAnalytics.LogLogin(string.IsNullOrEmpty(analyticsMethod) ? "social" : analyticsMethod);
+
+            IsReady = true;
+            OnTokenRefreshed?.Invoke();
+        }
+
+        /// <summary>
         /// Should be called when a server request fails with 401/expired; attempts refresh then retries via the caller.
         /// </summary>
         public async Task<bool> HandleAuthFailureAsync()
@@ -289,7 +309,12 @@ namespace PlayCard.Account
                 ? baseApiUrl.TrimEnd('/')
                 : AppConfig.Instance.BaseApiUrl;
 
-        private async Task<T> PostJsonAsync<T>(string endpoint, object payload, bool expectResponseBody = true) where T : class
+        /// <summary>
+        /// Shared JSON POST. Pass <paramref name="bearerToken"/> to authenticate the call as the current
+        /// user — required by the social sign-in upgrade path, where the server links the new identity onto
+        /// the account the caller is already signed into.
+        /// </summary>
+        public async Task<T> PostJsonAsync<T>(string endpoint, object payload, bool expectResponseBody = true, string bearerToken = null) where T : class
         {
             var url = $"{ResolveBaseUrl()}{endpoint}";
             try
@@ -297,6 +322,8 @@ namespace PlayCard.Account
                 var json = JsonSerializer.Serialize(payload, JsonOpts);
                 var req = new HTTPRequest(new Uri(url), HTTPMethods.Post);
                 req.SetHeader("Content-Type", "application/json; charset=utf-8");
+                if (!string.IsNullOrEmpty(bearerToken))
+                    req.SetHeader("Authorization", $"Bearer {bearerToken}");
                 req.UploadSettings.UploadStream = new MemoryStream(Encoding.UTF8.GetBytes(json));
 
                 // Best HTTP throws AsyncHTTPException on any non-2xx (and on network/timeout); 2xx returns the response.
@@ -317,7 +344,7 @@ namespace PlayCard.Account
             }
         }
 
-        private string GetCountryCode()
+        public string GetCountryCode()
         {
             try 
             {

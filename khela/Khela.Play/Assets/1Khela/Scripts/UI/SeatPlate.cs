@@ -48,6 +48,14 @@ namespace PlayCard.UI
             SetInfoVisible(false);
         }
 
+        /// <summary>Dev preview: show the FULL card with its AUTHORED placeholder name / chips / icon (kept as-is, not
+        /// overwritten), so an empty seat can be eyeballed with all elements while there's no real player.</summary>
+        public void ShowPlaceholder()
+        {
+            Content.SetActive(true);
+            SetInfoVisible(true);
+        }
+
         /// <summary>Hide the whole card.</summary>
         public void Hide()
         {

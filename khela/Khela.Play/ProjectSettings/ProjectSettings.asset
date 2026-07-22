@@ -830,7 +830,7 @@ PlayerSettings:
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
   scriptingDefineSymbols:
-    Android: DOTWEEN;MAGICACLOTH2;INVECTOR_BASIC;INVECTOR_MELEE;INVECTOR_SHOOTER
+    Android: DOTWEEN;MAGICACLOTH2;INVECTOR_BASIC;INVECTOR_MELEE;INVECTOR_SHOOTER;FISHNET;FISHNET_V4
     EmbeddedLinux: DOTWEEN
     GameCoreScarlett: DOTWEEN
     GameCoreXboxOne: DOTWEEN

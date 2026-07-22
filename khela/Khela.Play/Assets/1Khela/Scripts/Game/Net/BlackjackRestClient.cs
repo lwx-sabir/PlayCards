@@ -255,6 +255,16 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<BoardSnapshot>> DeclineInsuranceAsync(string tableId, int seatNumber)
             => SendAsync<BoardSnapshot>(HttpMethod.Post, $"/api/Blackjack/{tableId}/insurance/decline/{seatNumber}");
 
+        /// <summary>
+        /// PRESENTATION HANDSHAKE — call the moment the deal (or a drawn card) has finished animating and the player can
+        /// actually act. The server stamps turn deadlines generously (max-presentation + turn) so a slow deal can never
+        /// cut us off mid-animation; this collapses that to the REAL turn length from now, so the player always gets the
+        /// full configured decision time regardless of device speed, table size or clip length. Cheat-safe server-side
+        /// (can only shorten, never extend) and idempotent per turn, so a repeated call is harmless.
+        /// </summary>
+        public Task<ApiResult<BoardSnapshot>> PresentedAsync(string tableId, int seatNumber)
+            => SendAsync<BoardSnapshot>(HttpMethod.Post, $"/api/Blackjack/{tableId}/presented/{seatNumber}");
+
         /// <summary>Runs the dealer and settles; returns the final board (with the revealed hole card and LastHandId).</summary>
         public Task<ApiResult<BoardSnapshot>> DealerPlayAsync(string tableId)
             => SendAsync<BoardSnapshot>(HttpMethod.Post, $"/api/Blackjack/{tableId}/dealerPlay");

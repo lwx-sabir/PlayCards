@@ -66,6 +66,7 @@ namespace PlayCard.UI
         private void OnEnable()
         {
             CaptureNormalColor();
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be silently bypassed
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             if (table.Board != null) OnBoard(table.Board);
@@ -75,6 +76,10 @@ namespace PlayCard.UI
         {
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
+
+        // Dealer total as last shown while the hole card was still DOWN. Held through the round-end until the reveal
+        // flips it, so the settle board's full total can't leak the hidden card. -1 = nothing shown yet.
+        private int _dealerShownValue = -1;
 
         private void OnBoard(BoardSnapshot board)
         {
@@ -93,21 +98,34 @@ namespace PlayCard.UI
             if (board == null || view == null || labelPrefab == null) return;
             _desired.Clear();
 
-            // Badges only while a round is LIVE — they clear with the cards between rounds / on a stale table.
-            if (board.RoundInProgress)
+            // Follow the CARDS, not RoundInProgress (each badge is gated in Place on its hand's last card being
+            // rendered + landed via view.CardSettled): so a value/bust badge stays with the cards through the round-end
+            // window and clears when they're collected. Gating on RoundInProgress dropped the badge the instant the
+            // server resolved (e.g. a bust) while the card was still animating in. The view only renders cards while a
+            // round is live (or during its deferred sweep), so nothing shows between rounds.
+            if (includeDealer && board.Dealer != null)
             {
-                if (includeDealer && board.Dealer != null)
-                    Place(0, 0, 1, board.Dealer.Cards, board.Dealer.HandValue, false);
+                // The settle board carries the dealer's FULL total (hole card included) the instant the round resolves,
+                // but the hole is still face-down until the director's reveal beat flips it — printing that total now
+                // would leak the hidden card's value. So while the round-end is held and the hole hasn't been turned,
+                // keep showing the last total we displayed with it DOWN; the flip releases the real one.
+                int dealerValue = board.Dealer.HandValue;
+                if (view.RoundEndHeld && !view.DealerHoleRevealed && _dealerShownValue >= 0)
+                    dealerValue = _dealerShownValue;
+                else
+                    _dealerShownValue = dealerValue;
 
-                if (board.Seats != null)
+                Place(0, 0, 1, board.Dealer.Cards, dealerValue, false);
+            }
+
+            if (board.Seats != null)
+            {
+                foreach (var seat in board.Seats)
                 {
-                    foreach (var seat in board.Seats)
-                    {
-                        var hands = seat?.Player?.Hands;
-                        if (hands == null) continue;
-                        for (int h = 0; h < hands.Count; h++)
-                            Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].HandValue, hands[h].Done);
-                    }
+                    var hands = seat?.Player?.Hands;
+                    if (hands == null) continue;
+                    for (int h = 0; h < hands.Count; h++)
+                        Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].HandValue, hands[h].Done);
                 }
             }
 

@@ -79,7 +79,14 @@ namespace PlayCard.UI
 
         private void OnEnable()
         {
+            // Auto-find so the deal-landed gate can NEVER be silently bypassed: if `view` is left unassigned, the
+            // DecisionReady check in InsuranceHand is skipped and the popup fires off the raw board data — i.e. the
+            // instant the round is dealt, BEFORE the cards animate in. Finding the view here keeps it held until the
+            // deal lands.
+            if (table == null) table = FindAnyObjectByType<TableController>();
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();
             if (table == null) { Debug.LogWarning("[InsurancePopup] No TableController assigned."); return; }
+            if (view == null) Debug.LogWarning("[InsurancePopup] No BlackjackTableView found — popup can't wait for the deal to land.");
             table.OnBoardChanged += Apply;
             Apply(table.Board);
         }
@@ -93,12 +100,12 @@ namespace PlayCard.UI
 
         private void Update()
         {
-            // Cards land BETWEEN board pushes, so re-evaluate the offer when the deal-animating state flips — otherwise
-            // the popup (shown from Apply on the board push) would pop mid-deal, or not appear until the next push.
-            bool animating = view != null && view.AnyCardAnimating();
-            if (animating != _lastAnimating)
+            // Cards land BETWEEN board pushes, so re-evaluate when the LOCAL inputs (my hand + the dealer's) settle —
+            // otherwise the popup (shown from Apply on the board push) would pop mid-deal or lag a push behind.
+            bool localUnsettled = view != null && !view.DecisionReady(table.MySeat);
+            if (localUnsettled != _lastAnimating)
             {
-                _lastAnimating = animating;
+                _lastAnimating = localUnsettled;
                 Apply(table != null ? table.Board : null);
             }
 
@@ -128,8 +135,12 @@ namespace PlayCard.UI
         private HandView InsuranceHand(BoardSnapshot board)
         {
             if (board == null || !board.RoundInProgress || !board.InsuranceExpiresAt.HasValue) return null;
+            if (board.InsuranceExpiresAt.Value <= DateTimeOffset.UtcNow) return null;   // window already closed — never pop a dead offer
             if (!DealerShowsAce(board)) return null;
-            if (view != null && view.AnyCardAnimating()) return null;   // hold the offer until the dealt cards have LANDED
+            // Hold only until the LOCAL decision inputs land — my hand + the dealer's (seat 0) — NOT the whole table's
+            // deal. The server insurance window is a fixed ~12s wall-clock; gating on the global animation would let a
+            // full-table deal eat it (or close it before I'm ever offered).
+            if (view != null && !view.DecisionReady(table.MySeat)) return null;
 
             var me = board.Seats?.Find(s => s.SeatNumber == table.MySeat)?.Player;
             if (me?.Hands == null || me.Hands.Count == 0) return null;

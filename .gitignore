@@ -131,6 +131,14 @@ mono_crash.*
 /khela/Khela.Play/Assets/Plugins/tvOS/Firebase.meta
 /khela/Khela.Play/ProjectSettings/AndroidResolverDependencies.xml
 
+# =========================
+# Third-party asset packs — huge, re-downloadable from the Asset Store, NOT source.
+# Keeping them out matters: the repo already uses Git LFS and is near GitHub's free quota.
+# On a fresh clone: re-import the pack from the Unity Asset Store into the same path.
+# =========================
+/khela/Khela.Play/Assets/3PA/Textures/Mega Bundle 3 - 325+ Stylized Textures/
+/khela/Khela.Play/Assets/3PA/Textures/Mega Bundle 3 - 325+ Stylized Textures.meta
+
 # --- Secrets: OAuth client secrets must never be committed (keep server-side; rotate if leaked) ---
 **/client_secret_*.apps.googleusercontent.com.json
 **/client_secret_*.apps.googleusercontent.com.json.meta

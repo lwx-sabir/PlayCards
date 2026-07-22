@@ -20,6 +20,9 @@ namespace PlayCard.UI
     {
         [Header("Source")]
         [SerializeField] private TableController table;
+        [Tooltip("The table view — holds the prompt until MY cards AND the dealer's have landed (the dealer deals last, " +
+                 "so that's the whole deal finished). Optional (null = pops straight off the board).")]
+        [SerializeField] private BlackjackTableView view;
 
         [Header("Refs")]
         [Tooltip("The popup VISUAL that slides + is shown/hidden. Put on a SEPARATE object from this controller; it may be disabled by default.")]
@@ -59,6 +62,7 @@ namespace PlayCard.UI
 
         private void OnEnable()
         {
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();   // so the deal-landed gate can't be silently bypassed
             if (table == null) { Debug.LogWarning("[TurnPopup] No TableController assigned."); return; }
             table.OnBoardChanged += Apply;
             Apply(table.Board);
@@ -69,11 +73,25 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= Apply;
         }
 
+        private bool _lastReady;
+
         private void Update()
         {
+            // Cards land BETWEEN board pushes, so re-evaluate when my decision inputs (my cards + the dealer's) settle —
+            // Apply is board-driven, so without this the prompt would never appear for a turn that started mid-deal.
+            if (table != null && view != null)
+            {
+                bool ready = view.DecisionReady(table.MySeat);
+                if (ready != _lastReady) { _lastReady = ready; Apply(table.Board); }
+            }
+
             if (!_shown || timerLabel == null) return;
-            var exp = table != null && table.Board != null ? table.Board.TurnExpiresAt : null;
+            var board = table != null ? table.Board : null;
+            var exp = board != null ? board.TurnExpiresAt : null;
             double remaining = exp.HasValue ? (exp.Value - DateTimeOffset.UtcNow).TotalSeconds : 0d;
+            // Clamp to a real turn — the deadline is a generous ceiling until our /presented call collapses it.
+            if (board != null && board.TurnDurationSeconds > 0)
+                remaining = Math.Min(remaining, board.TurnDurationSeconds);
             timerLabel.text = Format(remaining);
         }
 
@@ -87,7 +105,11 @@ namespace PlayCard.UI
 
         private void Apply(BoardSnapshot board)
         {
-            bool myTurn = table != null && table.IsMyTurn;   // RoundInProgress && my seat is the current turn
+            // Gate on the ANIMATION: only prompt once MY cards AND the DEALER's have landed — the dealer is dealt LAST,
+            // so that means the whole deal has finished. Without this the prompt pops the instant the server says it's
+            // my turn, while the dealer's second/hole card is still in the air.
+            bool myTurn = table != null && table.IsMyTurn
+                          && (view == null || view.DecisionReady(table.MySeat));
             if (myTurn) { if (!_shown) Show(); }
             else        { if (_shown) Hide(); }
         }

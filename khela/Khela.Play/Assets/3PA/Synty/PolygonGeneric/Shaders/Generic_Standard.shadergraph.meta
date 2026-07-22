@@ -10,8 +10,8 @@ ScriptedImporter:
   script: {fileID: 11500000, guid: 625f186215c104763be7675aa2d941aa, type: 3}
 AssetOrigin:
   serializedVersion: 1
-  productId: 216721
-  packageName: POLYGON - Nightclubs Pack - Art by Synty
-  packageVersion: 1.9.1
-  assetPath: Assets/Synty/PolygonGeneric/Shaders/Generic_Standard.shadergraph
-  uploadId: 924214
+  productId: 120152
+  packageName: POLYGON - Nature Pack - Art by Synty
+  packageVersion: 1.2.0
+  assetPath: Assets/3PA/Synty/PolygonGeneric/Shaders/Generic_Standard.shadergraph
+  uploadId: 915458

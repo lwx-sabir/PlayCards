@@ -11,13 +11,16 @@ namespace PlayCard.Game.Betting
     /// whichever seat you took (a single shared rail only ever lines up from one camera angle).
     ///
     /// Chip values come from the <see cref="ChipSet"/> (minBet × multipliers, dropping any above the table max).
-    /// Bet-mode is read straight off the board (<c>!RoundInProgress</c>), so no extra visibility component is
-    /// needed — the rail is empty during a round and refilled when the betting window opens.
+    /// Bet-mode is <c>!RoundInProgress</c> AND not <see cref="BlackjackTableView.RoundEndSettling"/> — so the rail is
+    /// empty during a round AND through the whole round-end ceremony, and refills only once betting truly reopens.
     /// </summary>
     public sealed class ChipRailSpawner : MonoBehaviour
     {
         [SerializeField] private TableController table;
         [SerializeField] private ChipSet chipSet;
+        [Tooltip("The table view — keeps the rail EMPTY through the round-end ceremony (RoundEndSettling), not just while " +
+                 "RoundInProgress. Auto-found if empty.")]
+        [SerializeField] private BlackjackTableView view;
         [Tooltip("One rail per seat — element 0 = seat 1, element 1 = seat 2, … Each ChipRail holds that view's slots.")]
         [SerializeField] private ChipRail[] railsBySeat;
 
@@ -27,6 +30,7 @@ namespace PlayCard.Game.Betting
 
         private void OnEnable()
         {
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             if (table.Board != null) OnBoard(table.Board);   // board may have arrived before we enabled
@@ -37,12 +41,23 @@ namespace PlayCard.Game.Betting
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
+        // RoundEndSettling ends BETWEEN board pushes (the director drops its hold, no board fires), so re-evaluate each
+        // frame — else the rail would pop early or lag a push behind the ceremony. Cheap: OnBoard early-outs when
+        // nothing that affects the rail changed.
+        private void Update()
+        {
+            if (table != null && table.Board != null) OnBoard(table.Board);
+        }
+
         private void OnBoard(BoardSnapshot board)
         {
             if (board == null || chipSet == null || railsBySeat == null) return;
 
             int mySeat = table != null ? table.MySeat : -1;   // 1-based, -1 if not seated
-            bool betting = !board.RoundInProgress;            // chips only show during the betting window
+            // Betting window = between rounds AND the previous round-end has fully finished. A blackjack settles the
+            // round INSTANTLY (RoundInProgress flips false while the payout ceremony is still playing), so gating on
+            // RoundInProgress alone popped the chip rail up over the payout.
+            bool betting = !board.RoundInProgress && !(view != null && view.RoundEndSettling);
             bool stakesChanged = board.MinBet != _min || board.MaxBet != _max;
 
             // Nothing that affects the rail changed → leave it as-is (don't rebuild every snapshot).

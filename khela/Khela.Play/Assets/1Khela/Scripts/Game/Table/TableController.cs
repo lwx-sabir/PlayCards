@@ -122,6 +122,47 @@ namespace PlayCard.Game.Table
             _hub.OnDisconnected -= HandleDisconnected;
         }
 
+        // ---- Presentation handshake (turn clock) ----
+
+        private bool _presentedSent;
+
+        /// <summary>
+        /// Tell the server the moment we can ACTUALLY act. The server stamps turn deadlines generously
+        /// (max-presentation + turn) so a slow deal-in can never cut us off mid-animation; this call collapses that to
+        /// the real turn length from now — so the decision clock is the full configured turn on any device, table size
+        /// or clip length, with nothing to hand-tune.
+        ///
+        /// EDGE-TRIGGERED, and re-armed whenever it stops being our ready turn. That matters for hit/split: they deal a
+        /// card, which drops <see cref="BlackjackTableView.DecisionReady"/> while it flies, so once it lands we signal
+        /// again — matching the server re-stamping the turn on those actions. Cheap early-outs keep the per-frame cost
+        /// to nothing outside a live turn.
+        /// </summary>
+        private void Update()
+        {
+            if (Board == null || !Board.RoundInProgress) { _presentedSent = false; return; }
+
+            int seat = MySeat;
+            if (seat <= 0 || Board.CurrentSeatNumber != seat
+                || (tableView != null && !tableView.DecisionReady(seat)))
+            {
+                _presentedSent = false;   // not our ready turn → re-arm for the next one
+                return;
+            }
+
+            if (_presentedSent) return;
+            _presentedSent = true;
+            _ = SendPresentedAsync(seat);
+        }
+
+        // Fire-and-forget: the server is authoritative and the call is idempotent per turn, so a failure just leaves the
+        // generous ceiling standing (we lose the collapse, never the turn).
+        private async Task SendPresentedAsync(int seat)
+        {
+            if (string.IsNullOrEmpty(TableId) || seat <= 0) return;
+            var res = await Rest.PresentedAsync(TableId, seat);
+            if (res.Ok && res.Value != null) HandleBoard(res.Value);   // carries the collapsed deadline
+        }
+
         // Single board path: hub pushes AND inline action responses both flow through here, so the view,
         // camera and action bar always see the same snapshot in the same frame.
         private void HandleBoard(BoardSnapshot board)

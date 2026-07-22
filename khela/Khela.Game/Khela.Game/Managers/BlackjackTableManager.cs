@@ -38,10 +38,14 @@ namespace Khela.Game.Managers
         // ProgressionService use. A non-positive / unparseable override is ignored, so it can't break the clock.
         private readonly int cfgTurnSeconds;
         private readonly int cfgInsuranceSeconds;
+        private readonly int cfgMaxPresentationSeconds;   // CAP on the scaled presentation estimate below
+        private readonly int cfgPresentPerCardSeconds;    // per-CARD deal-in estimate; the anti-stall ceiling scales by the table's card count
         private readonly int cfgStalledTimeout;     // no heartbeat for this long ⇒ stalled ⇒ §5 removal
         private readonly int cfgDisconnectGrace;    // no heartbeat for this long ⇒ show "disconnected…"
         private int turnDurationSeconds      => RuntimeInt("Blackjack:TurnSeconds", cfgTurnSeconds);
         private int insuranceDurationSeconds => RuntimeInt("Blackjack:InsuranceSeconds", cfgInsuranceSeconds);
+        private int maxPresentationSeconds   => RuntimeInt("Blackjack:MaxPresentationSeconds", cfgMaxPresentationSeconds);
+        private int presentPerCardSeconds    => RuntimeInt("Blackjack:PresentationPerCardSeconds", cfgPresentPerCardSeconds);
         private int stalledTimeoutSeconds    => RuntimeInt("Table:StalledTimeoutSeconds", cfgStalledTimeout);
         private int disconnectGraceSeconds   => RuntimeInt("Table:DisconnectGraceSeconds", cfgDisconnectGrace);
         private const string SettingsHashKey = "khela:settings";
@@ -67,6 +71,8 @@ namespace Khela.Game.Managers
             this.env = env;
             this.cfgTurnSeconds = config.GetValue("Blackjack:TurnSeconds", 30);
             this.cfgInsuranceSeconds = config.GetValue("Blackjack:InsuranceSeconds", 12);
+            this.cfgMaxPresentationSeconds = config.GetValue("Blackjack:MaxPresentationSeconds", 45);
+            this.cfgPresentPerCardSeconds = config.GetValue("Blackjack:PresentationPerCardSeconds", 3);
             this.cfgStalledTimeout = config.GetValue("Table:StalledTimeoutSeconds", 30);
             this.cfgDisconnectGrace = config.GetValue("Table:DisconnectGraceSeconds", 20);
             this.emoteCooldownMs = config.GetValue("Emotes:CooldownMs", 1500);
@@ -436,6 +442,8 @@ namespace Khela.Game.Managers
                 .ToList();
 
             table.TurnDurationSeconds = turnDurationSeconds;
+            table.MaxPresentationSeconds = maxPresentationSeconds;
+            table.PresentationPerCardSeconds = presentPerCardSeconds;
 
             // Provably-fair: a secret per-session server seed, committed via its hash (published to
             // clients), combined with a client seed + per-round nonce to seed each shoe's shuffle.
@@ -844,6 +852,14 @@ namespace Khela.Game.Managers
             table.LastResults = new List<SeatRoundResult>(); // new round — clear last round's result banner
             table.ActionLog = new List<GameActionEntry>();   // new round — start a fresh move log
 
+            // Clock config is re-applied EVERY round, not just at table creation. A long-lived table (the round-driver
+            // refreshes its Redis TTL each tick, so house tables never expire) would otherwise stay frozen on whatever
+            // it was created with — e.g. the old 20s TurnDurationSeconds default — ignoring appsettings and admin
+            // overrides forever. Re-reading here makes both live without recreating the table.
+            table.TurnDurationSeconds = turnDurationSeconds;
+            table.MaxPresentationSeconds = maxPresentationSeconds;
+            table.PresentationPerCardSeconds = presentPerCardSeconds;
+
             // Defensive: tables created before provably-fair seeds existed get one lazily.
             if (string.IsNullOrEmpty(table.ServerSeed))
             {
@@ -905,8 +921,9 @@ namespace Khela.Game.Managers
             try
             {
                 table.Game.DealNewGame(roundSeed, 6);
-                ApplyDevDealerRig(table);     // DEV: force dealer cards for insurance testing (no-op unless armed)
-                ApplyDevPlayerPairRig(table); // DEV: force a splittable player pair for split testing (no-op unless armed)
+                ApplyDevDealerRig(table);        // DEV: force dealer cards for insurance testing (no-op unless armed)
+                ApplyDevDealerTenUpRig(table);   // DEV: force a TEN up-card for PEEK testing (runs after, so it wins if both armed)
+                ApplyDevPlayerPairRig(table);    // DEV: force a splittable player pair for split testing (no-op unless armed)
                 table.CurrentDeckHash = deckHash;
                 table.RoundStartedAt = DateTimeOffset.UtcNow;
 
@@ -1448,6 +1465,39 @@ namespace Khela.Game.Managers
         }
 
         /// <summary>
+        /// PRESENTATION HANDSHAKE. The current player's client calls this the moment it has finished animating the deal
+        /// (or the drawn card) and the player can actually act. The turn deadline — stamped generously as
+        /// (max-presentation + turn) so a slow client is never cut off mid-animation — collapses to the REAL turn
+        /// length from NOW. So the decision clock is always the full configured turn no matter how long that client's
+        /// deal-in took, with nothing to hand-tune.
+        ///
+        /// Cheat-safe: the new deadline is only ever accepted if it is EARLIER than the standing ceiling, so calling
+        /// late (or not at all) can only LOSE time, never gain it. Idempotent per turn via <c>TurnPresentAcked</c>, and
+        /// ignored unless it really is this caller's seat's turn.
+        /// </summary>
+        public async Task<BlackjackTable?> PresentedAsync(string tableId, string userId, int seatNumber)
+        {
+            await using var _tableLock = await LockTableAsync(tableId);
+
+            var table = await GetTableAsync(tableId);
+            if (table == null) return null;
+            if (!table.RoundInProgress) return table;              // nothing to collapse
+            if (table.TurnPresentAcked) return table;              // already collapsed this turn (idempotent)
+            if (table.CurrentSeatNumber != seatNumber) return table; // not this seat's turn — ignore, don't throw
+
+            var seat = table.Seats.FirstOrDefault(s => s.SeatNumber == seatNumber);
+            if (seat?.Player == null || seat.Player.Id != userId) return table;   // seat not held by this caller
+
+            table.TurnPresentAcked = true;
+            var collapsed = DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
+            if (!table.TurnExpiresAt.HasValue || collapsed < table.TurnExpiresAt.Value)
+                table.TurnExpiresAt = collapsed;                   // never EXTEND past the ceiling
+
+            await SaveTableAsync(tableId, table);
+            return table;
+        }
+
+        /// <summary>
         /// Server round-driver tick for one table: if the current player's turn timer has expired, auto-stand
         /// it and advance; once all player turns are resolved, dealer-play + settle. Lets an idle table finish
         /// its round on its own (the lazy timeout in EnsureTurn only fires when the NEXT action arrives).
@@ -1621,6 +1671,25 @@ namespace Khela.Game.Managers
             cards[1] = new Card(Suit.Spades, blackjackBlock ? FaceValue.King : FaceValue.Six, false);
         }
 
+        // DEV ONLY — when Blackjack:DevRigDealer1stCardTen is on (and we're in Development), force the dealer's FIRST
+        // (up) card to a TEN. That exercises the PEEK path on demand: a 10-value up-card peeks for blackjack WITHOUT
+        // opening an insurance window (insurance is Ace-only), which is exactly the case the peek animation is otherwise
+        // hard to hit. The hole card cycles in blocks of 3 so BOTH outcomes are covered — 3 deals as a blackjack
+        // (Ten+Ace → the peek FINDS one and the round settles with no player turns), then 3 as a non-blackjack
+        // (Ten+Six → the peek finds nothing and play continues), repeating. Applied AFTER ApplyDevDealerRig, so if both
+        // flags are armed this one wins. Breaks provable-fairness for rigged hands; never enabled in prod (default
+        // false + Development-gated).
+        private void ApplyDevDealerTenUpRig(BlackjackTable table)
+        {
+            if (!env.IsDevelopment() || !config.GetValue("Blackjack:DevRigDealer1stCardTen", false)) return;
+
+            var cards = table.Game.Dealer.Hand.Cards;
+            if (cards.Count < 2) return;
+            cards[0] = new Card(Suit.Clubs, FaceValue.Ten, true);           // up = Ten → peek, and NO insurance window
+            bool blackjackBlock = ((table.RoundNonce - 1) / 3) % 2 == 0;    // 3 blackjacks, then 3 non-blackjacks
+            cards[1] = new Card(Suit.Diamonds, blackjackBlock ? FaceValue.Ace : FaceValue.Six, false);
+        }
+
         // DEV ONLY — when Blackjack:DevPlayerRigPair is on (and we're in Development), force EVERY in-round player's
         // opening hand to a splittable PAIR, so split can be tested without waiting on a natural pair. The rank cycles
         // by round for coverage — 8s (normal split) → KK (10-value split) → AA (split-aces lock) — repeating. None of
@@ -1726,7 +1795,12 @@ namespace Khela.Game.Managers
             bool dealerAce = table.Game.Dealer.Hand.Cards.Any(c => c.IsCardUp && c.FaceVal == CardGames.Platforms.FaceValue.Ace);
             if (dealerAce && AnyInsuranceEligible(table))
             {
-                table.InsuranceExpiresAt = DateTimeOffset.UtcNow.AddSeconds(insuranceDurationSeconds);
+                // + presentation ceiling: the insurance window also opens at deal, so the deal-in animation shouldn't eat
+                // it. Unlike the turn clock this is NOT collapsed by /presented — it's a SHARED window across every
+                // eligible player, so one fast client must not shorten it for a slower one. It closes early anyway once
+                // all of them have decided (MaybeCloseInsurance).
+                table.InsuranceExpiresAt = DateTimeOffset.UtcNow
+                    .AddSeconds(insuranceDurationSeconds + PresentationSecondsFor(table));
                 table.CurrentSeatNumber = -1;   // no play turn during the insurance phase
                 table.CurrentHandIndex = 0;
                 table.TurnExpiresAt = null;
@@ -1797,13 +1871,47 @@ namespace Khela.Game.Managers
             }
             table.CurrentSeatNumber = current.seat;
             table.CurrentHandIndex = current.hand;
-            table.TurnExpiresAt = DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
+            StampTurn(table);
         }
 
+        /// <summary>
+        /// Stamp a FRESH turn deadline as the generous CEILING (max-presentation + turn), and re-arm the presentation
+        /// handshake. The player's client calls <c>/presented</c> the moment it has finished animating and can actually
+        /// act, which collapses this to the real turn length — so the decision clock is always the FULL configured turn
+        /// regardless of how long that client's deal-in took (device speed, table size, clip length). If no client ever
+        /// calls, this ceiling still expires and the reaper/auto-stand runs, so a stalled seat can't wedge the table.
+        /// Every turn transition goes through here so they all behave identically.
+        /// </summary>
+        private static void StampTurn(BlackjackTable table)
+        {
+            table.TurnPresentAcked = false;
+            table.TurnExpiresAt = DateTimeOffset.UtcNow
+                .AddSeconds(PresentationSecondsFor(table) + table.TurnDurationSeconds);
+        }
+
+        /// <summary>
+        /// Estimated seconds for a client to ANIMATE the deal-in, SCALED TO THE TABLE. The client throws one card at a
+        /// time, so an opening deal is 2 cards per player + 2 for the dealer — a 3-seat table animates about twice as
+        /// long as heads-up. A fixed constant sized for heads-up would cut a full table off mid-deal (it would look
+        /// exactly like the old timer bug), so this scales with the seat count and is capped by MaxPresentationSeconds.
+        ///
+        /// Over-estimating is FREE: this is only the anti-stall backstop, and the /presented handshake collapses the
+        /// deadline to the real turn length the moment the client is actually ready. A genuinely dead client is caught
+        /// by the heartbeat reaper (Table:StalledTimeoutSeconds), not by this.
+        /// </summary>
+        private static int PresentationSecondsFor(BlackjackTable table)
+        {
+            int players = Math.Max(1, table.Game?.Players?.Count ?? 1);
+            int cards = (2 * players) + 2;              // opening deal: two each, plus the dealer's two
+            int estimate = (table.PresentationPerCardSeconds * cards) + 3;   // + a little fixed overhead
+            return Math.Min(table.MaxPresentationSeconds, estimate);
+        }
+
+        // Called after HIT and SPLIT — both DEAL a card the client must animate before the player can act again.
         private static void RefreshTurn(BlackjackTable table)
         {
             if (table.CurrentSeatNumber <= 0) return;
-            table.TurnExpiresAt = DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
+            StampTurn(table);
         }
 
         private static void EnsureTurn(BlackjackTable table, int seatNumber, int handIndex)
@@ -1865,7 +1973,8 @@ namespace Khela.Game.Managers
             var n = next ?? (seat: -1, hand: 0);
             table.CurrentSeatNumber = n.seat;
             table.CurrentHandIndex = n.hand;
-            table.TurnExpiresAt = n.seat == -1 ? null : DateTimeOffset.UtcNow.AddSeconds(table.TurnDurationSeconds);
+            if (n.seat == -1) { table.TurnExpiresAt = null; table.TurnPresentAcked = false; }
+            else StampTurn(table);   // ceiling; the next seat's client collapses it via /presented (instantly if nothing is animating)
         }
 
         private static IEnumerable<(int seat, int hand)> GetOrderedHands(BlackjackTable table)
@@ -1918,6 +2027,20 @@ namespace Khela.Game.Managers
         public List<Seat> Seats { get; set; } = new List<Seat>();
 
         public int TurnDurationSeconds { get; set; } = 20;
+
+        // ANTI-STALL CEILING for the presentation handshake. A turn deadline is first stamped generously as
+        // (now + presentation + TurnDurationSeconds); the client calls /presented once it has finished animating and can
+        // actually act, which collapses it to (now + TurnDurationSeconds) — never beyond the original ceiling. So a
+        // client that stalls, lies, or never calls can only LOSE time, never gain it.
+        //
+        // The presentation estimate SCALES with the table (see PresentationSecondsFor): the client throws one card at a
+        // time, so a 3-seat deal animates roughly twice as long as heads-up. These are the per-card rate and the hard cap.
+        public int PresentationPerCardSeconds { get; set; } = 3;
+        public int MaxPresentationSeconds { get; set; } = 45;
+
+        // False while the current turn's deadline is still the generous ceiling; set once /presented collapses it, so
+        // the collapse happens exactly once per turn. Reset by StampTurn on every turn transition.
+        public bool TurnPresentAcked { get; set; }
 
         public int CurrentSeatNumber { get; set; } = -1;
 

@@ -191,7 +191,13 @@ banner, and balance HUD.
 2. **Client gameplay polish** — seat-pick (clickable seats + join-by-seat: add `int? SeatNumber`
    to `JoinTableRequest`), split-hand UI, bet validation, card dealing animations, dealer + avatar
    models, mobile-readable card faces; swap polling → Best SignalR for WebGL.
-3. **Ship blackjack** to a small Bengali/South-Asian audience; measure retention + whether
+3. **Graphics tier selection in Settings** — a Low/Mid/High dropdown calling
+   `PostFxTierController.SetTier()` (persists to `PlayerPrefs["khela.gfxTier"]`, which already wins
+   over auto-detect). The post-processing half is built: `PP_Low`/`PP_Mid`/`PP_High` profiles under
+   `Assets/1Khela/Quality/PostProcess` + the controller. Remaining: the settings UI itself, and
+   deciding whether the tier should ALSO drive the URP quality level (`QualitySettings.SetQualityLevel`
+   → a cheaper renderer for Low), not just the post stack.
+4. **Ship blackjack** to a small Bengali/South-Asian audience; measure retention + whether
    strangers pay. That gate decides everything after it.
 
 **Smaller fixes:** remove the doubled `namespace CardGames.Blackjack` in `BlackjackGame.cs`; wire
@@ -333,5 +339,7 @@ PokerBaazi, RummyCircle, Junglee) — don't name anything "Adda" or "Baazi."
    Phase-0 gate (the "take money" step).
 3. Client gameplay polish: seat-pick, split UI, bet validation, dealing animations, dealer/avatars;
    swap polling → Best SignalR for WebGL.
-4. Ship blackjack to a small Bengali/South-Asian audience; measure retention + whether strangers
+4. Graphics tier selection in Settings — Low/Mid/High dropdown → `PostFxTierController.SetTier()`
+   (post profiles + controller already built; see §6).
+5. Ship blackjack to a small Bengali/South-Asian audience; measure retention + whether strangers
    pay. That gate decides everything after it.
