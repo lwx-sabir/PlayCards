@@ -39,6 +39,9 @@ namespace PlayCard.UI
         private void Show(WalletBalances b)
         {
             if (label == null || b == null) return;
+            // A ChipCountJuice is rolling/punching this label — snapping the value here would overwrite the animation
+            // mid-roll, so the balance appeared to jump the instant the server value landed.
+            if (ChipCountJuice.Owns(label)) return;
             decimal v = currency switch
             {
                 Currency.Coins => b.Coins,

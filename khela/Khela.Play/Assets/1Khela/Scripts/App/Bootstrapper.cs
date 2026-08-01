@@ -29,6 +29,9 @@ namespace PlayCard.App
         {
             Best.HTTP.Shared.HTTPManager.Setup();
             Best.HTTP.Shared.HTTPManager.Logger.Level = Best.HTTP.Shared.Logger.Loglevels.Warning;
+            // Filter out the one benign Best.SignalR teardown NRE so it doesn't spam the console or get recorded as a
+            // non-fatal by crash reporting. Everything else (incl. real SignalR errors) still logs. See BestNetLogFilter.
+            PlayCard.Core.BestNetLogFilter.Install();
 #if !UNITY_WEBGL || UNITY_EDITOR
             Best.TLSSecurity.TLSSecurity.Setup();
 #endif
@@ -44,6 +47,30 @@ namespace PlayCard.App
         {
             UnityEngine.Rendering.DebugManager.instance.enableRuntimeUI = false;
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /// <summary>
+        /// Dev/QA ONLY: spawn Codestage's Advanced FPS Counter once as a keepAlive singleton, so FPS + device
+        /// info show across every scene (Boot → Home → Table → Worlds). The whole method is compiled OUT of
+        /// release builds by the guard, so players never see it — a release APK carries no overlay.
+        ///
+        /// Device-info readout mirrors the RAM/VRAM/core values <c>PostFxTierController.DetectTier()</c> reads,
+        /// so on real hardware you can confirm the auto-tier thresholds land where intended; the FPS readout is
+        /// how you profile the Forward+ / cascade mobile cost and verify the per-scene SceneFrameRate caps.
+        ///
+        /// Toggle: backquote on desktop (the AFPS asmdef auto-defines AFPS_INPUT_SYSTEM for the Input System
+        /// package, so its new-Input path is live), or a two-finger circle gesture on device.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void SpawnDevFpsOverlay()
+        {
+            var afps = CodeStage.AdvancedFPSCounter.AFPSCounter.AddToScene(true); // keepAlive → persists across scene loads
+            afps.fpsCounter.Enabled = true;
+            afps.deviceInfoCounter.Enabled = true;   // CPU/GPU/RAM/VRAM/DPI — cross-check the auto-tier thresholds
+            afps.memoryCounter.Enabled = false;      // off by default (noisy); flip on when hunting GC allocations
+            afps.circleGesture = true;               // two-finger circle toggles the overlay on device
+        }
+#endif
 
         // Start (not Awake): guarantees AccountManager.Awake has already run and set up Instance + auth.
         private void Start()

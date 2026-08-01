@@ -166,8 +166,11 @@ namespace PlayCard.UI
         private void Update()
         {
             if (table == null) return;
-            // Re-render each frame during a round so the turn countdown actually ticks.
-            if (table.Board != null && table.Board.RoundInProgress && statusText != null)
+            // Re-render each frame so the countdown actually ticks — during a round that's the turn clock, between
+            // rounds it's the betting window (the server auto-deals when that expires, so it has to be visible).
+            bool ticking = table.Board != null
+                           && (table.Board.RoundInProgress || table.Board.BettingExpiresAt.HasValue);
+            if (ticking && statusText != null)
                 statusText.text = BuildStatus(table.Board);
 
             // Cards land BETWEEN board pushes, so re-gate the buttons when my decision inputs (my cards + the dealer's)
@@ -198,8 +201,21 @@ namespace PlayCard.UI
 
             if (!board.RoundInProgress)
             {
+                // BETTING WINDOW countdown — computed BEFORE the round-over early-out. The server leaves the settled
+                // hands on the felt until the next deal, so "hasCards" is true for the WHOLE between-rounds window;
+                // returning "Round over" first therefore made this unreachable in every window after round one, which
+                // is exactly the window the countdown exists for. Both lines carry it now.
+                string betTimer = string.Empty;
+                if (board.BettingExpiresAt.HasValue && (view == null || !view.RoundEndSettling))
+                {
+                    double left = (board.BettingExpiresAt.Value - System.DateTimeOffset.UtcNow).TotalSeconds;
+                    if (board.BettingDurationSeconds > 0) left = System.Math.Min(left, board.BettingDurationSeconds);
+                    if (left > 0) betTimer = $" — betting closes in {left:0}s";
+                }
+
                 bool hasCards = hand?.Cards != null && hand.Cards.Count > 0;
-                return hasCards ? $"Round over — you {myVal} / dealer {dealerVal}" : "Place your bet";
+                if (hasCards) return $"Round over — you {myVal} / dealer {dealerVal}{betTimer}";
+                return $"Place your bet{betTimer}";
             }
 
             string timer = string.Empty;

@@ -1,0 +1,10 @@
+# ninja log v5
+38	2520	8065581776154629	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	b6839f70e9fbf5f1
+66	2533	8065581776059358	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	f18e464249d8d08e
+1	2687	8065581777912996	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	2b389a15102a5b09
+96	2795	8065581778727458	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	8fade8ae20ab2a9f
+81	3077	8065581781318851	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	39c193a12984a93a
+16	3093	8065581781753622	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	f5a1b0aeb1c43593
+52	3525	8065581786228888	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	8319cc35a5fe6f18
+112	3790	8065581788572446	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	30ddf271446deb06
+3791	4202	8065581793002238	D:/Projects/PlayCards/khela/Khela.Play/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/Debug/2o4b6c1h/obj/armeabi-v7a/libgame.so	6c88c185cc5d6dd8

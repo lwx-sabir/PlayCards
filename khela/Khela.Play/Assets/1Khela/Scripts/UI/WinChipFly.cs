@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using PlayCard.Game.Betting;   // BetStacks — the felt stack that lifts off just before the burst
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
 using UnityEngine;
@@ -60,6 +61,21 @@ namespace PlayCard.UI
         [SerializeField] private float popScale = 1.25f;
         [SerializeField] private float popDuration = 0.18f;
 
+        [Header("Bet-stack hand-off")]
+        [Tooltip("The felt bet stacks. Auto-found. The LOCAL seat's remaining chips float up and vanish just BEFORE " +
+                 "the burst, so the chips flying to the balance read as that stack lifting off — instead of the stack " +
+                 "sitting there while a second set of chips appears from nowhere. Tune the lift itself (rise seconds, " +
+                 "stagger, height, top-first) on BetStacks under 'Float-away'.")]
+        [SerializeField] private BetStacks betStacks;
+        [Tooltip("Extra pause between the stack finishing its shrink and the burst firing (seconds). 0 = burst the " +
+                 "moment the chips are gone.")]
+        [SerializeField] private float burstDelayAfterShrink = 0f;
+
+        [Tooltip("The chip COUNT label's juice. Auto-found. Each chip that lands ticks the number up a slice and " +
+                 "punches it, so the count rises WITH the chips instead of having already jumped when the server " +
+                 "value arrived. Optional — without it the count just rolls on the payout beat.")]
+        [SerializeField] private ChipCountJuice countJuice;
+
         [Header("Editor preview")]
         [Tooltip("Freeze the real burst in edit mode — Chip Count chips along the arc with the actual Start Spread + " +
                  "End Scale — so you can dial every spatial setting without pressing Play (timing can't show statically).")]
@@ -73,6 +89,7 @@ namespace PlayCard.UI
         // Held as a MonoBehaviour so there's no hard dependency on the director. Null = inert, old immediate behaviour.
         private MonoBehaviour _settleDirector;
         private Coroutine _pop;
+        private int _landed;   // chips that have hit the icon this burst — drives the chip-count ticks
         private Vector3 _targetBaseScale = Vector3.one;
         private readonly List<RectTransform> _preview = new List<RectTransform>();
         private Vector3 _chipBaseScale = Vector3.one;
@@ -87,6 +104,10 @@ namespace PlayCard.UI
             if (Application.isPlaying)
             {
                 if (target != null) _targetBaseScale = target.localScale;
+                // Include inactive: BetStacks can sit on an object that isn't active yet at this point, and the default
+                // overload would silently resolve to null — leaving the felt stack behind during the burst.
+                if (betStacks == null) betStacks = FindAnyObjectByType<BetStacks>(FindObjectsInactive.Include);
+                if (countJuice == null) countJuice = FindAnyObjectByType<ChipCountJuice>(FindObjectsInactive.Include);
                 if (table != null)
                 {
                     table.OnBoardChanged += OnBoard;
@@ -144,12 +165,31 @@ namespace PlayCard.UI
             SeatResultView r = board.LastResults?.Find(x => x.SeatNumber == table.MySeat);
             if (r == null || r.Outcome != "win") return;   // win only — push / lose / bust do nothing
 
+            // Claim the pending credit NOW, synchronously: the director's payout beat fires in this same frame and
+            // would otherwise roll the count straight to the total before a single chip had flown.
+            if (countJuice != null) countJuice.ExpectCredit();
+
+            StartCoroutine(LiftStackThenBurst());
+        }
+
+        // Hand-off: the felt stack shrinks out first, THEN the burst fires — so the chips flying to the balance read as
+        // that stack leaving. The wait comes from BetStacks (it owns the shrink length), so the two can't drift apart.
+        // With no BetStacks wired the wait is 0 and this is the old behaviour: burst immediately.
+        private IEnumerator LiftStackThenBurst()
+        {
+            float shrink = 0f;
+            if (betStacks != null && table != null && table.MySeat > 0)
+                shrink = betStacks.PlayFloatAway(table.MySeat);
+
+            float wait = shrink + Mathf.Max(0f, burstDelayAfterShrink);
+            if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
             Burst();
         }
 
         // All chips spawn TOGETHER and explode outward with their own velocities — a real blast, not a tween to a ring.
         private void Burst()
         {
+            _landed = 0;   // chips arrive in distance order, not spawn order, so the count needs its own tally
             Vector3 src = LocalOf(source);
             Vector3 dst = LocalOf(target);
             int n = Mathf.Max(1, chipCount);
@@ -217,6 +257,12 @@ namespace PlayCard.UI
             }
             Destroy(rt.gameObject);
             Punch();
+
+            // THIS is the beat the count is allowed to move: a chip just hit the icon. Tick the number up its share of
+            // the win and punch the label. The last chip lands on progress 1, which finishes the roll exactly on the
+            // server's value — no drift, because the goal is always measured against that value, not accumulated here.
+            _landed++;
+            if (countJuice != null) countJuice.ReleaseCredit((float)_landed / Mathf.Max(1, chipCount));
         }
 
         private void Punch()

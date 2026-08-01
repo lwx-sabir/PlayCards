@@ -41,10 +41,13 @@
 *.unityproj
 
 # ...but the .NET backend's project/solution files ARE source — keep them tracked.
-!/khela/PlayCards/Khela.Game/**/*.csproj
-!/khela/PlayCards/Khela.Game/*.sln
-!/khela/PlayCards/Khela.Common/**/*.csproj
-!/khela/PlayCards/Khela.Common/*.sln
+# NOTE: these paths must track the repo layout. They used to say /khela/PlayCards/... and were silently
+# dead after the ~2026-06 flatten removed that nesting, so the blanket *.csproj / *.sln above swallowed the
+# whole backend and a fresh clone had nothing buildable.
+!/khela/Khela.Game/**/*.csproj
+!/khela/Khela.Game/*.sln
+!/khela/Khela.Common/**/*.csproj
+!/khela/Khela.Common/*.sln
 
 # Debug / symbol files (often huge)
 *.pdb
@@ -142,3 +145,7 @@ mono_crash.*
 # --- Secrets: OAuth client secrets must never be committed (keep server-side; rotate if leaked) ---
 **/client_secret_*.apps.googleusercontent.com.json
 **/client_secret_*.apps.googleusercontent.com.json.meta
+
+# --- Secrets: Firebase Admin service-account key (server-side token verification) — treat like a password ---
+**/firebase-service-account*.json
+**/*firebase-adminsdk*.json

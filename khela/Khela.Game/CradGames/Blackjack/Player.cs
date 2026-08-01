@@ -43,6 +43,13 @@ namespace CardGames.Blackjack
         [JsonInclude]
         public bool InsuranceDecided { get; set; }
 
+        // True once this player has ACTIVELY placed a bet during the CURRENT betting window (set on PlaceBet,
+        // cleared at settle). Distinct from Bet > 0, which persists between rounds as an auto-repeat default — this
+        // is "committed for THIS round", so the table can start the round early only when everyone has actively bet
+        // (not just carried a stale bet forward) and never cut the shared window short on a player who hasn't acted.
+        [JsonInclude]
+        public bool BetThisWindow { get; set; }
+
         public string Image { get; private set; } = string.Empty;
         public string Name { get; private set; } = string.Empty;
 

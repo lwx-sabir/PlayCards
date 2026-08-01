@@ -39,9 +39,13 @@ namespace PlayCard.UI
         [SerializeField] private TMP_Text timerLabel;
 
         [Header("Slide")]
-        [Tooltip("How far below the shown position to park when hidden (anchored units). Tune so it's off-screen.")]
+        [Tooltip("Slide in from the TOP (park above the shown spot, drop down into view). Uncheck to slide up from below.")]
+        [SerializeField] private bool slideFromTop = true;
+        [Tooltip("How far OFF-SCREEN to park when hidden (anchored units) — direction set by Slide From Top. Tune so it's fully off-screen.")]
         [SerializeField] private float slideDistance = 1000f;
         [SerializeField] private float slideDuration = 0.35f;
+        [Tooltip("Juice: overshoot bounce on the slide. 0 = clean, ~1.7 = ~10% overshoot, higher = bouncier.")]
+        [SerializeField] private float overshoot = 1.7f;
 
         private Vector2 _shownPos;
         private Vector2 _hiddenPos;
@@ -56,7 +60,7 @@ namespace PlayCard.UI
         {
             if (panel == null) panel = transform as RectTransform;
             _shownPos = panel.anchoredPosition;                 // designed = SHOWN position (read even while inactive)
-            _hiddenPos = _shownPos - new Vector2(0f, slideDistance);
+            _hiddenPos = _shownPos + (slideFromTop ? Vector2.up : Vector2.down) * slideDistance;
 
             if (yesButton != null) yesButton.onClick.AddListener(OnYes);
             if (noButton != null) noButton.onClick.AddListener(OnNo);
@@ -180,30 +184,33 @@ namespace PlayCard.UI
         {
             _shown = true;
             if (!_selfHosted && !panel.gameObject.activeSelf) panel.gameObject.SetActive(true);
-            panel.anchoredPosition = _hiddenPos;               // start below, then slide up
-            StartSlide(_shownPos, deactivateAtEnd: false);
+            panel.anchoredPosition = _hiddenPos;               // start off-screen (top by default), then slide in
+            StartSlide(_shownPos, deactivateAtEnd: false, showing: true);
         }
 
         private void Hide()
         {
             _shown = false;
-            StartSlide(_hiddenPos, deactivateAtEnd: !_selfHosted);
+            StartSlide(_hiddenPos, deactivateAtEnd: !_selfHosted, showing: false);
         }
 
-        private void StartSlide(Vector2 target, bool deactivateAtEnd)
+        private void StartSlide(Vector2 target, bool deactivateAtEnd, bool showing)
         {
             if (_slide != null) StopCoroutine(_slide);
-            _slide = StartCoroutine(SlideTo(target, deactivateAtEnd));
+            _slide = StartCoroutine(SlideTo(target, deactivateAtEnd, showing));
         }
 
-        private IEnumerator SlideTo(Vector2 target, bool deactivateAtEnd)
+        private IEnumerator SlideTo(Vector2 target, bool deactivateAtEnd, bool showing)
         {
             Vector2 start = panel.anchoredPosition;
             float t = 0f;
             while (t < slideDuration && slideDuration > 0f)
             {
                 t += Time.unscaledDeltaTime;
-                float k = Mathf.SmoothStep(0f, 1f, t / slideDuration);
+                float raw = Mathf.Clamp01(t / slideDuration);
+                // Juicy: overshoot IN (EaseOutBack), wind-up-then-shoot OUT (EaseInBack); LerpUnclamped lets the panel
+                // briefly pass the endpoints for the bounce. overshoot 0 ⇒ clean cubic eases (no bounce).
+                float k = showing ? UITween.EaseOutBack(raw, overshoot) : UITween.EaseInBack(raw, overshoot);
                 panel.anchoredPosition = Vector2.LerpUnclamped(start, target, k);
                 yield return null;
             }

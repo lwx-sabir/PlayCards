@@ -55,12 +55,16 @@ namespace Khela.Game.Services.Auth
                 var app = FirebaseApp.DefaultInstance;
                 if (app == null)
                 {
-                    GoogleCredential credential;
-                    if (!string.IsNullOrWhiteSpace(credentialsPath) && File.Exists(credentialsPath))
-                        credential = GoogleCredential.FromFile(credentialsPath);
-                    else
-                        // Falls back to GOOGLE_APPLICATION_CREDENTIALS / workload identity if present.
-                        credential = GoogleCredential.GetApplicationDefault();
+                    var credential = ResolveCredential(credentialsPath);
+                    if (credential == null)
+                    {
+                        // Not configured — a normal local/dev state. Leave the verifier disabled (the endpoint
+                        // returns 503) WITHOUT a scary stack trace. Password/device login is unaffected.
+                        _logger.LogWarning(
+                            "Firebase social sign-in DISABLED — no credentials. Set Firebase:CredentialsPath to your " +
+                            "service-account JSON (Firebase console > Project settings > Service accounts) to enable it.");
+                        return;
+                    }
 
                     app = FirebaseApp.Create(new AppOptions
                     {
@@ -77,10 +81,36 @@ namespace Khela.Game.Services.Auth
                 // Never crash startup over social auth — the endpoint reports "not configured" until credentials
                 // are supplied. Password/device login keeps working regardless.
                 _auth = null;
-                _logger.LogWarning(ex,
-                    "Firebase Auth verifier NOT initialised — social sign-in disabled. Set Firebase:CredentialsPath " +
-                    "(service-account JSON) and Firebase:ProjectId to enable it.");
+                _logger.LogWarning(ex, "Firebase Auth verifier failed to initialise — social sign-in disabled.");
             }
+        }
+
+        /// <summary>
+        /// Resolves the service-account credential, or null when Firebase isn't configured. Only attempts
+        /// Application Default Credentials when GOOGLE_APPLICATION_CREDENTIALS is actually set — otherwise ADC
+        /// throws a noisy exception purely to report that it's unconfigured.
+        /// </summary>
+        private GoogleCredential ResolveCredential(string credentialsPath)
+        {
+            if (!string.IsNullOrWhiteSpace(credentialsPath))
+            {
+                // Try the configured path as-is, then the same filename next to the running app (where the
+                // .csproj copies it on publish). This lets a single absolute dev path in appsettings still work
+                // on the deployed server — whose OS and paths differ — via the copied-alongside file.
+                foreach (var path in new[] { credentialsPath, Path.Combine(AppContext.BaseDirectory, Path.GetFileName(credentialsPath)) })
+                {
+                    if (File.Exists(path))
+                        return GoogleCredential.FromFile(path);
+                }
+
+                _logger.LogWarning("Firebase:CredentialsPath = '{Path}' not found (also tried next to the app).", credentialsPath);
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")))
+                return GoogleCredential.GetApplicationDefault();
+
+            return null;
         }
 
         public async Task<ExternalIdentity> VerifyAsync(string idToken, CancellationToken ct = default)

@@ -32,6 +32,11 @@ namespace PlayCard.Game.Betting
         /// <summary>Fired whenever the bet changes (place / undo / clear). Bind the bet-spot/extra UI to it.</summary>
         public event Action<decimal> OnBetChanged;
 
+        /// <summary>Fired the instant a DEAL is committed, carrying the bet amount, BEFORE the bet is cleared — so the
+        /// chip visuals can hand the dropped pile off to a gather animation before <see cref="OnBetChanged"/>(0)
+        /// would wipe it. Distinct from OnBetChanged(0), which also fires on a plain CLEAR/UNDO (no gather wanted).</summary>
+        public event Action<long> OnDealCommitted;
+
         private void Notify()
         {
             if (totalLabel != null) totalLabel.text = Total.ToString(totalFormat);
@@ -108,6 +113,7 @@ namespace PlayCard.Game.Betting
                 var amount = Total;
                 _lastPlaced.Clear();
                 _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
+                OnDealCommitted?.Invoke((long)amount);   // let the felt gather the dropped chips BEFORE Clear() wipes them
                 Clear();
                 await table.PlaceBet(amount);    // records the bet (debited at deal)
                 await table.Deal();

@@ -12,6 +12,12 @@ namespace Khela.Game.Database.Models
         [Key]
         public Guid ParticipantId { get; set; } = Guid.NewGuid();
 
+        /// <summary>Operator (licensee brand) this row belongs to — see <see cref="Tenant"/>. Denormalised from
+        /// the header so per-brand ledger/audit queries don't need the join.</summary>
+        [Required]
+        [MaxLength(Tenant.MaxLength)]
+        public string OperatorId { get; set; } = Tenant.Default;
+
         [Required]
         public Guid HandId { get; set; }
 

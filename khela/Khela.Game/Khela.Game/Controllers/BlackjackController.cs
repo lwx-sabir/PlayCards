@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Khela.Game.Managers;
 using Khela.Game.Database;
+using Khela.Game.Database.Models;   // GameHandHeader/Participant + HandStatus (session hand log)
+using Microsoft.EntityFrameworkCore;
 using CardGames.Blackjack;
 using CardGames.Platforms;
 using CardGames.Provable;
@@ -109,9 +111,12 @@ namespace Khela.Game.Controllers
         [HttpPost("{tableId}/deal")]
         public async Task<IActionResult> Deal(string tableId)
         {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+
             try
             {
-                var table = await tableManager.DealAsync(tableId);
+                var table = await tableManager.DealAsync(tableId, userId);
                 if (table == null) return NotFound("Table not found or expired.");
                 return Ok(BlackjackBoard.Build(table));
             }
@@ -350,6 +355,79 @@ namespace Khela.Game.Controllers
                 Verified = string.Equals(recomputed, header.DeckHash, StringComparison.OrdinalIgnoreCase),
                 header.ResultChecksum,
                 DeckOrder = shoe.Cards.Select(ProvableShuffle.Canonical)
+            });
+        }
+
+        /// <summary>
+        /// THIS player's settled hands at THIS table — the session hand log / report. Reads the authoritative
+        /// per-hand audit rows (GameHandParticipants joined to GameHandHeaders), so it is the same data the ledger
+        /// was built from and it SURVIVES a reconnect or a scene reload — unlike anything the client accumulates
+        /// in memory. A split contributes one row per hand (HandIndex 0, 1, …), exactly as it settled.
+        ///
+        /// <paramref name="sinceUtc"/> scopes it to the current sitting (the client stamps when it sat down);
+        /// omit for "everything this table has for me", capped by <paramref name="take"/>. Newest first.
+        /// </summary>
+        [HttpGet("{tableId}/history")]
+        public async Task<IActionResult> History(string tableId, [FromQuery] DateTime? sinceUtc = null,
+                                                 [FromQuery] int take = 100)
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId)) return Unauthorized("Missing user id.");
+            if (!Guid.TryParse(userId, out var uid)) return Unauthorized("Bad user id.");
+            if (take <= 0 || take > 500) take = 100;   // clamp: this is a UI list, not a bulk export
+
+            // Normalise the cutoff to a UTC INSTANT. SettledAt is stored UTC, but a DATETIME column round-trips with
+            // no kind and the query-string binder can hand us Unspecified (or Local) — comparing that raw would shift
+            // the sitting window by the server's offset and show the wrong hands (or none).
+            if (sinceUtc.HasValue)
+                sinceUtc = sinceUtc.Value.Kind == DateTimeKind.Unspecified
+                    ? DateTime.SpecifyKind(sinceUtc.Value, DateTimeKind.Utc)
+                    : sinceUtc.Value.ToUniversalTime();
+
+            // Own rows only — a player can never read another seat's stakes or payouts through this.
+            var q = from p in db.GameHandParticipants
+                    join h in db.GameHandHeaders on p.HandId equals h.HandId
+                    where p.UserId == uid
+                          && h.TableId == tableId
+                          && h.Status == HandStatus.Settled
+                          && (sinceUtc == null || h.SettledAt >= sinceUtc)
+                    orderby h.SettledAt descending, h.HandNumber descending, p.HandIndex
+                    select new
+                    {
+                        p.HandId,                 // feeds the one-click provably-fair verify link
+                        h.HandNumber,
+                        h.SettledAt,
+                        p.SeatNumber,
+                        p.HandIndex,              // a split shows one entry per hand
+                        p.Bet,
+                        p.InsuranceBet,
+                        p.Payout,
+                        // Net for this hand: what came back minus everything staked on it. Same definition the
+                        // board's per-hand Delta uses, so the log and the felt can never disagree.
+                        Delta = p.Payout - (p.Bet + p.InsuranceBet),
+                        p.FinalHandValue,
+                        p.Bust,
+                        p.Blackjack,
+                        p.Outcome
+                    };
+
+            var rows = await q.Take(take).ToListAsync();
+
+            // Session totals for the report header. Computed over the RETURNED rows so the numbers always match
+            // the list the player is looking at (a truncated list never shows a total it doesn't itemise).
+            return Ok(new
+            {
+                TableId = tableId,
+                SinceUtc = sinceUtc,
+                Count = rows.Count,
+                Truncated = rows.Count >= take,
+                Wagered = rows.Sum(r => r.Bet + r.InsuranceBet),
+                Returned = rows.Sum(r => r.Payout),
+                Net = rows.Sum(r => r.Delta),
+                Wins = rows.Count(r => r.Outcome == "win" || r.Outcome == "blackjack"),
+                Losses = rows.Count(r => r.Outcome == "lose" || r.Outcome == "bust"),
+                Pushes = rows.Count(r => r.Outcome == "push"),
+                Hands = rows
             });
         }
 

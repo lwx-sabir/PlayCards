@@ -22,6 +22,9 @@ namespace PlayCard.Game.Betting
         [SerializeField] private int seatNumber = 1;
 
         [Header("Physics drop")]
+        [Tooltip("Fallback felt scale, used only if no BetStacks/ChipSet is present. The real value lives on the " +
+                 "ChipSet asset (Felt Chip Scale) so a dropped chip and a stacked one can never disagree.")]
+        [SerializeField] private float droppedChipScaleFallback = 1.2f;
         [Tooltip("How high above the box a chip appears before it falls.")]
         [SerializeField] private float dropHeight = 0.2f;
         [Tooltip("Thickness of the invisible floor the chips land on (world units).")]
@@ -72,19 +75,46 @@ namespace PlayCard.Game.Betting
 
             ChipSheen.Remove(chip);   // it's a copy of a rail chip — drop the rail glint once it settles into the bet
 
-            // Re-enable the chip's collider as a convex solid (legal for a dynamic Rigidbody).
+            // Give the dropped chip a physics-legal collider. Its authored collider is a MeshCollider using an
+            // import-LOCKED (non-readable) collision mesh (e.g. "Coin_1_Collision"): a convex MeshCollider on a dynamic
+            // Rigidbody must BAKE that mesh at runtime, which needs its Read/Write flag — so it throws
+            // ("CollisionMeshData couldn't be created … marked as non-accessible") and the whole drop aborts (chips
+            // never appear). Swap any MeshCollider for a cheap BoxCollider sized from the mesh's AABB — Mesh.bounds is
+            // accessible without Read/Write, there's no bake, and a primitive is faster to simulate anyway.
             SetLayerRecursive(chip, physicsLayer);
             foreach (var c in chip.GetComponentsInChildren<Collider>(true))
             {
-                if (c is MeshCollider mc) mc.convex = true;   // convex is required for a dynamic Rigidbody
-                c.enabled = true;
-                c.isTrigger = false;
+                if (c is MeshCollider mc)
+                {
+                    mc.enabled = false;   // inert: the box below does the physics (no convex-bake, no read error)
+                    var go = mc.gameObject;
+                    if (go.GetComponent<BoxCollider>() == null)
+                    {
+                        var box = go.AddComponent<BoxCollider>();   // enabled + solid by default
+                        var src = mc.sharedMesh != null ? mc.sharedMesh
+                                : go.GetComponentInChildren<MeshFilter>(true)?.sharedMesh;
+                        if (src != null) { box.center = src.bounds.center; box.size = src.bounds.size; }
+                    }
+                }
+                else
+                {
+                    c.enabled = true;
+                    c.isTrigger = false;
+                }
             }
 
             // Position it above the tray (release XZ clamped inside the walls) BEFORE adding the body — a fresh
             // Rigidbody then starts cleanly at the spawn pose, so there's no 1-frame interpolation "flicker" from
             // the release point (which otherwise reads as a teleport instead of a drop).
             chip.transform.SetParent(transform, worldPositionStays: true);
+
+            // Felt size. The dropped chip is a clone of a RAIL chip, so it carries that rail template's scale — sized
+            // for the rail's own camera view, not for the table. Set it AFTER the reparent:
+            // SetParent(worldPositionStays: true) rewrites localScale to preserve the world size, so doing this any
+            // earlier would just be undone. (BoxCollider.size is in local space and scales with the transform, so the
+            // collider fitted above stays correct — the chip's physics footprint grows with it.)
+            chip.transform.localScale = Vector3.one * FeltChipScale();
+
             Vector3 local = transform.InverseTransformPoint(chip.transform.position);
             Vector3 half = _box.size * 0.5f;
             float pad = 0.01f;   // keep the spawn just inside the visible box outline
@@ -111,6 +141,31 @@ namespace PlayCard.Game.Betting
             _chips.Clear();
         }
 
+        /// <summary>True while dropped chips are resting on the felt (for the gather-on-deal animation).</summary>
+        public bool HasChips => _chips.Count > 0;
+
+        /// <summary>
+        /// Hand the pile off to a gather animation instead of destroying it: FREEZE each chip (kinematic body,
+        /// colliders off) so a tween can pull it cleanly, then return the list and forget it here. Because the list is
+        /// emptied WITHOUT destroying, the zero-bet <see cref="Clear"/> that fires right after DEAL becomes a no-op and
+        /// the caller (BetStacks) now owns the chips — it pulls them to the stack anchor and adopts them as the
+        /// committed stack. The explicit CLEAR/UNDO path is untouched: it still wipes instantly.
+        /// </summary>
+        public List<GameObject> DetachChips()
+        {
+            var outList = new List<GameObject>(_chips);
+            _chips.Clear();
+            for (int i = 0; i < outList.Count; i++)
+            {
+                var chip = outList[i];
+                if (chip == null) continue;
+                var rb = chip.GetComponent<Rigidbody>();
+                if (rb != null) rb.isKinematic = true;                 // stop physics; the tween drives it now
+                foreach (var c in chip.GetComponentsInChildren<Collider>(true)) c.enabled = false;
+            }
+            return outList;
+        }
+
         // Build ONE invisible floor (slightly larger than the drop box) so chips land and rest. No walls — the drop
         // box already constrains where chips land, and walls just make border chips lean on an invisible surface.
         private void BuildFloor()
@@ -128,6 +183,21 @@ namespace PlayCard.Game.Betting
             go.transform.localRotation = Quaternion.identity;
             go.transform.localScale = Vector3.one;
             go.AddComponent<BoxCollider>().size = size;
+        }
+
+        // The felt chip size, taken from the shared ChipSet via BetStacks so a dropped chip is exactly the size of the
+        // stacked chips it will merge into. Cached — the lookup is scene-wide and the answer can't change at runtime.
+        private BetStacks _stacks;
+        private bool _lookedForStacks;
+
+        private float FeltChipScale()
+        {
+            if (!_lookedForStacks)
+            {
+                _lookedForStacks = true;
+                _stacks = FindAnyObjectByType<BetStacks>(FindObjectsInactive.Include);
+            }
+            return _stacks != null ? _stacks.FeltChipScale : droppedChipScaleFallback;
         }
 
         private static void SetLayerRecursive(GameObject go, int layer)

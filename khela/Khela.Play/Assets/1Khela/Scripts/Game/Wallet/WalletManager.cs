@@ -15,7 +15,15 @@ namespace PlayCard.Game.Wallet
         public static WalletManager Instance { get; private set; }
 
         public WalletBalances Balances { get; private set; }
+
         /// <summary>Current Chips balance (0 if not yet fetched). Chips are the wagerable currency.</summary>
+        ///
+        /// NOTE: there is deliberately NO optimistic/predicted component here. An earlier version showed a stake leaving
+        /// before the server confirmed it, but every action also triggers a balance refresh, so a refresh already in
+        /// flight would come back carrying the debit and the prediction got applied on top of it — the balance dipped
+        /// twice and then corrected upward, flashing a "win" green for a bet. The latency that prediction was hiding is
+        /// gone anyway: TableController now paints the HUD straight from the board snapshot's own wallet mirror, which
+        /// arrives with the push instead of needing a second round-trip.
         public decimal Chips => Balances?.Chips ?? 0m;
         /// <summary>Current Kash balance (0 if not yet fetched). Kash is the premium spend currency (non-wagerable).</summary>
         public decimal Kash => Balances?.Kash ?? 0m;
@@ -44,11 +52,18 @@ namespace PlayCard.Game.Wallet
             _ = RefreshAsync();
         }
 
+        // Bumped on every authoritative write. A GET /wallet issued BEFORE a write can land AFTER it (the request is
+        // in flight across the write), and applying that stale response rolls the balance back to its pre-write value.
+        // On a natural blackjack the deal-debit refresh and the settle credit are only one driver tick apart, which is
+        // exactly the window where the win visibly "un-credits" itself.
+        private int _writeGen;
+
         /// <summary>Set the canonical balances and broadcast. The ONE place balances are written — every HUD reads from here.</summary>
         public void Apply(WalletBalances balances)
         {
             if (balances == null) return;
             Balances = balances;
+            _writeGen++;
             OnBalancesChanged?.Invoke(Balances);
         }
 
@@ -58,18 +73,26 @@ namespace PlayCard.Game.Wallet
         {
             Balances ??= new WalletBalances();
             Balances.Chips = chips;
+            _writeGen++;
             OnBalancesChanged?.Invoke(Balances);
         }
 
         /// <summary>Re-fetch balances from the server. Call after settles, purchases, or on screen load.</summary>
         public async Task<bool> RefreshAsync()
         {
+            int gen = _writeGen;
             var res = await BlackjackRestClient.Instance.GetWalletAsync();
             if (!res.Ok)
             {
                 Debug.LogWarning($"[WalletManager] balance fetch failed: {res.Error}");
                 return false;
             }
+
+            // A newer authoritative value landed while this was in flight, so this response is already out of date —
+            // applying it would roll the balance BACKWARDS (a settle credit being undone by a fetch that was issued
+            // before it). Drop it; whatever wrote in the meantime is closer to the truth, and the next refresh will
+            // reconcile anyway.
+            if (_writeGen != gen) return true;
 
             Apply(res.Value);
             return true;

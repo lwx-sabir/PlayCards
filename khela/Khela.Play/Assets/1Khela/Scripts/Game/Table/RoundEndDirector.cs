@@ -24,8 +24,11 @@ namespace PlayCard.Game.Table
     /// THAT seat's chips. A missing clip or event degrades gracefully (the chips fly immediately); nothing ever stalls
     /// (watchdog + <see cref="OnDisable"/> force-finish).
     ///
-    /// Money-safety: every chip visual is driven by <see cref="BoardSnapshot.LastResults"/> (Outcome / Delta) — the
-    /// server is authoritative on balances; the chips never imply a payout the server didn't make.
+    /// Money-safety: every chip visual is driven by <see cref="BoardSnapshot.LastResults"/> — the server is
+    /// authoritative on balances; the chips never imply a payout the server didn't make. COLLECT and PAY read the
+    /// server's PER-HAND results (<c>SeatResultView.Hands</c>), so a split settles hand by hand exactly like two
+    /// single hands, each at its own chip spot; the seat-level Outcome/Delta is only the fallback for an older
+    /// server that sends no per-hand list.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class RoundEndDirector : MonoBehaviour
@@ -35,12 +38,18 @@ namespace PlayCard.Game.Table
         [SerializeField] private BlackjackTableView view;
         [SerializeField] private DealerAnimator dealer;
         [SerializeField] private BetStacks betStacks;
-        [Tooltip("Seat banner cards. The credited balance on them is held until the PAY beat (else the chip count jumps at settle).")]
-        [SerializeField] private SeatPlates seatPlates;
+        [Tooltip("Seat banner cards — ALL of them. There is one SeatPlates per per-seat HUD layout and only the local " +
+                 "seat's layout is active, so every one must be held or a remote seat's chip count jumps at settle. " +
+                 "Auto-found (including inactive) if empty.")]
+        [SerializeField] private SeatPlates[] seatPlates;
         [Tooltip("Win juice (chips → balance icon). Fired on the PAY beat instead of the raw settle push. Optional.")]
         [SerializeField] private WinChipFly winChipFly;
-        [Tooltip("WIN / LOSE / +delta banner. Held until the PAY beat so it doesn't announce the payout at settle. Optional.")]
-        [SerializeField] private RoundResultBanner resultBanner;
+        [Tooltip("Per-hand WIN / PUSH / LOSE (and the dealer's mirrored win/lose) card banners. Held until the reveal + " +
+                 "draws are done, so they don't announce the outcome mid-deal. Optional (auto-found).")]
+        [SerializeField] private HandBlackjackLabels handLabels;
+        [Tooltip("Chip-count roll/punch juice. Held so a WIN doesn't tick the number up at the settle push — the count " +
+                 "rises as the flying chips land, and this beat flushes any remainder. Optional (auto-found).")]
+        [SerializeField] private ChipCountJuice countJuice;
         [Tooltip("Dealer peek driver. On a dealer BLACKJACK the round settles instantly, so its mid-round trigger never " +
                  "fires — this director then plays the peek just before the reveal. Optional (auto-found).")]
         [SerializeField] private DealerPeek peekDriver;
@@ -80,6 +89,7 @@ namespace PlayCard.Game.Table
         private Coroutine _seq, _watchdog, _flip;
         private float _watchdogDeadline;   // per-BEAT deadline (kicked each beat), so a slow-but-progressing sequence isn't force-finished
         private bool _flipDone, _payShown, _finaleDone;
+        private BoardSnapshot _pendingSettle;   // a settle that landed while we were mid-sequence — run it after
         private readonly List<GameObject> _ownedChips = new List<GameObject>();   // director-owned flying chips
 
         /// <summary>True while the director owns the round-end (for optional HUD gating / tests).</summary>
@@ -87,14 +97,20 @@ namespace PlayCard.Game.Table
 
         private void OnEnable()
         {
-            if (table == null) table = FindAnyObjectByType<TableController>();
-            if (view == null) view = FindAnyObjectByType<BlackjackTableView>();
-            if (dealer == null) dealer = FindAnyObjectByType<DealerAnimator>();
-            if (betStacks == null) betStacks = FindAnyObjectByType<BetStacks>();
-            if (seatPlates == null) seatPlates = FindAnyObjectByType<SeatPlates>();
-            if (winChipFly == null) winChipFly = FindAnyObjectByType<WinChipFly>();
-            if (resultBanner == null) resultBanner = FindAnyObjectByType<RoundResultBanner>();
-            if (peekDriver == null) peekDriver = FindAnyObjectByType<DealerPeek>();
+            // NOTE the FindObjectsInactive.Include: the payout-gated UI lives on objects that are DISABLED at the moment
+            // this runs — e.g. the seat plates sit inside per-seat HUD layouts and only the local seat's is active. The
+            // default overload skips inactive objects, so it silently resolved to null / the wrong instance and the
+            // whole payout hold was never wired.
+            if (table == null) table = FindAnyObjectByType<TableController>(FindObjectsInactive.Include);
+            if (view == null) view = FindAnyObjectByType<BlackjackTableView>(FindObjectsInactive.Include);
+            if (dealer == null) dealer = FindAnyObjectByType<DealerAnimator>(FindObjectsInactive.Include);
+            if (betStacks == null) betStacks = FindAnyObjectByType<BetStacks>(FindObjectsInactive.Include);
+            if (seatPlates == null || seatPlates.Length == 0)
+                seatPlates = FindObjectsByType<SeatPlates>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (winChipFly == null) winChipFly = FindAnyObjectByType<WinChipFly>(FindObjectsInactive.Include);
+            if (handLabels == null) handLabels = FindAnyObjectByType<HandBlackjackLabels>(FindObjectsInactive.Include);
+            if (countJuice == null) countJuice = FindAnyObjectByType<ChipCountJuice>(FindObjectsInactive.Include);
+            if (peekDriver == null) peekDriver = FindAnyObjectByType<DealerPeek>(FindObjectsInactive.Include);
 
             if (table != null)
             {
@@ -103,18 +119,22 @@ namespace PlayCard.Game.Table
                 _prevInProgress = table.Board != null && table.Board.RoundInProgress;   // seed: no false trigger on a cold join
             }
             if (betStacks != null) betStacks.RegisterSettleDirector(this);   // arms BetStacks' INTRINSIC hold
-            if (seatPlates != null) seatPlates.RegisterSettleDirector(this); // arms the seat-plate balance hold (revealed on PAY)
+            if (seatPlates != null)                                          // arms EVERY seat-plate balance hold (revealed on PAY)
+                foreach (var sp in seatPlates) if (sp != null) sp.RegisterSettleDirector(this);
             if (winChipFly != null) winChipFly.RegisterSettleDirector(this); // win juice now fires on PAY, not the settle push
-            if (resultBanner != null) resultBanner.RegisterSettleDirector(this); // WIN/LOSE banner held until PAY
+            if (handLabels != null) handLabels.RegisterSettleDirector(this); // per-hand + dealer win/lose banners held until PAY
+            if (countJuice != null) countJuice.RegisterSettleDirector(this); // chip count won't tick up until chips land
         }
 
         private void OnDisable()
         {
             if (table != null) { table.OnBoardChanged -= OnBoard; table.OnConnectionChanged -= OnConnection; }
             if (betStacks != null) betStacks.UnregisterSettleDirector(this);
-            if (seatPlates != null) seatPlates.UnregisterSettleDirector(this);
+            if (seatPlates != null)
+                foreach (var sp in seatPlates) if (sp != null) sp.UnregisterSettleDirector(this);
             if (winChipFly != null) winChipFly.UnregisterSettleDirector(this);
-            if (resultBanner != null) resultBanner.UnregisterSettleDirector(this);
+            if (handLabels != null) handLabels.UnregisterSettleDirector(this);
+            if (countJuice != null) countJuice.UnregisterSettleDirector(this);
             if (_running) ForceFinish();   // teardown mid-sequence: never leave the felt frozen
         }
 
@@ -135,8 +155,19 @@ namespace PlayCard.Game.Table
             bool nowIn = board.RoundInProgress;
             bool wasIn = _prevInProgress;
             _prevInProgress = nowIn;
-            if (_running) return;                        // owning a sequence → ignore re-pushes / reconnects
-            if (wasIn && !nowIn) BeginSequence(board);   // in-round → settle: the transition (never a cold join)
+            bool settled = wasIn && !nowIn;              // in-round → settle: the transition (never a cold join)
+
+            if (_running)
+            {
+                // A settle arrived while we still own the felt. _prevInProgress has ALREADY consumed the edge above,
+                // so simply returning loses it forever and that round's reveal/collect/pay never plays. Latch it and
+                // run it when this sequence finishes. Reachable whenever rounds come fast — most easily after a
+                // natural, whose ceremony can still be running when the next round deals and settles.
+                if (settled) _pendingSettle = board;
+                return;
+            }
+
+            if (settled) BeginSequence(board);
         }
 
         private void BeginSequence(BoardSnapshot board)
@@ -163,10 +194,22 @@ namespace PlayCard.Game.Table
 
             // Guard: let the opening-deal pump FINISH before we touch the dealer — otherwise the reveal interrupts her
             // mid-throw and cards strand. On a natural blackjack the pump is still going when this settle push lands, so
-            // this legitimately waits several throws; cap generously (the watchdog covers a true hang).
+            // this legitimately waits several throws.
+            //
+            // The wait must be SHORTER than the watchdog budget, and must keep kicking it. Both used to be
+            // maxHoldSeconds with no re-Kick, so a long pump could burn the entire per-beat deadline here — the
+            // watchdog then ForceFinish'd the sequence before COLLECT/PAY ever ran, snapping the payout with no chip
+            // animation at all. That is the "blackjack breaks the chip animation" case: a natural is exactly when
+            // this wait is longest, because the settle arrives mid-pump.
             Kick();
+            float pumpWait = Mathf.Max(0.5f, maxHoldSeconds * 0.5f);
             float t = 0f;
-            while (dealer != null && dealer.Busy && t < maxHoldSeconds) { t += Time.unscaledDeltaTime; yield return null; }
+            while (dealer != null && dealer.Busy && t < pumpWait)
+            {
+                t += Time.unscaledDeltaTime;
+                Kick();               // progressing, not hung — don't let the watchdog count this against the beat
+                yield return null;
+            }
 
             // A natural blackjack / 21 settles the round the instant the opening cards are dealt — so the deal pump can
             // get cut off before it throws every card (leaving a card PARKED HIDDEN → the player shows only 1 card).
@@ -194,33 +237,42 @@ namespace PlayCard.Game.Table
                 yield return WaitSettle();
             }
 
-            // 3) HOLD
+            // 3) HOLD — the dealer's final hand is now fully shown, so this is the point where "all the dealing has
+            // settled". Reveal the per-hand WIN / PUSH / LOSE card banners (and the dealer's mirrored win/lose) HERE and
+            // let holdSeconds read them before the chips move: earlier would announce the outcome mid-deal (the reported
+            // bug); waiting until after the PAY beat would flash them for only the sweep, since they're
+            // pinned to the cards and vanish when the felt is swept. (RevealPayout re-calls this idempotently, as a
+            // safety net for force-finish paths that skip this beat.)
+            if (handLabels != null) handLabels.RevealNow(_board);
             Kick();
             if (holdSeconds > 0f) yield return new WaitForSecondsRealtime(holdSeconds);
 
-            // 4) COLLECT — ONE loser seat at a time: the dealer plays THAT seat's collect gesture and its event flies the
-            // seat's chips to her. Same one-at-a-time, event-coupled model as the deal throws.
-            foreach (int seat in LoserSeats())
+            // 4) COLLECT — ONE losing HAND at a time: the dealer plays that seat's collect gesture and its event flies
+            // THAT hand's chips to her (a split's hands are collected separately, so a winning hand keeps its bet).
+            // Same one-at-a-time, event-coupled model as the deal throws.
+            foreach (var h in LoserHands())
             {
                 Kick();
-                if (dealer != null) yield return dealer.CollectFromSeat(seat, () => CollectSeat(seat));
-                else CollectSeat(seat);
+                var hand = h;   // capture per iteration — the closure must not see the loop's last value
+                if (dealer != null) yield return dealer.CollectFromSeat(hand.Seat, () => CollectHand(hand));
+                else CollectHand(hand);
                 yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
             }
             if (dealer != null) dealer.ReturnToIdle();
 
-            // 5) PAY — ONE winner seat at a time: the dealer plays THAT seat's pay gesture and its event flies the
-            // winnings out to that seat.
-            foreach (var r in WinnerResults())
+            // 5) PAY — ONE winning HAND at a time: the dealer plays that seat's pay gesture and its event flies the
+            // winnings out to that HAND's chip spot (a split's two hands are paid separately, like two single hands).
+            foreach (var h in WinnerHands())
             {
                 Kick();
-                if (dealer != null) yield return dealer.PayToSeat(r.SeatNumber, () => PaySeat(r));
-                else PaySeat(r);
+                var hand = h;
+                if (dealer != null) yield return dealer.PayToSeat(hand.Seat, () => PayHand(hand));
+                else PayHand(hand);
                 yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
             }
             if (dealer != null) dealer.ReturnToIdle();
 
-            // The winnings have landed → NOW reveal the credited balances (seat plates + banner + win juice). Held until
+            // The winnings have landed → NOW reveal the credited balances (seat plates + win juice). Held until
             // here so nothing shows the payout before the dealer paid — the whole point of the sequence.
             RevealPayout();
 
@@ -294,21 +346,52 @@ namespace PlayCard.Game.Table
             _flip = StartCoroutine(flip.Reveal(() => view.RevealDealerHole(revealed), flipSeconds, flipEdgeEuler, juice));
         }
 
-        // Losers / winners in SEAT order (players only; the dealer is seat 0). The collect / pay loops drive one at a
-        // time, each seat's clip event flying that seat's chips.
-        private IEnumerable<int> LoserSeats()
+        /// <summary>One settled HAND the chips must move for: which seat, which hand (and how many hands that seat
+        /// played, since the per-hand chip spot is a centred split offset), plus that hand's own net.</summary>
+        private readonly struct HandRef
         {
-            if (_board?.LastResults == null) yield break;
-            foreach (var r in _board.LastResults)
-                if (r != null && r.Outcome == "lose") yield return r.SeatNumber;
+            public readonly int Seat, HandIndex, HandCount;
+            public readonly decimal Delta;
+            public HandRef(int seat, int handIndex, int handCount, decimal delta)
+            { Seat = seat; HandIndex = handIndex; HandCount = handCount; Delta = delta; }
         }
 
-        private IEnumerable<SeatResultView> WinnerResults()
+        // Losers / winners PER HAND, in seat order (players only; the dealer is seat 0). A split is settled hand by
+        // hand — exactly like two separate single hands — so a seat that wins one and loses the other both pays and
+        // collects, at each hand's own chip spot. Keying this off the seat NET (the old behaviour) meant one losing
+        // hand swept the whole seat's chips ("one loss takes all"), and a mixed split that netted to zero moved no
+        // chips at all while the per-hand banners announced a win and a loss.
+        //
+        // Falls back to ONE synthetic entry per seat, using the seat-level Outcome/Delta, when the server sends no
+        // per-hand list (older server) — i.e. exactly the previous behaviour.
+        private IEnumerable<HandRef> SettledHands(bool winners)
         {
             if (_board?.LastResults == null) yield break;
             foreach (var r in _board.LastResults)
-                if (r != null && r.Outcome == "win" && (long)r.Delta > 0) yield return r;
+            {
+                if (r == null) continue;
+                var hands = r.Hands;
+                if (hands != null && hands.Count > 0)
+                {
+                    foreach (var h in hands)
+                    {
+                        if (h == null) continue;
+                        long d = (long)h.Delta;
+                        if (winners ? d > 0 : d < 0)
+                            yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.Delta);
+                    }
+                }
+                else
+                {
+                    long d = (long)r.Delta;
+                    bool match = winners ? (r.Outcome == "win" && d > 0) : (r.Outcome == "lose");
+                    if (match) yield return new HandRef(r.SeatNumber, 0, 1, r.Delta);
+                }
+            }
         }
+
+        private IEnumerable<HandRef> LoserHands() => SettledHands(winners: false);
+        private IEnumerable<HandRef> WinnerHands() => SettledHands(winners: true);
 
         // The dealer-hand hub chips gather TO / pay FROM. Preference: an explicit anchor → her chips-in-hand prop point
         // (so real chips leave/enter exactly where the prop showed them) → the view's deal source (her hand) as a last
@@ -318,34 +401,36 @@ namespace PlayCard.Game.Table
             : (dealer != null && dealer.ChipHandPoint != null) ? dealer.ChipHandPoint
             : (view != null ? view.DealSource : null);
 
-        /// <summary>COLLECT one loser seat: its committed stacks (both hands, split-aware) fly to the dealer's hand. Fired
-        /// by that seat's collect clip event.</summary>
-        private void CollectSeat(int seat)
+        /// <summary>COLLECT one losing HAND: only THAT hand's committed stack flies to the dealer, so a split's other
+        /// hand keeps its bet on the felt. Fired by that seat's collect clip event.</summary>
+        private void CollectHand(HandRef h)
         {
             var hub = ChipHub;
             if (betStacks == null || hub == null) return;
-            var chips = betStacks.DetachSeatStacks(seat);
+            var chips = betStacks.DetachHandStack(h.Seat, h.HandIndex);
             for (int i = 0; i < chips.Count; i++)
                 FlyChip(chips[i], hub.position, chipFlightSeconds);
         }
 
-        /// <summary>PAY one winner seat: winnings (= LastResults.Delta, never inferred) fly from the dealer's hand to the
-        /// seat's anchor. Fired by that seat's pay clip event.</summary>
-        private void PaySeat(SeatResultView r)
+        /// <summary>PAY one winning HAND: its winnings (= that hand's own Delta, never inferred) fly from the dealer's
+        /// hand to THAT hand's chip spot — the split position the hand's bet stack was built at. Fired by that seat's
+        /// pay clip event.</summary>
+        private void PayHand(HandRef h)
         {
             var hub = ChipHub;
-            if (betStacks == null || hub == null || r == null) return;
-            long amount = (long)r.Delta;               // net winnings the dealer pushes over
+            if (betStacks == null || hub == null) return;
+            long amount = (long)h.Delta;               // net winnings the dealer pushes over, for this hand alone
             if (amount <= 0) return;
-            var target = betStacks.ChipAnchor(r.SeatNumber);
+            var target = betStacks.ChipAnchor(h.Seat);
             if (target == null) return;                // seat beyond authored anchors → skip
             // Build the winnings UNDER the seat anchor (the same unit-scale parent the VISIBLE bet chips use) but START
-            // them at the dealer's hand, then fly them to the seat. Parenting straight to the hub inherited its scale —
-            // and when the hub is a card model (tiny scale) the chips were built invisibly small.
+            // them at the dealer's hand, then fly them to this HAND's spot. Parenting straight to the hub inherited its
+            // scale — and when the hub is a card model (tiny scale) the chips were built invisibly small.
+            Vector3 worldTarget = betStacks.HandChipPoint(h.Seat, h.HandIndex, h.HandCount);
             Vector3 startLocal = target.InverseTransformPoint(hub.position);
             var chips = betStacks.BuildLooseStack(target, startLocal, amount);
             for (int i = 0; i < chips.Count; i++)
-                FlyChip(chips[i], target.position, chipFlightSeconds);
+                FlyChip(chips[i], worldTarget, chipFlightSeconds);
         }
 
         // Fly one chip to a world target via CardMover (local-space ease), then destroy it. Tracked so a mid-flight
@@ -373,9 +458,13 @@ namespace PlayCard.Game.Table
         private void RevealPayout()
         {
             if (_payShown) return; _payShown = true;
-            if (seatPlates != null) seatPlates.RevealNow(_board);
-            if (resultBanner != null) resultBanner.RevealNow(_board);
+            if (seatPlates != null)
+                foreach (var sp in seatPlates) if (sp != null) sp.RevealNow(_board);
+            if (handLabels != null) handLabels.RevealNow(_board);   // idempotent safety net; primary reveal is the HOLD beat
             if (winChipFly != null) winChipFly.PlayForLocalWin(_board);
+            // Flush the chip count LAST: on a win WinChipFly is about to feed it chip by chip (that walk gets there on
+            // its own), and on a push/loss — or with no WinChipFly wired — this is what stops the number lagging.
+            if (countJuice != null) countJuice.RevealNow();
         }
 
         // ---- termination (all idempotent via _running) ----
@@ -390,6 +479,34 @@ namespace PlayCard.Game.Table
             if (view != null) view.EndRoundEnd();          // drop the gate (cards already swept in beat 6)
             if (dealer != null) dealer.ResetBaseline();    // conductor skipped every held push → re-baseline vs the next board
             if (betStacks != null) betStacks.ReleaseHold();
+            ReapplyLatestBoard();
+            RunPendingSettle();
+        }
+
+        // A settle that landed while we were mid-sequence was latched in OnBoard (the edge is consumed there, so it
+        // can't be recovered from the board alone). Run it now that the felt is free, or that round would never get
+        // its reveal/collect/pay.
+        private void RunPendingSettle()
+        {
+            var pending = _pendingSettle;
+            _pendingSettle = null;
+            if (pending == null || _running) return;
+            BeginSequence(pending);
+        }
+
+        /// <summary>
+        /// Re-apply the CURRENT board after the hold drops. While the director owns the felt, Render / BetStacks /
+        /// DealerAnimator all hard-return on incoming pushes — those snapshots are DISCARDED, not queued. Heads-up that
+        /// is harmless (nothing arrives mid-ceremony), but with another player at the table the NEXT ROUND'S DEAL can
+        /// land during our ceremony: without this the felt would stay empty until some later push happened to arrive.
+        /// Transport is push-only, so we must replay it ourselves.
+        /// </summary>
+        private void ReapplyLatestBoard()
+        {
+            var board = table != null ? table.Board : null;
+            if (board == null) return;
+            if (view != null) view.Render(board);
+            table.RepublishBoard();   // re-fan the snapshot so every OnBoardChanged consumer resyncs too
         }
 
         private void ForceFinish()
@@ -403,7 +520,12 @@ namespace PlayCard.Game.Table
             RevealPayout();                                // snap the payout in too — it happened server-side
             if (view != null) { view.SweepNow(); view.EndRoundEnd(); }
             if (dealer != null) { dealer.ReleaseChip(); dealer.ResetBaseline(); }   // fire any pending chip cb so a torn-down beat still flies
+            // ORDER MATTERS, and must match Complete(): release the hold BEFORE replaying. BetStacks hard-returns on
+            // any push while held, so replaying first meant the replay was swallowed and the felt was left with no bet
+            // stacks and no bet badges until some later server push happened along.
             if (betStacks != null) betStacks.ReleaseHold();
+            ReapplyLatestBoard();
+            RunPendingSettle();
         }
 
         // Kicked at the start of EACH beat, so the cap bounds a single WEDGED beat — not the (legitimately long) sum of

@@ -6,8 +6,15 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using System.Security.Claims;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Serilog: reads the "Serilog" section from appsettings (console + rolling daily file at /var/khela_Web/khela_web.log).
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext());
 
 // Add services to the container. This dashboard serves ONLY its own controllers: Khela.Game is referenced for its
 // models/services, but its API controllers must NOT be routed here — they pull game-only services this app doesn't
@@ -90,6 +97,8 @@ builder.Services.AddAuthorization(options =>
 });
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();   // one tidy log line per HTTP request
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

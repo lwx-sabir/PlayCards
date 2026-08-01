@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
 using UnityEngine;
@@ -27,11 +28,54 @@ namespace PlayCard.UI
                  "avatars (same alpha + timing); leave empty to keep your own avatar visible.")]
         [SerializeField] private CanvasGroup playerAvatar;
 
+        [Tooltip("Anything ELSE to fade with the betting FOV — drop in the LOCAL player's avatar, table props, decor, " +
+                 "whatever. UI objects fade via a CanvasGroup (one is added if missing); 3D objects fade via their " +
+                 "renderers' material alpha — which needs a TRANSPARENT-capable material to actually show (an opaque " +
+                 "URP/Lit material won't visibly change). Everything here fades OUT on bet FOV and smoothly back IN on " +
+                 "release, on the same alpha + timing as the avatars.")]
+        [SerializeField] private List<GameObject> alsoFade = new List<GameObject>();
+
+        private readonly List<CanvasGroup> _cgFades = new List<CanvasGroup>();
+        private readonly List<(Material mat, int id, float baseA)> _matFades = new List<(Material, int, float)>();
+
         private Coroutine _fade;
         private bool _closeInit;
         private bool _lastClose;
 
-        private void Awake() { if (group == null) group = GetComponent<CanvasGroup>(); }
+        private void Awake()
+        {
+            if (group == null) group = GetComponent<CanvasGroup>();
+            ResolveExtraTargets();
+        }
+
+        // Resolve the 'alsoFade' list ONCE into cheap per-frame drivers: a CanvasGroup per UI target (added if the UI
+        // object lacks one), and an instanced material + its colour property per 3D renderer. `.materials` instances the
+        // materials so the tint stays on THIS object's copies, never the shared asset.
+        private void ResolveExtraTargets()
+        {
+            _cgFades.Clear();
+            _matFades.Clear();
+            if (alsoFade == null) return;
+            foreach (var go in alsoFade)
+            {
+                if (go == null) continue;
+                var cg = go.GetComponent<CanvasGroup>();
+                if (cg == null && go.GetComponent<RectTransform>() != null) cg = go.AddComponent<CanvasGroup>();
+                if (cg != null) { _cgFades.Add(cg); continue; }
+                foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null) continue;
+                    foreach (var mat in r.materials)
+                    {
+                        if (mat == null) continue;
+                        bool baseCol = mat.HasProperty("_BaseColor");
+                        if (!baseCol && !mat.HasProperty("_Color")) continue;
+                        int id = Shader.PropertyToID(baseCol ? "_BaseColor" : "_Color");
+                        _matFades.Add((mat, id, mat.GetColor(id).a));
+                    }
+                }
+            }
+        }
 
         private void OnEnable()
         {
@@ -113,6 +157,16 @@ namespace PlayCard.UI
         {
             group.alpha = a;
             if (playerAvatar != null) playerAvatar.alpha = a;
+            for (int i = 0; i < _cgFades.Count; i++)
+                if (_cgFades[i] != null) _cgFades[i].alpha = a;
+            for (int i = 0; i < _matFades.Count; i++)
+            {
+                var mf = _matFades[i];
+                if (mf.mat == null) continue;
+                var c = mf.mat.GetColor(mf.id);
+                c.a = a * mf.baseA;   // scale the material's ORIGINAL alpha, so we never push it past what was authored
+                mf.mat.SetColor(mf.id, c);
+            }
         }
 
         private void SetInteractable(bool on)
@@ -120,6 +174,8 @@ namespace PlayCard.UI
             group.blocksRaycasts = on;
             group.interactable = on;
             if (playerAvatar != null) { playerAvatar.blocksRaycasts = on; playerAvatar.interactable = on; }
+            for (int i = 0; i < _cgFades.Count; i++)
+                if (_cgFades[i] != null) { _cgFades[i].blocksRaycasts = on; _cgFades[i].interactable = on; }
         }
     }
 }

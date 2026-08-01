@@ -102,6 +102,9 @@ namespace Khela.Game.Migrations
                     b.Property<string>("LastName")
                         .HasColumnType("longtext");
 
+                    b.Property<string>("LinkedEmail")
+                        .HasColumnType("longtext");
+
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("tinyint(1)");
 
@@ -435,6 +438,11 @@ namespace Khela.Game.Migrations
                     b.Property<string>("MetadataJson")
                         .HasColumnType("longtext");
 
+                    b.Property<string>("OperatorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
                     b.Property<string>("PrevHandHash")
                         .HasMaxLength(256)
                         .HasColumnType("varchar(256)");
@@ -520,6 +528,11 @@ namespace Khela.Game.Migrations
 
                     b.Property<string>("MetadataJson")
                         .HasColumnType("longtext");
+
+                    b.Property<string>("OperatorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<string>("Outcome")
                         .HasColumnType("longtext");
@@ -1740,6 +1753,11 @@ namespace Khela.Game.Migrations
                     b.Property<string>("MetadataJson")
                         .HasColumnType("longtext");
 
+                    b.Property<string>("OperatorId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
                     b.Property<DateTime?>("ReversedAt")
                         .HasColumnType("datetime(6)");
 
@@ -1764,6 +1782,8 @@ namespace Khela.Game.Migrations
                         .HasColumnType("char(36)");
 
                     b.HasKey("TransactionId");
+
+                    b.HasIndex("OperatorId", "CreatedAt");
 
                     b.HasIndex("WalletId", "CorrelationId")
                         .IsUnique();

@@ -10,7 +10,8 @@ namespace PlayCard.Game.Betting
     /// while betting, and clears every rail once the round is dealt — so the chips always sit correctly for
     /// whichever seat you took (a single shared rail only ever lines up from one camera angle).
     ///
-    /// Chip values come from the <see cref="ChipSet"/> (minBet × multipliers, dropping any above the table max).
+    /// Chip values come from the <see cref="ChipSet"/> — the lowest entries of its fixed denomination ladder that
+    /// fit inside the table's min/max.
     /// Bet-mode is <c>!RoundInProgress</c> AND not <see cref="BlackjackTableView.RoundEndSettling"/> — so the rail is
     /// empty during a round AND through the whole round-end ceremony, and refills only once betting truly reopens.
     /// </summary>
@@ -101,7 +102,7 @@ namespace PlayCard.Game.Betting
                 return;
             }
 
-            var values = chipSet.Values(_min, _max);            // minBet × multipliers, ≤ maxBet
+            var values = chipSet.Values(_min, _max);            // ladder entries inside [min, max], lowest first
             if (values.Count == 0)
             {
                 Debug.LogWarning($"[ChipRailSpawner] no chips for [min={_min}, max={_max}] — min bet is 0 or every " +
@@ -110,7 +111,8 @@ namespace PlayCard.Game.Betting
                 return;
             }
 
-            rail.Spawn(values, chipSet.LevelPrefabs);
+            // PrefabsFor, not LevelPrefabs — the colours slide with the denomination window (L1-L5 low, L2-L6 high).
+            rail.Spawn(values, chipSet.PrefabsFor(_min, _max));
             if (values.Count > rail.Capacity)
                 Debug.Log($"[ChipRailSpawner] seat {_activeSeat} rail has {rail.Capacity} templates but " +
                           $"{values.Count} chips fit the table — place more templates to show them all.");

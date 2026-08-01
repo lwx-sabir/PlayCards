@@ -18,8 +18,11 @@ namespace PlayCard.Core
         [Tooltip("Backend base URL, no trailing slash. e.g. http://localhost:5044 (dev) or https://api.khela.game")]
         [SerializeField] private string baseApiUrl = "http://localhost:5044";
 
-        [Tooltip("SignalR hub path appended to the base URL — or a full http(s) URL to override it entirely.")]
+        [Tooltip("Blackjack SignalR hub path appended to the base URL — or a full http(s) URL to override it entirely.")]
         [SerializeField] private string hubPath = "/blackjackhub";
+
+        [Tooltip("Three Card Poker SignalR hub path appended to the base URL — or a full http(s) URL to override it.")]
+        [SerializeField] private string threeCardHubPath = "/threecardhub";
 
         [Header("HTTP")]
         [Tooltip("Per-request timeout in seconds for REST calls.")]
@@ -28,10 +31,21 @@ namespace PlayCard.Core
         /// <summary>Base URL with any trailing slash stripped.</summary>
         public string BaseApiUrl => string.IsNullOrWhiteSpace(baseApiUrl) ? "http://localhost:5044" : baseApiUrl.TrimEnd('/');
 
-        /// <summary>Full SignalR hub URL (absolute if <c>hubPath</c> is a full URL, else base + path).</summary>
-        public string HubUrl => hubPath != null && hubPath.StartsWith("http") ? hubPath : BaseApiUrl + hubPath;
+        /// <summary>Full blackjack SignalR hub URL (absolute if <c>hubPath</c> is a full URL, else base + path).</summary>
+        public string HubUrl => HubUrlFor(hubPath, "/blackjackhub");
+
+        /// <summary>Full Three Card Poker SignalR hub URL (absolute if the path is a full URL, else base + path).</summary>
+        public string ThreeCardHubUrl => HubUrlFor(threeCardHubPath, "/threecardhub");
 
         public int RequestTimeoutSeconds => requestTimeoutSeconds;
+
+        // Resolve a configured hub path against the base URL: a full http(s) value overrides entirely; an empty
+        // value falls back to the game's default path. Shared by every per-game hub URL so they can't drift.
+        private string HubUrlFor(string path, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(path)) path = fallback;
+            return path.StartsWith("http") ? path : BaseApiUrl + path;
+        }
 
         private static AppConfig _instance;
 

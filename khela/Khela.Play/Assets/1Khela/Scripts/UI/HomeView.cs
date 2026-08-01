@@ -26,6 +26,10 @@ namespace PlayCard.UI
         [SerializeField] private GameObject rewardsPanel;
         [Tooltip("Enters the 3D virtual world (DiveBar) on click — temporary world entry.")]
         [SerializeField] private Button worldButton;
+        [Tooltip("Opens the settings panel on click (gear button).")]
+        [SerializeField] private Button settingsButton;
+        [Tooltip("The Settings panel GameObject to show — its SettingsPanel handles graphics quality + close.")]
+        [SerializeField] private GameObject settingsPanel;
 
         private void Awake()
         {
@@ -33,6 +37,7 @@ namespace PlayCard.UI
             if (profileButton != null) profileButton.onClick.AddListener(OpenProfile);
             if (rewardsButton != null) rewardsButton.onClick.AddListener(OpenRewards);
             if (worldButton != null) worldButton.onClick.AddListener(SceneNavigator.GoToWorld);
+            if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
         }
 
         /// <summary>Show the user-profile panel; its ProfilePanelBinder fetches + repaints when it enables.</summary>
@@ -45,6 +50,12 @@ namespace PlayCard.UI
         private void OpenRewards()
         {
             if (rewardsPanel != null) rewardsPanel.SetActive(true);
+        }
+
+        /// <summary>Show the settings panel; its SettingsPanel syncs the graphics-quality toggles on enable.</summary>
+        private void OpenSettings()
+        {
+            if (settingsPanel != null) settingsPanel.SetActive(true);
         }
 
         private void OnEnable()

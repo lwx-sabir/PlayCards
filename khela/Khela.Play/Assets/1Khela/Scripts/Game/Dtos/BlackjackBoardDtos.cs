@@ -17,6 +17,12 @@ namespace PlayCard.Game.Dtos
     public sealed class BoardSnapshot
     {
         public string TableId { get; set; }
+
+        /// <summary>Monotonic server timestamp (stamped on every SaveTableAsync). TableController drops any snapshot
+        /// whose UpdatedAt is older than the one it already holds, so a late REST/poll response can't clobber a newer
+        /// hub push (stale board / resurrected round / wrong turn). Default (null/min) = always accepted.</summary>
+        public DateTimeOffset? UpdatedAt { get; set; }
+
         public int MaxPlayers { get; set; }
         public int MaxSeatsPerUser { get; set; }
         public bool RoundInProgress { get; set; }
@@ -42,6 +48,15 @@ namespace PlayCard.Game.Dtos
         /// <summary>While set, the round is in its INSURANCE phase (its own countdown); play hasn't started.</summary>
         public DateTimeOffset? InsuranceExpiresAt { get; set; }
 
+        /// <summary>Between rounds: when the BETTING window closes and the server deals whatever bets are down.
+        /// Null = no window (either disabled server-side, or the table is idle waiting for someone to bet).
+        /// Like <see cref="TurnExpiresAt"/> this is a generous ceiling until our /presented call collapses it,
+        /// so clamp the displayed countdown to <see cref="BettingDurationSeconds"/>.</summary>
+        public DateTimeOffset? BettingExpiresAt { get; set; }
+
+        /// <summary>The configured betting-window length, for clamping the countdown. 0 = window disabled.</summary>
+        public int BettingDurationSeconds { get; set; }
+
         /// <summary>Id of the most recently settled hand — feeds GET /api/Blackjack/verify/{handId}.</summary>
         public string LastHandId { get; set; }
 
@@ -60,12 +75,33 @@ namespace PlayCard.Game.Dtos
     public sealed class SeatResultView
     {
         public int SeatNumber { get; set; }
-        public string Outcome { get; set; }     // "win" | "lose" | "push"
+        public string Outcome { get; set; }     // "win" | "lose" | "push" — the seat's NET across all its hands
         public decimal Delta { get; set; }        // net chips change this round (signed: + win, - loss, 0 push)
         public decimal Payout { get; set; }       // gross returned to the wallet
         public int FinalHandValue { get; set; }
         public bool Bust { get; set; }
         public bool Blackjack { get; set; }
+
+        /// <summary>Per-hand results for THIS seat, ordered by hand index (0 = main, 1 = split, …). Lets the banner
+        /// label — and the round-end director pay/collect — each split hand on its own, where <see cref="Outcome"/>/
+        /// <see cref="Delta"/> (a net) would call a mixed win/loss a "push" and move no chips. A single-hand seat has
+        /// one entry matching the seat-level values; empty from an older server, in which case consumers fall back to
+        /// the seat-level fields.</summary>
+        public List<HandResultView> Hands { get; set; } = new List<HandResultView>();
+    }
+
+    /// <summary>One HAND's outcome within a settled seat — mirrors the server's HandRoundResult.</summary>
+    public sealed class HandResultView
+    {
+        public int HandIndex { get; set; }
+        /// <summary>"blackjack" | "win" | "push" | "bust" | "lose" — this hand alone, not the seat net.</summary>
+        public string Outcome { get; set; }
+        /// <summary>Total staked on this hand (main stake incl. any double-down extra, plus insurance).</summary>
+        public decimal Stake { get; set; }
+        /// <summary>Gross returned for this hand (0 on a loss/bust, stake back on a push, incl. insurance).</summary>
+        public decimal Payout { get; set; }
+        /// <summary>Net for this hand = Payout − Stake (signed). The seat's Delta is the sum of these.</summary>
+        public decimal Delta { get; set; }
     }
 
     public sealed class FairnessView
@@ -92,6 +128,14 @@ namespace PlayCard.Game.Dtos
         public int Wins { get; set; }
         public int Losses { get; set; }
         public int Push { get; set; }
+
+        /// <summary>Participating in the CURRENT round. False = seated but spectating (joined mid-round, or sitting
+        /// out because they didn't bet). Drives the "waiting for next round" panel and the leave-button lock.</summary>
+        public bool InRound { get; set; }
+
+        /// <summary>Actively placed a bet during the CURRENT betting window (not just a persisted auto-repeat). Lets the
+        /// bet stacks show a seat's wager DURING the window (before the deal), so a held deal keeps chips on the felt.</summary>
+        public bool BetThisWindow { get; set; }
     }
 
     public sealed class HandView
@@ -116,6 +160,13 @@ namespace PlayCard.Game.Dtos
         public bool IsConnected { get; set; } = true;
         /// <summary>No heartbeat past the server's StalledTimeout — auto-removal is imminent.</summary>
         public bool IsStalled { get; set; }
+
+        /// <summary>Consecutive betting windows this seat has sat out without betting (for UI / debugging).</summary>
+        public int MissedBetWindows { get; set; }
+
+        /// <summary>This seat is in its FINAL betting window before being evicted for not betting. The local player
+        /// sees the "bet or you'll be removed" warning when this is true for their own seat.</summary>
+        public bool IdleKickWarning { get; set; }
     }
 
     public sealed class CardView

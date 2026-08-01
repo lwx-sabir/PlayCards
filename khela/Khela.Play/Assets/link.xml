@@ -1,0 +1,27 @@
+<linker>
+  <!--
+    KHELA — IL2CPP stripping fix for System.Text.Json auth + REST.
+
+    Device-guest auth (AccountManager) and all board/lobby REST traffic (BlackjackRestClient) (de)serialize their
+    DTOs via System.Text.Json REFLECTION (no source-gen JsonSerializerContext). On IL2CPP (real device), managed
+    code stripping removes the reflection-only getters/setters/ctors of those DTOs, so the very first STJ call —
+    JsonSerializer.Serialize(request) in the register/login POST — throws at runtime. PostJsonAsync's catch(Exception)
+    swallows it and returns null, so no token is ever obtained and no user is created; the lobby's authenticated GET
+    then returns a real 401 and onboarding never routes. The Unity Editor uses Mono with no stripping, so the exact
+    same code works there.
+
+    Confirmed (not Best HTTP): BlackjackRestClient uses the SAME Best HTTP + System.Text.Json stack and reaches the
+    server (401), so the transport is fine — the failure is STJ metadata being stripped. Preserving the DTO
+    assemblies + System.Text.Json's own assemblies gives reflection the metadata it needs on device.
+  -->
+  <assembly fullname="Khela.Common" preserve="all"/>      <!-- auth + shared wire DTOs (RegisterRequest/LoginRequest/AuthResponse, blackjack DTOs) -->
+  <assembly fullname="Assembly-CSharp" preserve="all"/>   <!-- client-side response DTOs: PlayCard.Game.Dtos (board/lobby/wallet) -->
+
+  <assembly fullname="System.Text.Json" preserve="all"/>
+  <assembly fullname="System.Text.Encodings.Web" preserve="all"/>
+  <assembly fullname="System.Memory" preserve="all"/>
+  <assembly fullname="System.Buffers" preserve="all"/>
+  <assembly fullname="System.Runtime.CompilerServices.Unsafe" preserve="all"/>
+  <assembly fullname="System.Numerics.Vectors" preserve="all"/>
+  <assembly fullname="System.Threading.Tasks.Extensions" preserve="all"/>
+</linker>

@@ -10,12 +10,27 @@ namespace PlayCard.App
     /// </summary>
     public static class SceneNavigator
     {
+        public const string Boot = "Boot";
         public const string Onboarding = "Onboarding";
         public const string Home = "Home";
         public const string Lobby = "Lobby";
-        public const string Table = "Table";
+        public const string Table = "Blackjack_Table";   // renamed from "Table"
         public const string Wardrobe = "Wardrobe";
         public const string World = "DiveBar_01";   // the 3D virtual-world scene (temp: single hardcoded world)
+
+        /// <summary>
+        /// Restart the app flow from the beginning: re-authenticate, re-bootstrap, then route on as normal. Used as
+        /// the LAST-RESORT auth recovery — a 401 that survived a token refresh and a full re-login means the session
+        /// is genuinely dead, and every screen from that point would only render errors. Clears the table/seat so we
+        /// can't boot straight back into a table we are no longer authorised for.
+        /// </summary>
+        public static void GoToBoot()
+        {
+            KhelaAnalytics.LogScreen(Boot);
+            GameSession.TableId = null;
+            GameSession.SeatNumber = 0;
+            SceneManager.LoadScene(Boot);
+        }
 
         /// <summary>Avatar customization (full edit — shapes/outfits/colours). Re-entrant from Home. Must be in Build Settings.</summary>
         public static void GoToWardrobe()

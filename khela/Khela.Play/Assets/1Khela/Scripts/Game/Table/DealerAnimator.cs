@@ -141,10 +141,13 @@ namespace PlayCard.Game.Table
             if (connected) _counts = null;
         }
 
-        /// <summary>Re-baseline like a reconnect: the next board takes the <c>_counts == null</c> path (no throws +
-        /// SnapParkedCards). The <see cref="RoundEndDirector"/> calls this when it RELEASES the felt, so a next-round
-        /// deal push that landed DURING the hold (which we skipped) can't leave the view's parked cards stranded.</summary>
-        public void ResetBaseline() => _counts = null;
+        /// <summary>Re-baseline to EMPTY on round-end release (not null). Empty means the next round's opening deal is
+        /// seen as fresh cards and CONDUCTED (thrown one-by-one) on every client — including a remote player who never
+        /// bet, who otherwise had no between-rounds push to clear a null baseline and so SNAPPED the whole deal at once.
+        /// A genuine reconnect still nulls the baseline (see <see cref="OnConnection"/>) so it snaps to whatever the view
+        /// parked. Empty is also strand-safe: any cards parked from a deal that landed during the hold count as new
+        /// against the empty baseline, so they're thrown (released) rather than left stranded.</summary>
+        public void ResetBaseline() => _counts = new Dictionary<int, int>();
 
         private void OnBoard(BoardSnapshot board)
         {
@@ -169,7 +172,7 @@ namespace PlayCard.Game.Table
                 }
                 if (_newThisBoard.Count > 0)
                 {
-                    _newThisBoard.Sort((a, b) => a.order.CompareTo(b.order));   // players in seat order, dealer last
+                    _newThisBoard.Sort((a, b) => a.order.CompareTo(b.order));   // players right-to-left (highest seat first), dealer last
                     foreach (var n in _newThisBoard) _throwQueue.Enqueue(n.seat);
                     if (!_pumping) { _pumping = true; _pump = StartCoroutine(Pump()); }
                 }
@@ -198,7 +201,9 @@ namespace PlayCard.Game.Table
         }
 
         // Real dealing order: round by round (cardIndex), players (seat asc) then the dealer (seat 0) LAST.
-        private static int DealOrder(int seat, int cardIndex) => cardIndex * 1000 + (seat == 0 ? 999 : seat);
+        // RIGHT-to-left within each round (highest seat = first base = dealt first), dealer (seat 0) last. Higher seat
+        // number => smaller order => earlier. Must match BlackjackTableView.DealOrder + the server's GetOrderedHands.
+        private static int DealOrder(int seat, int cardIndex) => cardIndex * 1000 + (seat == 0 ? 999 : 100 - seat);
 
         private IEnumerator Pump()
         {

@@ -106,11 +106,22 @@ namespace CardGames.Blackjack
             }
 
             /// <summary>
-            /// Dealer plays according to standard blackjack rules
+            /// Dealer plays according to standard blackjack rules: reveal the hole card, then draw to 17
+            /// (honouring StandOnSoft17 / StandOnHard17).
+            ///
+            /// EXCEPTION — she does NOT draw when no live hand is left to beat (every in-round hand busted,
+            /// the casino-standard "all players bust" case). She reveals and the round ends there, exactly as
+            /// a real dealer takes the cards without playing out a hand nobody can win. See
+            /// <see cref="AnyHandNeedsDealerToDraw"/> for why that is outcome-neutral.
             /// </summary>
             public void DealerPlay()
             {
                 Dealer.Hand.Cards[1].IsCardUp = true; // flip second card
+
+                // Nothing left to beat → stand on the reveal. Drawing here would be pure theatre: it cannot
+                // change a single payout (proof in AnyHandNeedsDealerToDraw), and it makes the table look like
+                // the dealer is still playing a round that is already decided.
+                if (!AnyHandNeedsDealerToDraw()) return;
 
                 while (true)
                 {
@@ -137,7 +148,48 @@ namespace CardGames.Blackjack
                     break;
                 }
             }
-             
+
+            /// <summary>
+            /// True when at least one in-round hand's payout can still DEPEND on the dealer's final total —
+            /// i.e. there is something left to beat. False ⇒ the dealer must not draw.
+            ///
+            /// Outcome-neutrality (this is a money path, so the rule is proved against
+            /// <see cref="BlackjackSettlement.Settle"/>, not asserted):
+            ///  • A BUST hand is decided by <c>playerTotal &gt; 21</c>, which Settle tests FIRST — before any
+            ///    dealer comparison. Its result is identical whatever the dealer holds.
+            ///  • A NATURAL is decided by <c>dealerBlackjack</c>, which is <c>dealerTotal == 21 &amp;&amp;
+            ///    Cards.Count == 2</c> — a property of the dealer's two OPENING cards only. Drawing a third
+            ///    card can never create or destroy it. (Insurance resolves off the same flag, so it is
+            ///    unaffected too.) The natural test here mirrors Settle's exactly, splits included.
+            /// Every other hand reaches the <c>dealerBust || playerTotal &gt; dealerTotal</c> comparison and
+            /// therefore DOES need her to play out — those return true.
+            ///
+            /// Deck note: each round reshuffles a fresh shoe in <see cref="DealNewGame"/>, so consuming fewer
+            /// cards here cannot leak into a later round or affect the provably-fair commitment.
+            /// </summary>
+            private bool AnyHandNeedsDealerToDraw()
+            {
+                bool sawHand = false;
+                foreach (var p in Players)
+                {
+                    if (!p.InRound) continue;   // seated-but-waiting players aren't in this round
+                    for (int i = 0; i < p.Hands.Count; i++)
+                    {
+                        sawHand = true;
+                        var hand = p.Hands[i].Hand;
+                        var total = hand.GetSumOfHand();
+                        if (total > 21) continue;                       // bust — loses regardless of her total
+                        // Natural: mirrors BlackjackSettlement's test (a split hand is never a natural).
+                        if (p.Hands.Count == 1 && hand.Cards.Count == 2 && total == 21) continue;
+                        return true;                                     // a live hand she still has to beat
+                    }
+                }
+                // No in-round hands at all (empty or abandoned table): fall back to the plain house rule. There is
+                // nothing to settle either way, so this keeps DealerPlay's standalone contract — draw to 17 — intact
+                // rather than silently changing it for a degenerate table.
+                return !sawHand;
+            }
+
             #endregion
         }
 }

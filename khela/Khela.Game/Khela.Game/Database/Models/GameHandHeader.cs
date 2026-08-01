@@ -30,6 +30,12 @@ namespace Khela.Game.Database.Models
         [Key]
         public Guid HandId { get; set; } = Guid.NewGuid();
 
+        /// <summary>Operator (licensee brand) this hand was played under — see <see cref="Tenant"/>. Lets round
+        /// history, RTP reporting and dispute lookups be sliced per brand once the engine is licensed out.</summary>
+        [Required]
+        [MaxLength(Tenant.MaxLength)]
+        public string OperatorId { get; set; } = Tenant.Default;
+
         [MaxLength(128)]
         public string TableId { get; set; }
 

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Khela.Common\Khela.Common\Khela.Common.csproj" />
+    <ProjectReference Include="..\Khela.Game\Khela.Game.csproj" />
+  </ItemGroup>
+
+  <!-- Packages Khela.Web uses directly (DbContext/UseMySql + Redis). Pinned to the SAME versions as Khela.Game so
+       the runtime deploys EF Core Relational 9.0.8 — without this, Pomelo pulls in 9.0.0 and loading Khela.Game.dll
+       (built against 9.0.8) throws FileNotFoundException at startup (caught by the smoke test). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.8" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="StackExchange.Redis" Version="2.9.11" />
+    <!-- Serilog.AspNetCore 8.0.3 transitively pulls System.Text.Json 8.0.0, which downgrades below the 9.0.x
+         Khela.Game is built against (CS1705). Pin to match, same reason EF Core is pinned above. -->
+    <PackageReference Include="System.Text.Json" Version="9.0.8" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

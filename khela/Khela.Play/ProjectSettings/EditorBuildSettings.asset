@@ -18,7 +18,7 @@ EditorBuildSettings:
     path: Assets/1Khela/_Scenes/Lobby.unity
     guid: e0f10213243546576879808192a3b431
   - enabled: 1
-    path: Assets/1Khela/_Scenes/Table.unity
+    path: Assets/1Khela/_Scenes/BJ_Table/Blackjack_Table.unity
     guid: bf66b97adaf806a4aaa446946082c503
   - enabled: 1
     path: Assets/1Khela/_Scenes/Wardrobe.unity

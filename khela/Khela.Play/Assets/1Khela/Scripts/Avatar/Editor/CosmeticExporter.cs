@@ -24,6 +24,7 @@ namespace PlayCard.Avatar.EditorTools
     public sealed class CosmeticExporter : EditorWindow
     {
         private const string ApiPref = "Khela.CosmeticExporter.ApiUrl";
+        private const string EmailPref = "Khela.CosmeticExporter.Email";
         private static readonly Regex IdRx = new Regex("^[a-z0-9]+(-[a-z0-9]+)*$");
 
         /// <summary>Currencies a cosmetic may be priced in. Tokens is EXCLUDED BY CONSTRUCTION (guardrail) — the server rejects it too.</summary>
@@ -61,6 +62,7 @@ namespace PlayCard.Avatar.EditorTools
 
         // server
         private string _apiUrl, _jwt = "";
+        private string _email = "", _password = "", _connectedEmail = "";
         private List<ServerSku> _serverSkus = new List<ServerSku>();
         private string _serverErr;
         private bool _catalogLoaded;
@@ -89,6 +91,7 @@ namespace PlayCard.Avatar.EditorTools
         private void OnEnable()
         {
             _apiUrl = EditorPrefs.GetString(ApiPref, "http://localhost:5044");
+            _email = EditorPrefs.GetString(EmailPref, "");
             if (_config == null)
             {
                 var guid = AssetDatabase.FindAssets("t:AvatarConfig").FirstOrDefault();
@@ -101,8 +104,7 @@ namespace PlayCard.Avatar.EditorTools
         private void OnGUI()
         {
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
-            if (string.IsNullOrWhiteSpace(_jwt)) _jwt = PeekLocalToken();           // lazy auth (no network)
-            if (!_catalogLoaded && !string.IsNullOrWhiteSpace(_jwt)) RefreshServerCatalog();   // one-time load
+            if (!_catalogLoaded && !string.IsNullOrWhiteSpace(_jwt)) RefreshServerCatalog();   // one-time load after Login
 
             DrawStatusStrip();
             EditorGUILayout.Space();
@@ -176,7 +178,7 @@ namespace PlayCard.Avatar.EditorTools
                        : $"{_rig.name} — {_equipped.Count} equipped piece(s)";
             StatusRow("Rig", rig, rigOk);
 
-            StatusRow("Server", $"{_apiUrl}   ·   JWT {(string.IsNullOrWhiteSpace(_jwt) ? "missing — click Auto" : "ready")}", !string.IsNullOrWhiteSpace(_jwt));
+            StatusRow("Server", $"{_apiUrl}   ·   {(string.IsNullOrWhiteSpace(_jwt) ? "not connected — Login" : (string.IsNullOrEmpty(_connectedEmail) ? "connected" : $"connected as {_connectedEmail}"))}", !string.IsNullOrWhiteSpace(_jwt));
 
             int icons = _serverSkus.Count(s => s.hasIcon);
             StatusRow("Catalog (DB)", _serverErr != null ? $"error: {_serverErr}" : $"{_serverSkus.Count} SKU(s) · {icons} with icon", _serverErr == null);
@@ -390,29 +392,87 @@ namespace PlayCard.Avatar.EditorTools
             EditorGUILayout.LabelField("Server", EditorStyles.boldLabel);
             _apiUrl = EditorGUILayout.TextField("API base URL", _apiUrl);
             EditorPrefs.SetString(ApiPref, _apiUrl);
+
+            // Log in as the account listed in the server's Admin:UserIds — the import endpoints require Policy=Admin,
+            // and the server checks the token's `sub` (this account's Id). A device-guest token won't pass on a
+            // Production server whose allowlist holds a different account.
+            _email = EditorGUILayout.TextField("Email", _email);
+            EditorPrefs.SetString(EmailPref, _email);
+            _password = EditorGUILayout.PasswordField("Password", _password);
+
             EditorGUILayout.BeginHorizontal();
-            _jwt = EditorGUILayout.TextField("JWT (auto from local login)", _jwt);
-            if (GUILayout.Button("Auto", GUILayout.Width(46)))
+            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password)))
+                if (GUILayout.Button("Login")) DoLogin();
+            if (!string.IsNullOrEmpty(_jwt) && GUILayout.Button("Log out", GUILayout.Width(74)))
             {
-                _jwt = LoginWithSavedCreds() ?? PeekLocalToken();
-                _log = string.IsNullOrEmpty(_jwt) ? "✗ no local login found — Play from Boot once (or paste a JWT)." : "✓ signed in with the device account.";
-                RefreshServerCatalog();
+                _jwt = ""; _connectedEmail = ""; _catalogLoaded = false; _serverSkus.Clear();
+                _log = "Logged out.";
             }
             EditorGUILayout.EndHorizontal();
+
+            bool connected = !string.IsNullOrEmpty(_jwt);
+            var prev = GUI.color;
+            GUI.color = connected ? OkColor : WarnColor;
+            EditorGUILayout.LabelField(
+                !string.IsNullOrEmpty(_connectedEmail) ? $"● CONNECTED as {_connectedEmail}"
+                : connected ? "● Connected (token loaded)"
+                : "○ Not connected — enter email + password and Login",
+                EditorStyles.miniBoldLabel);
+            GUI.color = prev;
         }
+
+        // Log in with the entered email/password → keep that token as _jwt and flip the status to CONNECTED. The
+        // token's `sub` is this account's Id, which is what the server matches against Admin:UserIds.
+        private void DoLogin()
+        {
+            var (token, code, body) = LoginWith(_email, _password);
+            if (token == null)
+            {
+                _jwt = ""; _connectedEmail = "";
+                _log = code == 0
+                    ? $"✗ Couldn't reach {_apiUrl} (status 0) — TLS/connection issue or wrong URL."
+                    : $"✗ Login failed ({code}): {body}\n\n" +
+                      "401 = that email+password isn't a valid account ON THIS server (check the account really lives on " +
+                      $"{_apiUrl}, not your local DB). 500 = server error. 0 = couldn't connect.";
+                return;
+            }
+            _jwt = token;
+            _connectedEmail = _email.Trim();
+            _catalogLoaded = false;
+            _log = $"✓ Connected as {_connectedEmail}.";
+            RefreshServerCatalog();
+        }
+
+        // POST /api/auth/login with explicit creds → (token, HTTP code, body). Shared by the Login button + 401 re-auth.
+        private (string token, long code, string body) LoginWith(string email, string password)
+        {
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password)) return (null, -1, "email/password empty");
+            var payload = Encoding.UTF8.GetBytes("{\"email\":\"" + Esc(email.Trim()) + "\",\"password\":\"" + Esc(password) + "\"}");
+            var (code, body) = Post("/api/auth/login", payload, "application/json");
+            if (code < 200 || code >= 300) { Debug.LogWarning($"[CosmeticExporter] login failed ({code}): {body}"); return (null, code, body); }
+            var m = Regex.Match(body ?? "", "\"token\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.IgnoreCase);
+            return (m.Success ? m.Groups[1].Value : null, code, body);
+        }
+
+        // 401 re-auth: prefer the entered admin creds; fall back to the device-save login (local dev convenience).
+        private string ReAuth() =>
+            (!string.IsNullOrWhiteSpace(_email) && !string.IsNullOrWhiteSpace(_password))
+                ? LoginWith(_email, _password).token : LoginWithSavedCreds();
+
+        private static string Esc(string s) => (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
 
         // ================================ server I/O ================================
 
         /// <summary>Save ONE SKU straight to the DB: upsert the row, then upload its baked icon. No local file.</summary>
         private void SaveSku(SkuDef sku, byte[] iconPng)
         {
-            if (string.IsNullOrWhiteSpace(_jwt)) { _log = "✗ no JWT — click Auto in the Server section."; return; }
+            if (string.IsNullOrWhiteSpace(_jwt)) { _log = "✗ Not connected — Login in the Server section first."; return; }
 
             string body = JsonUtility.ToJson(new CatalogFile { skus = new List<SkuDef> { sku } });
             var (code, resp) = Post("/api/shop/cosmetics/import", Encoding.UTF8.GetBytes(body), "application/json");
             if (code == 401)   // stale token → re-login with saved device creds and retry once
             {
-                var fresh = LoginWithSavedCreds();
+                var fresh = ReAuth();
                 if (fresh != null) { _jwt = fresh; (code, resp) = Post("/api/shop/cosmetics/import", Encoding.UTF8.GetBytes(body), "application/json"); }
             }
             if (code < 200 || code >= 300)
@@ -439,12 +499,12 @@ namespace PlayCard.Avatar.EditorTools
         private void RefreshServerCatalog()
         {
             _catalogLoaded = true;
-            if (string.IsNullOrWhiteSpace(_jwt)) { _serverSkus = new List<ServerSku>(); _serverErr = "no JWT — click Auto"; return; }
+            if (string.IsNullOrWhiteSpace(_jwt)) { _serverSkus = new List<ServerSku>(); _serverErr = "not connected — Login first"; return; }
 
             var (code, body) = Get("/api/shop/cosmetics");
             if (code == 401)
             {
-                var fresh = LoginWithSavedCreds();
+                var fresh = ReAuth();
                 if (fresh != null) { _jwt = fresh; (code, body) = Get("/api/shop/cosmetics"); }
             }
             if (code < 200 || code >= 300) { _serverSkus = new List<ServerSku>(); _serverErr = $"({code}) {body}"; return; }

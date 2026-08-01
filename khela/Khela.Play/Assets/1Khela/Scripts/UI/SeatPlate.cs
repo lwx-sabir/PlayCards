@@ -38,7 +38,9 @@ namespace PlayCard.UI
             Content.SetActive(true);
             SetInfoVisible(true);
             if (nameText) nameText.text = p.Name;
-            if (chipsText) chipsText.text = p.Balance.ToString(chipsFormat);
+            // Skip a chips label a ChipCountJuice is animating — writing the board value here would overwrite the roll
+            // mid-count and make the number appear to jump straight to the settled balance.
+            if (chipsText && !ChipCountJuice.Owns(chipsText)) chipsText.text = p.Balance.ToString(chipsFormat);
         }
 
         /// <summary>Empty-seat placeholder: default frame/avatar, name + chips hidden.</summary>

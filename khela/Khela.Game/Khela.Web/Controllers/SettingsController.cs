@@ -43,6 +43,8 @@ namespace Khela.Web.Controllers
         private static readonly SettingDef[] GameDefs =
         {
             new("Blackjack:TurnSeconds", "Turn timer (seconds)", "How long a player has to act on their turn.", "1"),
+            new("Blackjack:BettingSeconds", "Betting window (seconds)", "Between-rounds time to place a bet before auto-deal. 0 = no betting window.", "1"),
+            new("Blackjack:MaxIdleBettingWindows", "Idle windows before kick", "Sit out this many betting windows with no bet ⇒ removed from the table (the warning shows one window before). 0 = never kick.", "1"),
             new("Blackjack:InsuranceSeconds", "Insurance window (seconds)", "How long the insurance offer stays open.", "1"),
             new("Table:StalledTimeoutSeconds", "Stalled-player timeout (seconds)", "No heartbeat this long ⇒ stalled (money-safe §5 reap).", "1"),
             new("Table:DisconnectGraceSeconds", "Disconnect grace (seconds)", "No heartbeat this long ⇒ shown as disconnected.", "1"),

@@ -1,0 +1,2 @@
+D:\Projects\PlayCards\khela\Khela.Play\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\CMakeLists.txt
+D:\Projects\PlayCards\khela\Khela.Play\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\GameActivity\CMakeLists.txt

@@ -48,12 +48,47 @@ namespace PlayCard.Game.Table
         public event Action<string> OnActionError;
         /// <summary>Live-channel connection state changed.</summary>
         public event Action<bool> OnConnectionChanged;
+        /// <summary>The server removed us from our seat (idle-kick or stalled-reaper). Fired once, just before we
+        /// navigate back to the lobby — a subscriber can flash a message, but navigation happens regardless.</summary>
+        public event Action OnRemovedFromSeat;
 
         public BoardSnapshot Board { get; private set; }
         public string TableId { get; private set; }
 
+        /// <summary>
+        /// When this SITTING began — stamped the first time we sit at a given table in this app run, and used to scope
+        /// the session hand log (<see cref="PlayCard.Game.Net.BlackjackRestClient.GetHandLogAsync"/>) to "this sitting".
+        ///
+        /// Static + keyed by table id ON PURPOSE: a reconnect, a scene reload, or a mid-round rejoin all build a new
+        /// TableController, and an instance field would reset the window and silently drop every hand played before the
+        /// blip. Leaving the table clears it, so the next sitting starts a fresh log.
+        /// </summary>
+        public static DateTimeOffset? SessionStartedUtc { get; private set; }
+        private static string _sessionTableId;
+
+        /// <summary>Begin (or keep) the sitting window for <paramref name="tableId"/>. Idempotent per table.</summary>
+        private static void MarkSessionStart(string tableId)
+        {
+            if (string.IsNullOrEmpty(tableId)) return;
+            if (_sessionTableId == tableId && SessionStartedUtc.HasValue) return;   // same sitting — keep the original stamp
+            _sessionTableId = tableId;
+            SessionStartedUtc = DateTimeOffset.UtcNow;
+        }
+
+        /// <summary>End the sitting window (called when we actually leave the table).</summary>
+        private static void ClearSessionStart()
+        {
+            _sessionTableId = null;
+            SessionStartedUtc = null;
+        }
+
         private IBlackjackHubClient _hub;
         private CancellationTokenSource _heartbeatCts;
+        private bool _boardConfirmedSeat;   // the board has, at least once, shown us seated by id
+        private int _missingSeatBoards;     // consecutive boards missing our seat — tolerate one stale/transient board
+        private bool _lastIdleWarned;       // our last seated board had the idle-kick warning (⇒ removal was a bet-timeout)
+        private bool _leaving;              // guards against double navigation (manual Leave + a removal push racing)
+        private decimal? _lastBoardChips;   // last seat balance we took off a board — only a CHANGE drives the chips HUD
         private static BlackjackRestClient Rest => BlackjackRestClient.Instance;
 
         /// <summary>
@@ -78,6 +113,32 @@ namespace PlayCard.Game.Table
 
         public bool IsMyTurn => Board != null && Board.RoundInProgress && MySeat > 0 && Board.CurrentSeatNumber == MySeat;
 
+        /// <summary>The board's seat for THIS user, matched by user id (not seat number, so a stale lobby-seat
+        /// fallback can't point at whoever now sits there). Null until the board confirms our seat, or after we're
+        /// removed.</summary>
+        private SeatView MySeatView
+        {
+            get
+            {
+                var uid = AccountManager.Instance != null ? AccountManager.Instance.UserId : null;
+                if (Board?.Seats == null || string.IsNullOrEmpty(uid)) return null;
+                return Board.Seats.FirstOrDefault(s => s.Player != null && s.Player.Id == uid);
+            }
+        }
+
+        /// <summary>We are seated AND our hand is live in the current round (we bet and were dealt in). False while
+        /// spectating or waiting for the next deal. Used to lock the leave button during our own live round.</summary>
+        public bool AmIInRound => Board != null && Board.RoundInProgress && (MySeatView?.Player?.InRound ?? false);
+
+        /// <summary>Seated but NOT in the current round while a round is running — i.e. watching, waiting for the next
+        /// deal (joined mid-round, or sat this one out). Drives the "waiting for next round" panel.</summary>
+        public bool AmISpectatingRound => Board != null && Board.RoundInProgress
+                                          && MySeatView != null && !(MySeatView.Player?.InRound ?? false);
+
+        /// <summary>Our seat is in its final betting window before an idle eviction — show the "bet or be removed"
+        /// warning. Server-computed per seat, matched to us by id.</summary>
+        public bool AmIIdleKickWarned => MySeatView?.IdleKickWarning ?? false;
+
         private async void Start()
         {
             bool fromLobby = !string.IsNullOrEmpty(GameSession.TableId);
@@ -86,6 +147,10 @@ namespace PlayCard.Game.Table
 
             if (_hub == null) { Debug.LogError("[TableController] hubComponent must implement IBlackjackHubClient."); return; }
             if (string.IsNullOrEmpty(TableId)) { Debug.LogError("[TableController] No table id — open from the lobby or set a debugTableId."); return; }
+
+            // Open the sitting window for the session hand log. Idempotent per table, so a reconnect / scene reload
+            // keeps the ORIGINAL start time and the log still shows the hands played before the blip.
+            MarkSessionStart(TableId);
 
             _hub.OnTableUpdated += HandleBoard;
             _hub.OnConnected += HandleConnected;
@@ -122,9 +187,22 @@ namespace PlayCard.Game.Table
             _hub.OnDisconnected -= HandleDisconnected;
         }
 
+        /// <summary>
+        /// Re-fan the CURRENT board to every <see cref="OnBoardChanged"/> consumer without a new server push. Used by
+        /// the round-end director when it releases the felt: components that hard-return on board pushes while the
+        /// director holds (the view's Render, BetStacks, DealerAnimator) DISCARD those snapshots, so on release they
+        /// would otherwise sit on stale state until the next push — which, on a push-only transport, may be a whole
+        /// turn away. Safe to call any time; a null board is a no-op.
+        /// </summary>
+        public void RepublishBoard()
+        {
+            if (Board != null) OnBoardChanged?.Invoke(Board);
+        }
+
         // ---- Presentation handshake (turn clock) ----
 
         private bool _presentedSent;
+        private bool _betPresentedSent;   // same handshake, but for the between-rounds betting window
 
         /// <summary>
         /// Tell the server the moment we can ACTUALLY act. The server stamps turn deadlines generously
@@ -139,7 +217,22 @@ namespace PlayCard.Game.Table
         /// </summary>
         private void Update()
         {
-            if (Board == null || !Board.RoundInProgress) { _presentedSent = false; return; }
+            if (Board == null) { _presentedSent = false; _betPresentedSent = false; return; }
+
+            // BETWEEN ROUNDS the same handshake collapses the BETTING window. The server arms it at settle with an
+            // allowance for the whole round-end ceremony (reveal → dealer draws → collect → pay → sweep → finale);
+            // this says "the ceremony is done, we can see the felt", which trims it to the real betting length. Same
+            // predicate the betting HUD gates on, so the clock and the chips appear together.
+            if (!Board.RoundInProgress)
+            {
+                _presentedSent = false;
+                if (_betPresentedSent || MySeat <= 0 || Board.BettingExpiresAt == null) return;
+                if (tableView != null && tableView.RoundEndSettling) return;
+                _betPresentedSent = true;
+                _ = SendPresentedAsync(MySeat);
+                return;
+            }
+            _betPresentedSent = false;   // round running → re-arm for the next round end
 
             int seat = MySeat;
             if (seat <= 0 || Board.CurrentSeatNumber != seat
@@ -169,6 +262,15 @@ namespace PlayCard.Game.Table
         {
             if (board == null) return;
 
+            // Ordering guard: DROP any snapshot older than the one we already hold. Hub pushes, inline REST action
+            // responses, and poll results all funnel here with no transport-level ordering, so on mobile latency a late
+            // response (e.g. a delayed Stand, or a poll that read Redis before a concurrent action) could otherwise
+            // clobber a newer push — resurrecting a finished round or flipping back to a turn already ended. UpdatedAt is
+            // a monotonic server stamp; equal is kept (idempotent same-state re-apply); a missing stamp is always
+            // accepted so a pre-upgrade server can never freeze us.
+            if (board.UpdatedAt.HasValue && Board?.UpdatedAt is System.DateTimeOffset cur && board.UpdatedAt.Value < cur)
+                return;
+
             // Round-end transition (in-progress → ended): the server's auto-settle arrives as a push with no
             // client REST call, so refresh the chips HUD here to catch the credited winnings.
             var previous = Board;
@@ -176,6 +278,41 @@ namespace PlayCard.Game.Table
             bool roundEnded = previous != null && previous.RoundInProgress && !board.RoundInProgress;
 
             Board = board;
+
+            // Self-removal watch: once the board has confirmed us seated (by id), a later board where we're gone
+            // means the server evicted us (idle-kick or stalled-reaper). MySeat can't detect this — it falls back to
+            // the lobby-picked seat — so track board-confirmed seating explicitly and bail to the lobby on the drop.
+            var uid = AccountManager.Instance != null ? AccountManager.Instance.UserId : null;
+            bool seatedNow = board.Seats != null && !string.IsNullOrEmpty(uid)
+                             && board.Seats.Any(s => s.Player != null && s.Player.Id == uid);
+            if (seatedNow)
+            {
+                _boardConfirmedSeat = true;
+                _missingSeatBoards = 0;
+                _lastIdleWarned = MySeatView?.IdleKickWarning ?? false;
+            }
+            else if (_boardConfirmedSeat)
+            {
+                // Don't bounce on a SINGLE board that lacks us — a post-connect resync or a stale push can briefly omit
+                // our seat. Re-request the authoritative board; only bail once a confirming board also shows us gone.
+                if (++_missingSeatBoards >= 2)
+                {
+                    _boardConfirmedSeat = false;
+                    _missingSeatBoards = 0;
+                    HandleRemovedFromSeat();
+                    return;   // leaving this scene — don't fan a stale board out to UI that's about to unload
+                }
+                _ = RefreshAsync();   // fetch a fresh board; if we're truly gone the next one confirms it
+            }
+
+            // Paint the chips HUD from the board's OWN authoritative mirror. The server syncs that value from the wallet
+            // on every money operation (stake debit, settle credit), so it is real server data — just carried on the
+            // push we already received instead of needing a separate /wallet round-trip. That extra hop is the main
+            // reason a win or a stake showed up a beat late on device. Being server-sourced, it also clears any
+            // optimistic prediction. The RefreshAsync below still runs as the exact reconcile (it also covers the other
+            // currencies, and a mirror that's stale because the same player is staking at another table).
+            SyncChipsFromBoard(board);
+
             if (tableView != null) tableView.Render(board);
             OnBoardChanged?.Invoke(board);
 
@@ -213,6 +350,10 @@ namespace PlayCard.Game.Table
 
         public Task PlaceBet(decimal amount)   => Do(Rest.BetAsync(TableId, amount, MySeat),
             _ => KhelaAnalytics.LogBetPlaced(GameSession.SelectedGame ?? "blackjack", amount, MySeat));
+        // NOTE: no optimistic chip prediction here. Every action also kicks a balance refresh, so a refresh already in
+        // flight would return carrying the debit and the prediction landed on top of it — the balance dipped twice and
+        // then corrected back up, flashing "gain" green for a bet. SyncChipsFromBoard already paints the server's own
+        // post-action balance off the response board, which is fast enough without guessing.
         public Task Deal()                      => Do(Rest.DealAsync(TableId));
         public Task Hit()                       => Do(Rest.HitAsync(TableId, MySeat, CurrentHand));
         public Task Stand()                     => Do(Rest.StandAsync(TableId, MySeat, CurrentHand));
@@ -224,6 +365,8 @@ namespace PlayCard.Game.Table
 
         public async Task Leave()
         {
+            if (_leaving) return;
+            _leaving = true;
             StopHeartbeat();   // we're giving up the seat — stop pinging
             try
             {
@@ -231,11 +374,51 @@ namespace PlayCard.Game.Table
                 if (_hub != null) await _hub.LeaveTableAsync(TableId);
             }
             catch (Exception ex) { Debug.LogWarning($"[TableController] leave failed: {ex.Message}"); }
+            GameSession.SeatNumber = 0;
+            ClearSessionStart();   // the sitting is over — the next one starts a fresh hand log
+            SceneNavigator.GoToLobby();
+        }
+
+        // The SERVER removed us (idle-kick after the bet-timeout warning, or the stalled reaper). The seat is already
+        // gone server-side, so — unlike Leave() — we do NOT call the leave endpoint; we just stop pinging, drop the
+        // stale seat, surface a one-shot notice, and return to the lobby. Idempotent via _leaving.
+        private void HandleRemovedFromSeat()
+        {
+            if (_leaving) return;
+            _leaving = true;
+            StopHeartbeat();
+            GameSession.SeatNumber = 0;
+            ClearSessionStart();   // the sitting is over — the next one starts a fresh hand log
+            GameSession.PendingNotice = _lastIdleWarned
+                ? "You were removed from the table for not betting."
+                : "You were removed from the table.";
+            OnRemovedFromSeat?.Invoke();
+            if (_hub != null) { try { _ = _hub.LeaveTableAsync(TableId); } catch { /* best-effort group cleanup */ } }
             SceneNavigator.GoToLobby();
         }
 
         /// <summary>Force an immediate board refresh (re-push for SignalR / fetch for polling).</summary>
         public Task RefreshAsync() => _hub != null ? _hub.RequestBoardAsync(TableId) : Task.CompletedTask;
+
+        // ---- chips HUD off the board (instant, still server data) ----
+
+        // Push the board's own wallet mirror for our seat into the chips HUD (see the call site for why).
+        //
+        // Only when the mirror actually CHANGED. The mirror is refreshed from the wallet whenever the server moves money
+        // for this seat, so a change means real table money moved and the value is fresh. An UNCHANGED value tells us
+        // nothing new — and re-applying it on every push would stomp a credit that arrived from somewhere else while we
+        // sat here (claiming a reward, opening a chest, an IAP), snapping the HUD back down until the next reconcile.
+        private void SyncChipsFromBoard(BoardSnapshot board)
+        {
+            if (WalletManager.Instance == null || board?.Seats == null) return;
+            int seat = MySeat;
+            if (seat <= 0) return;
+            var me = board.Seats.FirstOrDefault(s => s.SeatNumber == seat)?.Player;
+            if (me == null) return;                       // not in this snapshot (mid-join / removed) — leave the HUD alone
+            if (_lastBoardChips == me.Balance) return;    // nothing moved at the table — don't touch the HUD
+            _lastBoardChips = me.Balance;
+            WalletManager.Instance.SetChips(me.Balance);
+        }
 
         // ---- seated keep-alive (feeds the server's stalled-player reaper) ----
 
@@ -302,5 +485,6 @@ namespace PlayCard.Game.Table
 
             if (WalletManager.Instance != null) _ = WalletManager.Instance.RefreshAsync();
         }
+
     }
 }

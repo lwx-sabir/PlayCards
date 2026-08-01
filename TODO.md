@@ -29,6 +29,9 @@ Active, actionable task list. Broader strategy / phase gates live in [docs/PROJE
       Ctrl+S → `Window ▸ Rendering ▸ Lighting ▸ Generate Lighting` → Ctrl+S → `World Prep ▸ 3 - Bake
       Occlusion`. (`Prep ALL` does the prep pass for all four at once.)
 
-- [ ] **Graphics tier selection in Settings** — Low/Mid/High dropdown wired to
-      `PostFxTierController.SetTier()` (persists to `PlayerPrefs["khela.gfxTier"]`). Post profiles +
-      controller already built. Also tracked in PROJECT_PLAN §6.
+- [ ] **4-tier graphics quality system (Low/Mid/High/Ultra) — auto + manual.** Full plan:
+      [docs/GRAPHICS_QUALITY.md](docs/GRAPHICS_QUALITY.md). One URP asset per Quality level (verified
+      Unity 6 architecture) + a `GraphicsQualityManager` single-source-of-truth; `PostFxTierController`
+      subscribes; `SceneFrameRate` clamps to the tier fps ceiling; GPU-aware auto-detect (not RAM) +
+      runtime fps safety-net; Settings dropdown (Auto/Low/Mid/High/Ultra) + Battery Saver. All 4
+      renderers stay Forward+ (shadow-catcher). Adaptive Performance = later. Build phases A–F in the doc.

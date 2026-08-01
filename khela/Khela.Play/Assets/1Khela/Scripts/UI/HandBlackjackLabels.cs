@@ -6,8 +6,18 @@ using UnityEngine;
 namespace PlayCard.UI
 {
     /// <summary>
-    /// Pops a per-hand banner on a NATURAL blackjack (unsplit 2-card 21, pays 3:2) OR a BUST (> 21), showing the
-    /// matching child (<c>Label_BJ</c> / <c>Label_Bust</c>). Pins to the hand's LAST card via
+    /// Pops a per-hand banner on a NATURAL blackjack (unsplit 2-card 21, pays 3:2), a BUST (> 21), or — at settle — a
+    /// WIN / PUSH / LOSE, showing the matching child (<c>Label_BJ</c> / <c>Label_Bust</c> / <c>Label_Win</c> /
+    /// <c>Label_Push</c> / <c>Label_Lose</c>). Win/push/lose are decided PER HAND (from the server's per-hand outcome),
+    /// so a split whose hands split the result labels each hand correctly instead of the seat's misleading net.
+    ///
+    /// The DEALER shows BJ / BUST only — never WIN / LOSE / PUSH. Those are a PER-PLAYER result (she can beat one seat
+    /// and lose to another in the same round), so a single banner on her hand could not be true. The settlement banners
+    /// (win/push/lose, players only) are HELD
+    /// by the <see cref="RoundEndDirector"/> until its PAY beat (<see cref="RevealNow"/>) — after reveal → draws →
+    /// collect → pay — so they never announce the outcome before the dealer's cards are shown and the chips have moved
+    /// (BJ / BUST are hand-intrinsic and still pop live). With no director wired they show at the settle push.
+    /// Pins to the hand's LAST card via
     /// <see cref="BlackjackTableView.CardLocalTRS"/> with its OWN offset, positioned IDENTICALLY to the value badge
     /// (offset scaled by the card). World-space, pooled, diffed; the active variant UNROLLS open on its X axis. Shows
     /// only while the round is live; clears otherwise. The banner ART is your prefab. Put this on an always-active
@@ -28,6 +38,13 @@ namespace PlayCard.UI
         [SerializeField] private string bjChildName = "Label_BJ";
         [Tooltip("Child object shown on a bust (value > 21).")]
         [SerializeField] private string bustChildName = "Label_Bust";
+        [Tooltip("Child shown when this hand WINS at settle (beats the dealer; not a blackjack — BJ takes precedence).")]
+        [SerializeField] private string winChildName = "Label_Win";
+        [Tooltip("Child shown on a PUSH at settle (tie with the dealer).")]
+        [SerializeField] private string pushChildName = "Label_Push";
+        [Tooltip("Child shown when this hand LOSES at settle (a non-bust loss; a bust shows Label_Bust instead). Leave " +
+                 "EMPTY to show no banner on a plain loss (the pre-Label_Lose behaviour).")]
+        [SerializeField] private string loseChildName = "Label_Lose";
 
         [Header("Placement (independent of the value label — place it where you want, e.g. on top)")]
         [Tooltip("Offset from the LAST card's CENTRE in the CARD's local frame: X = card's right, Y = lift off the " +
@@ -43,7 +60,9 @@ namespace PlayCard.UI
         [Tooltip("Overshoot of the ease-out-back unroll — 0 = clean, ~1.7 = stretches past full then settles.")]
         [SerializeField] private float overshoot = 1.7f;
 
-        private struct Badge { public GameObject Go; public float ShownAt; public GameObject BjChild; public GameObject BustChild; }
+        private enum Variant { None, BJ, Bust, Win, Push, Lose }
+
+        private struct Badge { public GameObject Go; public float ShownAt; public GameObject BjChild; public GameObject BustChild; public GameObject WinChild; public GameObject PushChild; public GameObject LoseChild; }
 
         private readonly Dictionary<int, Badge> _active = new Dictionary<int, Badge>();
         private readonly Stack<GameObject> _free = new Stack<GameObject>();
@@ -53,8 +72,32 @@ namespace PlayCard.UI
         private Vector3 _baseScale = Vector3.one;       // prefab root scale (kept full; the root is NOT tweened)
         private Vector3 _bjBaseScale = Vector3.one;     // Label_BJ child's full scale — the unroll target
         private Vector3 _bustBaseScale = Vector3.one;   // Label_Bust child's full scale
+        private Vector3 _winBaseScale = Vector3.one;    // Label_Win child's full scale
+        private Vector3 _pushBaseScale = Vector3.one;   // Label_Push child's full scale
+        private Vector3 _loseBaseScale = Vector3.one;   // Label_Lose child's full scale
+        private bool _hasLoseChild;                      // the prefab actually CONTAINS a Label_Lose child (else: no lose banner)
         private bool _capturedScale;
         private BoardSnapshot _board;
+
+        // Round-end HOLD (same mechanism as SeatPlates / WinChipFly): the SETTLEMENT banners
+        // (Win / Push / Lose, on player hands only) announce the outcome, so with a RoundEndDirector
+        // presenting they must wait for its PAY beat — AFTER reveal → draws → collect → pay — not flash on the raw
+        // settle push. BJ / Bust are hand-intrinsic and still pop live. Held as a MonoBehaviour so there's no hard type
+        // dependency on the director. Null (no director wired) = shows at settle, as before.
+        private MonoBehaviour _settleDirector;
+        private bool _settleRevealed;
+
+        /// <summary>The director arms deferral (called at its OnEnable): the settlement banners wait for the PAY beat.</summary>
+        public void RegisterSettleDirector(MonoBehaviour director) => _settleDirector = director;
+        public void UnregisterSettleDirector(MonoBehaviour director) { if (_settleDirector == director) _settleDirector = null; }
+
+        /// <summary>Director's PAY beat: release the settlement banners (win/push/lose) now.</summary>
+        public void RevealNow(BoardSnapshot board)
+        {
+            _settleRevealed = true;
+            if (board != null) _board = board;
+            if (_board != null) Relayout(_board);
+        }
 
         // IAnchorLabel — lets the editor CardAnchorGizmo preview this banner before Play.
         public GameObject LabelPrefab => labelPrefab;
@@ -80,6 +123,9 @@ namespace PlayCard.UI
         private void OnBoard(BoardSnapshot board)
         {
             _board = board;
+            // Re-arm the settle hold while a round is live, so the NEXT settle waits for the director's PAY beat again
+            // (mirrors SeatPlates / WinChipFly). Without this a second round would reveal its outcome at the raw settle push.
+            if (board != null && board.RoundInProgress) _settleRevealed = false;
             Relayout(_board);
         }
 
@@ -121,18 +167,54 @@ namespace PlayCard.UI
             for (int i = 0; i < _stale.Count; i++) ReleaseKey(_stale[i]);
         }
 
-        // Pops on a natural blackjack (unsplit 2-card 21) OR a bust (> 21), showing the matching child.
+        // Pops on a natural blackjack (unsplit 2-card 21), a bust (> 21), or — at settle — a WIN / PUSH, showing the
+        // matching child.
         private void Place(int seat, int handIndex, int handCount, List<CardView> cards, int value)
         {
             if (cards == null) return;
-            bool isBJ = cards.Count == 2 && value == 21 && handCount == 1;
-            bool isBust = value > 21;
-            if (!isBJ && !isBust) return;                                    // banner only on BJ or bust
+
+            // Which variant, if any? BJ / Bust read straight from the hand as the cards land (visible from the cards
+            // alone, so they pop the instant the card lands — before settle). WIN / PUSH / LOSE are SETTLEMENT outcomes
+            // (they need the dealer comparison), so they only appear once the round has settled and LastResults is
+            // populated — and they're read PER HAND, so a split labels each hand on its own. BJ and Bust take
+            // precedence — a natural stays "BJ", a bust stays "Bust", never win/push/lose.
+            Variant variant;
+            if (cards.Count == 2 && value == 21 && handCount == 1) variant = Variant.BJ;
+            else if (value > 21) variant = Variant.Bust;
+            // The DEALER never gets a settlement label. WIN / LOSE / PUSH are a PER-PLAYER result — at a multi-seat
+            // table she can beat one seat and lose to another, so a single banner on her hand can't be true. She only
+            // ever shows what is readable from her own cards: BJ / BUST (both handled above).
+            else if (seat == 0) variant = Variant.None;
+            else
+            {
+                string outcome = OutcomeFor(seat, handIndex);   // per hand at settle; null mid-round (dealer handled above)
+                switch (outcome)
+                {
+                    case "win":
+                    case "blackjack": variant = Variant.Win; break;   // "blackjack" defensive — a natural is caught above
+                    case "push":      variant = Variant.Push; break;
+                    // A non-bust loss shows Label_Lose only when the prefab actually HAS that child (so the default
+                    // name can't render a blank banner before the artist adds it); "bust" is defensive (caught above).
+                    case "lose":
+                    case "bust":      variant = _hasLoseChild ? Variant.Lose : Variant.None; break;
+                    default:          variant = Variant.None; break;
+                }
+            }
+            if (variant == Variant.None) return;                             // plain mid-round hand → no banner
+
+            // Settlement outcomes (Win/Push/Lose — player hands only) announce the result, so with a
+            // RoundEndDirector presenting, hold them until it releases them (RevealNow) — after reveal → draws →
+            // collect → pay — so nothing is announced before the dealer's cards are shown and the chips have moved. Same
+            // hold SeatPlates / WinChipFly use. No director wired ⇒ _settleDirector null ⇒ show at settle (fallback).
+            // BJ / Bust are hand-intrinsic (readable from the cards alone) and still pop live.
+            bool isSettlement = variant == Variant.Win || variant == Variant.Push || variant == Variant.Lose;
+            if (isSettlement && _settleDirector != null && !_settleRevealed) return;
+
             var anchor = view.SeatAnchor(seat);
             if (anchor == null) return;
 
-            // Gate on the ANIMATION: hold the BJ/Bust banner until the hand's LAST card has LANDED, so it pops WITH the
-            // dealt/bust card, not the instant the server pushes the resolved hand. LateUpdate re-checks every frame.
+            // Gate on the ANIMATION: hold the banner until the hand's LAST card has LANDED, so it pops WITH the card,
+            // not the instant the server pushes the resolved hand. LateUpdate re-checks every frame.
             if (!view.CardSettled(seat, handIndex, cards.Count - 1)) return;
 
             int key = SlotKey(seat, handIndex);
@@ -153,16 +235,52 @@ namespace PlayCard.UI
                 worldRot * Quaternion.Euler(labelFlatEuler));
             b.Go.transform.localScale = _baseScale;
 
-            // Show the variant for this situation, hide the other.
-            if (b.BjChild != null && b.BjChild.activeSelf != isBJ) b.BjChild.SetActive(isBJ);
-            if (b.BustChild != null && b.BustChild.activeSelf != isBust) b.BustChild.SetActive(isBust);
+            // Show the variant for this situation, hide the rest.
+            SetChild(b.BjChild,   variant == Variant.BJ);
+            SetChild(b.BustChild, variant == Variant.Bust);
+            SetChild(b.WinChild,  variant == Variant.Win);
+            SetChild(b.PushChild, variant == Variant.Push);
+            SetChild(b.LoseChild, variant == Variant.Lose);
 
             // Unroll the ACTIVE variant on its X axis (around its own pivot) — opens in place, no slide.
+            GameObject child; Vector3 childBase;
+            switch (variant)
+            {
+                case Variant.BJ:   child = b.BjChild;   childBase = _bjBaseScale;   break;
+                case Variant.Bust: child = b.BustChild; childBase = _bustBaseScale; break;
+                case Variant.Win:  child = b.WinChild;  childBase = _winBaseScale;  break;
+                case Variant.Push: child = b.PushChild; childBase = _pushBaseScale; break;
+                default:           child = b.LoseChild; childBase = _loseBaseScale; break; // Lose
+            }
             float t = tweenDuration > 0f ? Mathf.Clamp01((Time.unscaledTime - b.ShownAt) / tweenDuration) : 1f;
             float e = EaseOutBack(t);
-            var child = isBJ ? b.BjChild : b.BustChild;
-            var childBase = isBJ ? _bjBaseScale : _bustBaseScale;
             if (child != null) child.transform.localScale = new Vector3(childBase.x * e, childBase.y, childBase.z);
+        }
+
+        private static void SetChild(GameObject c, bool on)
+        {
+            if (c != null && c.activeSelf != on) c.SetActive(on);
+        }
+
+        // This HAND's settled outcome ("blackjack"|"win"|"push"|"bust"|"lose") from the seat's per-hand list in
+        // LastResults, or null (mid-round, or the dealer — seat 0 has no result entry). On a split each hand reads its
+        // own outcome, so a mixed win/loss labels each hand correctly (the seat-level net would call it a "push").
+        // Falls back to the seat-level net Outcome when an older server sends no per-hand list.
+        private string OutcomeFor(int seat, int handIndex)
+        {
+            var results = _board?.LastResults;
+            if (results == null) return null;
+            for (int i = 0; i < results.Count; i++)
+            {
+                var r = results[i];
+                if (r == null || r.SeatNumber != seat) continue;
+                var per = r.Hands;
+                if (per != null)
+                    for (int h = 0; h < per.Count; h++)
+                        if (per[h] != null && per[h].HandIndex == handIndex) return per[h].Outcome;
+                return r.Outcome;   // fallback: seat-level net (older server, or missing per-hand data)
+            }
+            return null;
         }
 
         // Ease-out-back: rises, overshoots past 1, settles to 1 → a lively pop. overshoot 0 → plain ease-out.
@@ -185,6 +303,9 @@ namespace PlayCard.UI
                 ShownAt = Time.unscaledTime,
                 BjChild = FindChild(go, bjChildName),
                 BustChild = FindChild(go, bustChildName),
+                WinChild = FindChild(go, winChildName),
+                PushChild = FindChild(go, pushChildName),
+                LoseChild = FindChild(go, loseChildName),
             };
             _active[key] = b;
             return b;
@@ -205,6 +326,12 @@ namespace PlayCard.UI
             if (bj != null) _bjBaseScale = bj.transform.localScale;
             var bust = FindChild(labelPrefab, bustChildName);
             if (bust != null) _bustBaseScale = bust.transform.localScale;
+            var win = FindChild(labelPrefab, winChildName);
+            if (win != null) _winBaseScale = win.transform.localScale;
+            var push = FindChild(labelPrefab, pushChildName);
+            if (push != null) _pushBaseScale = push.transform.localScale;
+            var lose = FindChild(labelPrefab, loseChildName);
+            if (lose != null) { _loseBaseScale = lose.transform.localScale; _hasLoseChild = true; }
             _capturedScale = true;
         }
 

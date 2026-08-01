@@ -14495,9 +14495,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Quality.PostFxTierController
   volume: {fileID: 844283660}
+  sharedBase: {fileID: 0}
   low: {fileID: 11400000, guid: 12468b113c6249bcbd6becc2224f0a1c, type: 2}
   mid: {fileID: 11400000, guid: 2dd1b0858e384320a091f9a8196c8e61, type: 2}
   high: {fileID: 11400000, guid: eef3439920664e74900451f977b683ae, type: 2}
+  overrideVolume: {fileID: 0}
+  overridePriority: 10
+  lowOverride: {fileID: 0}
+  midOverride: {fileID: 0}
+  highOverride: {fileID: 0}
   mode: 0
   previewTier: 0
 --- !u!114 &844283660

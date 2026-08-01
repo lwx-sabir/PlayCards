@@ -14,6 +14,9 @@ namespace Khela.Game.Managers
         public static object Build(BlackjackTable table) => new
         {
             table.TableId,
+            // Monotonic server-stamp (set on every SaveTableAsync). The client drops any snapshot older than the one it
+            // already holds, so a late REST/poll response can't clobber a newer hub push (stale-board / resurrected-round).
+            table.UpdatedAt,
             table.MaxPlayers,
             table.MaxSeatsPerUser,
             table.RoundInProgress,
@@ -27,6 +30,11 @@ namespace Khela.Game.Managers
             // in the moment before the collapse lands (or if that call never happens).
             table.TurnDurationSeconds,
             table.InsuranceExpiresAt, // when set, the round is in its insurance phase (its own countdown)
+            // Between rounds: when the betting window closes and the server deals whatever is down. Null = no window
+            // (disabled, or the table is idle waiting for a first bet). Same ceiling-then-collapse deal as the turn
+            // clock, so the client clamps its countdown to BettingDurationSeconds.
+            table.BettingExpiresAt,
+            table.BettingDurationSeconds,
             table.LastHandId, // id of the most recently settled hand — feeds GET /verify/{handId}
             table.LastResults, // per-seat outcome of the last settled round (drives the client result banner)
             // Commitment only — the server seed stays secret until reveal/verify.
@@ -37,7 +45,7 @@ namespace Khela.Game.Managers
                 HandValue = table.Game.Dealer.Hand.GetVisibleSum()
             },
             Players = table.Game.Players.Select(ToPlayerDto),
-            Seats = table.Seats.Select(ToSeatDto)
+            Seats = table.Seats.Select(s => ToSeatDto(s, table))
         };
 
         // Face-down cards (the dealer hole card) are masked so a snapshot never leaks the down card.
@@ -59,6 +67,8 @@ namespace Khela.Game.Managers
             p.Name,
             p.Balance,
             p.SeatNumber,
+            p.InRound,   // participating in the CURRENT round (false = spectating/waiting for the next deal)
+            p.BetThisWindow,   // actively bet THIS betting window (vs a persisted auto-repeat) — client shows the bet during the window
             Hands = p.Hands.Select((h, idx) => new
             {
                 HandIndex = idx,
@@ -73,13 +83,29 @@ namespace Khela.Game.Managers
             p.Push
         };
 
-        private static object ToSeatDto(Seat s) => new
+        private static object ToSeatDto(Seat s, BlackjackTable table) => new
         {
             s.SeatNumber,
             Occupied = s.Player != null,
             Player = s.Player == null ? null : ToPlayerDto(s.Player),
             s.IsConnected,   // false ⇒ client shows "disconnected…" for this seat
-            s.IsStalled      // no heartbeat past StalledTimeout — removal imminent
+            s.IsStalled,     // no heartbeat past StalledTimeout — removal imminent
+            s.MissedBetWindows,             // consecutive betting windows sat out (for UI / debugging)
+            IdleKickWarning = IsIdleKickWarning(s, table)   // this seat's FINAL window before an idle eviction
         };
+
+        // True when the seat is in its last betting window before being evicted for not betting: the betting window
+        // is open, idle eviction is enabled, the seat has no funded bet, and it has already missed all but one of the
+        // allowed windows. The client shows the "bet or be removed" warning to the LOCAL player when this is set.
+        private static bool IsIdleKickWarning(Seat s, BlackjackTable table)
+        {
+            if (s.Player == null) return false;
+            if (table.RoundInProgress || !table.BettingExpiresAt.HasValue) return false;   // only during an open window
+            var cap = table.MaxIdleBettingWindows;
+            if (cap <= 0) return false;                                                     // idle eviction disabled
+            bool hasBet = s.Player.Hands.Count > 0 && s.Player.Hands[0].Bet > 0;
+            if (hasBet) return false;                                                       // already safe this round
+            return s.MissedBetWindows >= cap - 1;                                           // one miss from eviction
+        }
     }
 }

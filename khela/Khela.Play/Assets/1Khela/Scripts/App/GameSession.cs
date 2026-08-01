@@ -17,5 +17,9 @@ namespace PlayCard.App
         /// spectate) → fall back to the board. Set by <see cref="SceneNavigator.GoToTable"/>; the board still wins
         /// once it arrives and matches us.</summary>
         public static int SeatNumber { get; set; }
+
+        /// <summary>One-shot notice to surface on the NEXT scene (e.g. the lobby shows "You were removed for not
+        /// betting" after an idle kick). The consumer should display it then null it so it shows only once.</summary>
+        public static string PendingNotice { get; set; }
     }
 }

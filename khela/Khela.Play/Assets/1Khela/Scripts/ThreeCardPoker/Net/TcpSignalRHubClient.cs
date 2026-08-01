@@ -84,15 +84,24 @@ namespace PlayCard.ThreeCardPoker.Net
         {
             if (!_connected || _hub == null) return;
             try { await _hub.SendAsync(method, tableId); }
-            catch (Exception ex) { Debug.LogWarning($"[TcpHub] {method} failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                // A send that races a closing connection is EXPECTED on any drop — the reconnect policy recovers.
+                if (!IsExpectedClose(ex)) Debug.LogWarning($"[TcpHub] {method} failed: {ex.Message}");
+            }
         }
 
-        // Prefer an explicit, non-placeholder inspector URL; otherwise derive from the shared AppConfig base
-        // (AppConfig.HubUrl is hard-wired to the blackjack hub, so 3CP builds its own path off BaseApiUrl).
+        private static bool IsExpectedClose(Exception ex)
+            => ex?.Message != null &&
+               (ex.Message.IndexOf("closed", StringComparison.OrdinalIgnoreCase) >= 0
+                || ex.Message.IndexOf("not connected", StringComparison.OrdinalIgnoreCase) >= 0);
+
+        // Prefer an explicit, non-placeholder inspector URL; otherwise use the shared AppConfig's Three Card hub URL
+        // (configured on the Resources/AppConfig asset — Base Api Url + Three Card Hub Path).
         private string ResolveHubUrl()
             => !string.IsNullOrWhiteSpace(hubUrl) && !hubUrl.Contains("localhost:5000")
                 ? hubUrl
-                : AppConfig.Instance.BaseApiUrl + "/threecardhub";
+                : AppConfig.Instance.ThreeCardHubUrl;
 
         private void Build()
         {

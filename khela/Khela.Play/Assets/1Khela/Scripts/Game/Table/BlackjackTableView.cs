@@ -422,7 +422,10 @@ namespace PlayCard.Game.Table
         }
 
         // Real dealing order for a card: round by round (cardIndex), players (seat asc) then the dealer (seat 0) LAST.
-        private static int DealOrder(int seat, int cardIndex) => cardIndex * 1000 + (seat == 0 ? 999 : seat);
+        // One card per seat per round (cardIndex is the primary key), dealt RIGHT-to-left within each round: blackjack
+        // first base = the dealer's left = the player's RIGHTMOST seat = the HIGHEST seat number, dealt first; dealer
+        // (seat 0) last. Higher seat number => smaller order => earlier. Must match the server's GetOrderedHands + DealerAnimator.
+        private static int DealOrder(int seat, int cardIndex) => cardIndex * 1000 + (seat == 0 ? 999 : 100 - seat);
 
         // Reveal ONE parked card: drop it from the pending set, activate it, and slide it from the shoe to its fan
         // spot. Idempotent — guarded on _pendingDeal so a double release (fast push / stale queue entry) is a no-op.

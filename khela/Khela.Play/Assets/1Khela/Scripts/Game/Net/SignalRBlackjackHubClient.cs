@@ -87,8 +87,18 @@ namespace PlayCard.Game.Net
         {
             if (!_connected || _hub == null) return;
             try { await _hub.SendAsync(method, tableId); }
-            catch (Exception ex) { Debug.LogWarning($"[Hub] {method} failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                // A send that races a closing connection ("Connection closed unexpectedly") is EXPECTED on any drop —
+                // the reconnect policy recovers, so it's not worth a warning. Only surface unexpected send failures.
+                if (!IsExpectedClose(ex)) Debug.LogWarning($"[Hub] {method} failed: {ex.Message}");
+            }
         }
+
+        private static bool IsExpectedClose(Exception ex)
+            => ex?.Message != null &&
+               (ex.Message.IndexOf("closed", StringComparison.OrdinalIgnoreCase) >= 0
+                || ex.Message.IndexOf("not connected", StringComparison.OrdinalIgnoreCase) >= 0);
 
         // Prefer an explicit, non-placeholder inspector URL; otherwise use the shared AppConfig.
         private string ResolveHubUrl()

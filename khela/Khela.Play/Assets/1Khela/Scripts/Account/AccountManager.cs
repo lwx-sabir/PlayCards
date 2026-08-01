@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Best.HTTP;
+using PlayCard.App;    // SceneNavigator — last-resort restart when re-authentication fails
 using PlayCard.Core;
 using UnityEngine;
 using Khela.Common;
@@ -53,6 +54,9 @@ namespace PlayCard.Account
 
         private AuthSave _authSave = new AuthSave();
 
+        private bool _refreshing;
+        private float _nextRefreshCheck;
+
         private void Awake()
         {
             if (Instance != null)
@@ -71,6 +75,38 @@ namespace PlayCard.Account
 
             // Fire-and-forget async init
             _ = InitializeAsync();
+        }
+
+        // Proactively keep the JWT fresh. The 60-min token would otherwise expire mid-session and 401 EVERY
+        // endpoint (only Blackjack/Tcp REST re-auth reactively). Re-issue ~2 min before expiry so no request
+        // ever carries a dead token. Cheap: real work runs at most every 15s, and only when near expiry.
+        private void Update()
+        {
+            if (!IsReady || _refreshing || Time.unscaledTime < _nextRefreshCheck) return;
+            _nextRefreshCheck = Time.unscaledTime + 15f;
+
+            var secondsLeft = _authSave.ExpiresAtUnix - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (secondsLeft <= tokenRefreshSkewSeconds * 2)
+                _ = ProactiveRefreshAsync();
+        }
+
+        // Update() is frozen while the app is backgrounded, so a token can lapse during a long pause. On
+        // resume, refresh immediately if it's expired/near-expired so the first call after resume doesn't 401.
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused || !IsReady || _refreshing) return;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (_authSave.ExpiresAtUnix - tokenRefreshSkewSeconds <= now)
+                _ = ProactiveRefreshAsync();
+        }
+
+        private async Task ProactiveRefreshAsync()
+        {
+            if (_refreshing) return;
+            _refreshing = true;
+            try { await RefreshTokenAsync(); }
+            catch (Exception ex) { Debug.LogWarning($"[AccountManager] proactive token refresh failed: {ex.Message}"); }
+            finally { _refreshing = false; }
         }
 
         private async Task InitializeAsync()
@@ -98,6 +134,19 @@ namespace PlayCard.Account
             OnReady?.Invoke();
         }
 
+        /// <summary>
+        /// Guarantees a usable token BEFORE a request goes out: refreshes now if the cached one is missing, expired,
+        /// or within the refresh skew of expiring. Cheap when the token is healthy (no network, just a clock compare).
+        ///
+        /// This is the proactive half of auth recovery — reacting to a 401 afterwards works, but only after the user
+        /// has already seen a failed screen. Shares the single-flight attempt, so a burst of requests refreshes once.
+        /// </summary>
+        public Task<bool> EnsureValidTokenAsync()
+        {
+            if (TokenIsValid()) return Task.FromResult(true);
+            return HandleAuthFailureAsync();
+        }
+
         private bool TokenIsValid()
         {
             if (string.IsNullOrEmpty(_authSave.Token)) return false;
@@ -110,7 +159,12 @@ namespace PlayCard.Account
         /// </summary>
         private async Task<bool> EnsureAccountAsync()
         {
-            if (string.IsNullOrEmpty(_authSave.Email) || string.IsNullOrEmpty(_authSave.Password))
+            // Regenerate if ANY of the three is missing — not just Email/Password. A stale/partial save with an Email
+            // + Password but a blank Username slips past a two-field check and then register fails with
+            // "Username '' is invalid". GenerateDeviceUser derives all three consistently from the device id.
+            if (string.IsNullOrEmpty(_authSave.Email)
+                || string.IsNullOrEmpty(_authSave.Username)
+                || string.IsNullOrEmpty(_authSave.Password))
             {
                 GenerateCredentialsFromDevice();
             }
@@ -217,18 +271,63 @@ namespace PlayCard.Account
             OnTokenRefreshed?.Invoke();
         }
 
-        /// <summary>
-        /// Should be called when a server request fails with 401/expired; attempts refresh then retries via the caller.
-        /// </summary>
-        public async Task<bool> HandleAuthFailureAsync()
-        {
-            if (await RefreshTokenAsync())
-            {
-                return true;
-            }
+        // In-flight re-auth, shared by every caller. A token expiring mid-session 401s EVERY request that happens to
+        // be in the air at once (board poll, wallet, lobby, heartbeat...). Without this each one would start its own
+        // login: several concurrent logins against the same device account, each overwriting the other's token, and
+        // whichever finishes last wins — so a request could be replayed with a token that has already been replaced.
+        private Task<bool> _reauth;
 
-            // If refresh fails, try full ensure (re-register/login)
-            return await EnsureAccountAsync();
+        /// <summary>
+        /// Call when a request fails with 401/expired: re-authenticates ONCE and reports whether the caller may
+        /// replay. Concurrent callers all await the SAME attempt rather than racing their own.
+        /// </summary>
+        public Task<bool> HandleAuthFailureAsync()
+        {
+            // Piggy-back on an attempt already running (its result is exactly what we'd compute).
+            if (_reauth != null && !_reauth.IsCompleted) return _reauth;
+
+            _reauth = ReauthenticateAsync();
+            return _reauth;
+        }
+
+        private async Task<bool> ReauthenticateAsync()
+        {
+            try
+            {
+                if (await RefreshTokenAsync()) return true;
+
+                // Refresh failed — fall back to a full ensure (re-register / re-login). Device credentials are derived
+                // deterministically from the device id, so this recovers even from a wiped local save.
+                if (await EnsureAccountAsync()) return true;
+
+                // Everything failed: the session is genuinely dead and every screen from here would only render
+                // errors ("Couldn't load tables: HTTP 401"). Restart the whole flow from Boot, which logs in again.
+                RestartFromBoot();
+                return false;
+            }
+            finally
+            {
+                _reauth = null;   // let the NEXT failure start a fresh attempt
+            }
+        }
+
+        /// <summary>
+        /// Give up on this session and restart from Boot. Call when a 401 has survived recovery — a refresh, a
+        /// re-login and a replay — because at that point no screen can render anything but errors. Safe to call from
+        /// several failing requests at once; only the first takes effect.
+        /// </summary>
+        public void AbandonSession() => RestartFromBoot();
+
+        // Guarded so a burst of simultaneous 401s (board poll + wallet + lobby + heartbeat all failing at once)
+        // triggers ONE reboot rather than a scene load per failed request.
+        private bool _rebooting;
+
+        private void RestartFromBoot()
+        {
+            if (_rebooting) return;
+            _rebooting = true;
+            Debug.LogWarning("[AccountManager] re-authentication failed — restarting from Boot to log in again.");
+            SceneNavigator.GoToBoot();
         }
 
         private async Task RegisterDeviceAsync()
@@ -279,20 +378,10 @@ namespace PlayCard.Account
 
         private string GetAppSetId()
         {
-#if UNITY_ANDROID && !UNITY_EDITOR
-            try
-            {
-                var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
-                var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
-                var task = new AndroidJavaClass("com.google.android.gms.appset.AppSet").CallStatic<AndroidJavaObject>("getClient", activity)
-                    .Call<AndroidJavaObject>("getAppSetIdInfo");
-                // This is asynchronous on Android; for brevity, return empty and rely on fingerprint.
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[AccountManager] AppSetId fetch failed: {ex.Message}");
-            }
-#endif
+            // Intentionally empty. Reading a real App Set ID needs the play-services-appset dependency AND an
+            // async callback — and the result was always discarded here anyway, so the native call only ever
+            // produced a ClassNotFoundException warning. Device registration uses ComputeFingerprint() instead.
+            // Left as a seam if we ever add a proper (async) App Set ID later.
             return string.Empty;
         }
 
@@ -326,8 +415,16 @@ namespace PlayCard.Account
                     req.SetHeader("Authorization", $"Bearer {bearerToken}");
                 req.UploadSettings.UploadStream = new MemoryStream(Encoding.UTF8.GetBytes(json));
 
-                // Best HTTP throws AsyncHTTPException on any non-2xx (and on network/timeout); 2xx returns the response.
                 var response = await req.GetHTTPResponseAsync();
+                // Best HTTP does NOT throw on non-2xx — it returns the 4xx/5xx response (same as BlackjackRestClient).
+                // We MUST check the status: otherwise a 401/400 error body gets deserialized into a non-null empty
+                // object, and the caller (TryLogin/TryRegister) treats the failure as SUCCESS — caching an empty token,
+                // skipping the register fallback, and 401-ing every later call with no error logged.
+                if (response == null || response.StatusCode < 200 || response.StatusCode >= 300)
+                {
+                    Debug.LogWarning($"[AccountManager] POST {url} → {response?.StatusCode}: {response?.DataAsText}");
+                    return null;
+                }
                 if (!expectResponseBody)
                     return Activator.CreateInstance<T>();
                 return JsonSerializer.Deserialize<T>(response.DataAsText, JsonOpts);

@@ -77,10 +77,6 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
-        // Dealer total as last shown while the hole card was still DOWN. Held through the round-end until the reveal
-        // flips it, so the settle board's full total can't leak the hidden card. -1 = nothing shown yet.
-        private int _dealerShownValue = -1;
-
         private void OnBoard(BoardSnapshot board)
         {
             _board = board;
@@ -103,20 +99,11 @@ namespace PlayCard.UI
             // window and clears when they're collected. Gating on RoundInProgress dropped the badge the instant the
             // server resolved (e.g. a bust) while the card was still animating in. The view only renders cards while a
             // round is live (or during its deferred sweep), so nothing shows between rounds.
+            // The dealer's badge stays up for the whole round and re-totals as each of her draws lands. The hole card is
+            // masked until the reveal beat turns it on screen — the settle board marks it face up the moment the round
+            // resolves, which would otherwise print the hidden value early.
             if (includeDealer && board.Dealer != null)
-            {
-                // The settle board carries the dealer's FULL total (hole card included) the instant the round resolves,
-                // but the hole is still face-down until the director's reveal beat flips it — printing that total now
-                // would leak the hidden card's value. So while the round-end is held and the hole hasn't been turned,
-                // keep showing the last total we displayed with it DOWN; the flip releases the real one.
-                int dealerValue = board.Dealer.HandValue;
-                if (view.RoundEndHeld && !view.DealerHoleRevealed && _dealerShownValue >= 0)
-                    dealerValue = _dealerShownValue;
-                else
-                    _dealerShownValue = dealerValue;
-
-                Place(0, 0, 1, board.Dealer.Cards, dealerValue, false);
-            }
+                Place(0, 0, 1, board.Dealer.Cards, false, maskHole: view.RoundEndHeld && !view.DealerHoleRevealed);
 
             if (board.Seats != null)
             {
@@ -125,7 +112,7 @@ namespace PlayCard.UI
                     var hands = seat?.Player?.Hands;
                     if (hands == null) continue;
                     for (int h = 0; h < hands.Count; h++)
-                        Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].HandValue, hands[h].Done);
+                        Place(seat.SeatNumber, h, hands.Count, hands[h].Cards, hands[h].Done, maskHole: false);
                 }
             }
 
@@ -134,21 +121,25 @@ namespace PlayCard.UI
             for (int i = 0; i < _stale.Count; i++) ReleaseKey(_stale[i]);
         }
 
-        private void Place(int seat, int handIndex, int handCount, List<CardView> cards, int value, bool done)
+        private void Place(int seat, int handIndex, int handCount, List<CardView> cards, bool done, bool maskHole)
         {
             if (cards == null || cards.Count == 0) return;
             var anchor = view.SeatAnchor(seat);
             if (anchor == null) return;   // seat beyond our authored anchors — skip
 
-            int last = cards.Count - 1;
-            // Gate on the ANIMATION: hold the value / Blackjack / bust badge until this hand's last card has LANDED, so
-            // the score reveals in step with the dealt cards instead of the instant the server pushes the final hand.
-            // Not adding it to _desired here leaves it hidden until it settles; LateUpdate re-checks every frame.
-            if (!view.CardSettled(seat, handIndex, last)) return;
+            // Follow the last card that has actually LANDED — NOT the last card in the hand. Gating on the final card
+            // meant that the moment a new one was dealt (every dealer draw, every hit) the badge failed the test, got
+            // swept as stale, and vanished until that card touched down. The badge now stays up throughout and simply
+            // re-totals as each card arrives, which is also what "reveals in step with the deal" was always meant to be.
+            int last = LastSettledIndex(seat, handIndex, cards.Count);
+            if (last < 0) return;   // nothing dealt yet — nothing to show
+
+            int landed = last + 1;
+            int value = VisibleTotal(cards, last, maskHole);
 
             int key = SlotKey(seat, handIndex);
             _desired.Add(key);
-            view.CardLocalTRS(seat, handIndex, handCount, last, cards.Count, out var pos, out var rot, out var scale);
+            view.CardLocalTRS(seat, handIndex, handCount, last, landed, out var pos, out var rot, out var scale);
             Vector3 cardWorldPos = anchor.TransformPoint(pos);
             Quaternion cardWorldRot = anchor.rotation * rot;
 
@@ -157,13 +148,44 @@ namespace PlayCard.UI
             b.Go.transform.SetPositionAndRotation(
                 cardWorldPos + cardWorldRot * (cornerOffset * scale),   // *scale → tracks a shrunk split card's corner
                 cardWorldRot * Quaternion.Euler(labelFlatEuler));
-            bool isBlackjack = cards.Count == 2 && value == 21 && handCount == 1;
+            bool isBlackjack = landed == 2 && value == 21 && handCount == 1;
             if (b.Text != null)
             {
                 b.Text.text = value.ToString();
                 b.Text.color = isBlackjack ? blackjackTextColor : _normalTextColor;
             }
-            if (b.Bg != null) b.Bg.color = ColorFor(cards.Count, value, handCount, done);
+            if (b.Bg != null) b.Bg.color = ColorFor(landed, value, handCount, done);
+        }
+
+        // Highest card index in this hand that has LANDED, or -1 if none has.
+        private int LastSettledIndex(int seat, int handIndex, int cardCount)
+        {
+            for (int i = cardCount - 1; i >= 0; i--)
+                if (view.CardSettled(seat, handIndex, i)) return i;
+            return -1;
+        }
+
+        /// <summary>
+        /// Blackjack total of the cards that have landed AND are face up (aces 11, demoted to 1 while the hand would
+        /// bust) — the same rule the server's visible-sum uses, computed here so the badge always agrees with what is
+        /// actually on the felt rather than with a total that includes a card still in the air.
+        /// <paramref name="maskHole"/> additionally excludes the dealer's hole card: the settle board marks it face up
+        /// the instant the round resolves, but it isn't turned on screen until the reveal beat, and printing its value
+        /// early would leak the hidden card.
+        /// </summary>
+        private static int VisibleTotal(List<CardView> cards, int upTo, bool maskHole)
+        {
+            int total = 0, aces = 0;
+            for (int i = 0; i <= upTo && i < cards.Count; i++)
+            {
+                var c = cards[i];
+                if (c == null || !c.IsCardUp) continue;      // face-down contributes nothing (masked server-side too)
+                if (maskHole && i == 1) continue;            // dealer hole: revealed in data, not yet on screen
+                if (c.Value == 11) aces++;
+                total += c.Value;
+            }
+            while (total > 21 && aces > 0) { total -= 10; aces--; }   // soft ace → hard
+            return total;
         }
 
         private Color ColorFor(int cardCount, int value, int handCount, bool done)

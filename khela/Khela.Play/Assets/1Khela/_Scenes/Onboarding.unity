@@ -3135,20 +3135,9 @@ MonoBehaviour:
   baseId: Base/1DefaultFemale
   displayName: Default Female
   gender: 1
-  outfitSystem: {fileID: 1488521231}
+  outfitSystem: {fileID: 0}
   prebaked: 1
   selectedVisual: {fileID: 0}
---- !u!114 &1488521231 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 4192197095796178182, guid: cd063e7e88215be4682eb0c26a955e51, type: 3}
-  m_PrefabInstance: {fileID: 584748950}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1488521227}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e9922a7632d1dd848841a5591133875f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!4 &1529433776 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 110762819324599586, guid: cd063e7e88215be4682eb0c26a955e51, type: 3}
@@ -3841,20 +3830,9 @@ MonoBehaviour:
   baseId: Base/1DefaultMale
   displayName: Default Male
   gender: 0
-  outfitSystem: {fileID: 1801037397}
+  outfitSystem: {fileID: 0}
   prebaked: 1
   selectedVisual: {fileID: 0}
---- !u!114 &1801037397 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 4128376680195880884, guid: 099fa05b08d496f41b561bf40c428c72, type: 3}
-  m_PrefabInstance: {fileID: 1688878092}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1801037393}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e9922a7632d1dd848841a5591133875f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1821885075
 GameObject:
   m_ObjectHideFlags: 0
@@ -4225,6 +4203,7 @@ GameObject:
   - component: {fileID: 2597753195345117612}
   - component: {fileID: 2597753195345117613}
   - component: {fileID: 2597753195345117602}
+  - component: {fileID: 2597753195345117614}
   m_Layer: 5
   m_Name: Button01_145_BtnText_Red
   m_TagString: Untagged
@@ -4336,6 +4315,23 @@ MonoBehaviour:
   m_FillOrigin: 0
   m_UseSpriteMesh: 0
   m_PixelsPerUnitMultiplier: 1
+--- !u!114 &2597753195345117614
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2597753195345117600}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 51243e87f37a86c49ae0c1c1d2e424f3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Account.SocialSignInButton
+  provider: 0
+  button: {fileID: 2597753195345117602}
+  statusText: {fileID: 0}
+  busyIndicator: {fileID: 0}
+  hideWhenSignedIn: 0
 --- !u!1 &2597753197015396650
 GameObject:
   m_ObjectHideFlags: 0

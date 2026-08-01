@@ -23,9 +23,17 @@ using System.Text;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authorization;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
- 
+
+// Serilog: reads the "Serilog" section from appsettings (console + rolling daily file at /var/khela/khela.log).
+// UseSerilog replaces the default logging providers so every ILogger<T> flows through Serilog.
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext());
+
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
  
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -198,6 +206,8 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IReportsService, ReportsService>();
 builder.Services.AddScoped<Khela.Game.Services.Cosmetics.ICosmeticsService, Khela.Game.Services.Cosmetics.CosmeticsService>();   // cosmetics shop: catalog/purchases/entitlement gate (docs/AVATAR_SHOP_SPEC.md)
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();   // one tidy log line per HTTP request (method, path, status, elapsed)
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

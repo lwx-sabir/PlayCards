@@ -25,10 +25,23 @@ namespace Khela.Game.Database.Models
     [Table("WalletTransactions")]
     [Index(nameof(WalletId), nameof(CorrelationId), IsUnique = true)]
     [Index(nameof(WalletId), nameof(CreatedAt))]
+    [Index(nameof(OperatorId), nameof(CreatedAt))]
     public class WalletTransaction
     {
         [Key]
         public Guid TransactionId { get; set; } = Guid.NewGuid();
+
+        /// <summary>
+        /// Which OPERATOR (licensee brand) this movement belongs to. Khela's own play is
+        /// <see cref="Tenant.Default"/>; a licensed operator running the engine gets its own id, so ledgers,
+        /// reporting and reconciliation can be sliced per brand and never co-mingle.
+        ///
+        /// Added BEFORE there is scale on purpose: back-filling a tenant column onto a large live ledger — with
+        /// an operator depending on it — is the migration nobody wants to run.
+        /// </summary>
+        [Required]
+        [MaxLength(64)]
+        public string OperatorId { get; set; } = Tenant.Default;
 
         [Required]
         public Guid WalletId { get; set; }  // FK to PlayerWallets

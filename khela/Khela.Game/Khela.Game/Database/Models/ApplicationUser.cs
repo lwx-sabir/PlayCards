@@ -41,6 +41,14 @@ namespace Khela.Game.Database.Models
 
         public bool? IsGoogleLinked { get; set; } = false;
 
+        /// <summary>
+        /// Real email captured from a linked social provider (Google/Facebook account-picker sign-in).
+        /// Stored SEPARATELY from <see cref="IdentityUser.Email"/> on purpose: the Identity Email is the
+        /// device-guest login handle (derived from the device id), so overwriting it would break a device's
+        /// ability to re-login and orphan the account. This is the player's real contact email.
+        /// </summary>
+        public string LinkedEmail { get; set; }
+
         public string RefCode { get; set; }
 
         public DateTime? CreateDate { get; set; }

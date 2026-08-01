@@ -34,6 +34,25 @@ namespace Khela.Game.Services.Wallet
             TransactionType type, string correlationId, WalletContext context = null);
 
         /// <summary>
+        /// REVERSES a previously applied transaction, identified by ITS correlation id — the "rollback" /
+        /// "cancel" every real-money wallet integration requires: a stake taken for a round that was then
+        /// voided, a client that dropped mid-bet, or an operator's account system rejecting a movement after
+        /// the fact. Writes a compensating ledger row (<see cref="TransactionType.Refund"/>) rather than
+        /// mutating history, and marks the original <see cref="TransactionStatus.Reversed"/>.
+        ///
+        /// Idempotent: the reversal's own correlation id is DERIVED from the original, so repeating the call
+        /// returns the existing reversal instead of paying twice. Reverses the tainted (gifted) slice exactly
+        /// as well, so the earned/gifted split can't drift.
+        ///
+        /// Returns null when there is nothing to reverse (no transaction with that correlation id on that
+        /// wallet). Throws <see cref="InsufficientFundsException"/> if reversing a CREDIT the player has
+        /// already spent would drive the balance negative — surfaced rather than silently breaking the
+        /// never-negative ledger invariant the audit relies on.
+        /// </summary>
+        Task<WalletTransaction> RollbackAsync(string userId, CurrencyType currency,
+            string originalCorrelationId, WalletContext context = null);
+
+        /// <summary>
         /// True for currencies that may be bet or won at a table (Chips, Coins). Premium / spend
         /// currencies (Gems, Kash) and the tradeable token (Tokens) are never wagerable — wagering
         /// them would constitute real-money gambling.

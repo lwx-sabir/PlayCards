@@ -85,7 +85,7 @@ namespace Khela.Game.Controllers
                 await _tables.PlaceBetAsync(t, user.Id, 1, 1000m, 0);
                 log.Check("placing a bet does NOT touch the wallet", await Chips(user) == Starter, $"chips={await Chips(user)} (expected 10000)");
 
-                await _tables.DealAsync(t);
+                await _tables.DealAsync(t, user.Id);
                 var afterDeal = await Chips(user);
                 log.Check("DEBIT-ON-BET: stake leaves the wallet at deal", afterDeal == 9000m, $"chips={afterDeal} (expected 9000)");
 
@@ -111,11 +111,11 @@ namespace Khela.Game.Controllers
                 await _tables.PlaceBetAsync(a, user.Id, 1, Starter, 0);   // stake the FULL balance on both tables
                 await _tables.PlaceBetAsync(b, user.Id, 1, Starter, 0);
 
-                await _tables.DealAsync(a);
+                await _tables.DealAsync(a, user.Id);
                 log.Check("table A reserves the full stake", await Chips(user) == 0m, $"chips={await Chips(user)} (expected 0)");
 
                 var rejected = false; var detail = "";
-                try { await _tables.DealAsync(b); }
+                try { await _tables.DealAsync(b, user.Id); }
                 catch (Exception ex) { rejected = true; detail = ex.Message; }
                 log.Check("OVERDRAW BLOCKED: same chips can't be staked at table B", rejected, detail);
                 log.Check("no double-debit after the rejected deal", await Chips(user) == 0m, $"chips={await Chips(user)} (expected 0)");

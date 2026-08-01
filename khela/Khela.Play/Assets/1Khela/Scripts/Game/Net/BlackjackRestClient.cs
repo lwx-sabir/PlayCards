@@ -277,6 +277,22 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<bool>> HeartbeatAsync(string tableId)
             => SendOkAsync(HttpMethod.Post, $"/api/Blackjack/{tableId}/heartbeat");
 
+        /// <summary>
+        /// This player's settled hands at this table — the session hand log / report. Read from the server's per-hand
+        /// AUDIT rows, so it survives a reconnect or scene reload and can never drift from what the wallet actually
+        /// paid. <paramref name="sinceUtc"/> scopes it to the current sitting; null = everything, capped by
+        /// <paramref name="take"/>. Newest first; a split returns one entry per hand.
+        /// </summary>
+        public Task<ApiResult<HandLogData>> GetHandLogAsync(string tableId, DateTimeOffset? sinceUtc = null, int take = 100)
+        {
+            // Round-trip the cutoff as UTC ISO-8601 ("o"), so the server's DateTime parse can't pick up the device's
+            // local offset and silently shift the session window by hours.
+            string q = $"?take={take}";
+            if (sinceUtc.HasValue)
+                q += "&sinceUtc=" + Uri.EscapeDataString(sinceUtc.Value.UtcDateTime.ToString("o"));
+            return SendAsync<HandLogData>(HttpMethod.Get, $"/api/Blackjack/{tableId}/history{q}");
+        }
+
         // ---------- core ----------
 
         private async Task<ApiResult<bool>> SendOkAsync(HttpMethod method, string path, object body = null)
@@ -324,6 +340,12 @@ namespace PlayCard.Game.Net
                 var req = new HTTPRequest(new Uri(Base + path), ToBest(method));
                 req.TimeoutSettings.Timeout = TimeSpan.FromSeconds(AppConfig.Instance.RequestTimeoutSeconds);
 
+                // Refresh BEFORE sending if the cached token is expired or about to be, instead of firing a request we
+                // know will 401 and recovering afterwards. No network cost when the token is healthy. Skipped on the
+                // replay so a genuinely rejected token can't loop.
+                if (!isRetry && AccountManager.Instance != null)
+                    await AccountManager.Instance.EnsureValidTokenAsync();
+
                 var token = AccountManager.Instance != null ? AccountManager.Instance.JwtToken : null;
                 if (!string.IsNullOrEmpty(token))
                     req.SetHeader("Authorization", "Bearer " + token);
@@ -336,6 +358,22 @@ namespace PlayCard.Game.Net
                 }
 
                 var resp = await req.GetHTTPResponseAsync();
+
+                // 401 on the RESPONSE path. Best HTTP returns 4xx as a normal response, not an exception — so the
+                // refresh-and-replay below in `catch (AsyncHTTPException)` never ran for the ordinary case and the
+                // "refresh once and retry" this class documents simply didn't happen. That is why an expired token
+                // surfaced to the user as a bare "HTTP 401" (e.g. the lobby failing to load after leaving a table)
+                // instead of quietly re-authenticating.
+                if (resp.StatusCode == 401 && AccountManager.Instance != null)
+                {
+                    if (!isRetry && await AccountManager.Instance.HandleAuthFailureAsync())
+                        return await SendRawAsync(method, path, body, isRetry: true);
+
+                    // Still unauthorised after a refresh, a re-login AND a replay. Recovery is exhausted, so restart
+                    // the app from Boot rather than leaving the player on a screen that can only show "HTTP 401".
+                    AccountManager.Instance.AbandonSession();
+                }
+
                 // Do NOT assume non-2xx throws — Best HTTP returns 4xx/5xx as a normal response. Treat any non-2xx as
                 // failure so a rejected save (e.g. the entitlement gate's 400) can't be reported to callers as success.
                 if (resp.StatusCode < 200 || resp.StatusCode >= 300)
@@ -345,10 +383,12 @@ namespace PlayCard.Game.Net
             catch (AsyncHTTPException hex)
             {
                 // Token expired mid-session: refresh once and replay the exact same call.
-                if (hex.StatusCode == 401 && !isRetry && AccountManager.Instance != null)
+                if (hex.StatusCode == 401 && AccountManager.Instance != null)
                 {
-                    if (await AccountManager.Instance.HandleAuthFailureAsync())
+                    if (!isRetry && await AccountManager.Instance.HandleAuthFailureAsync())
                         return await SendRawAsync(method, path, body, isRetry: true);
+
+                    AccountManager.Instance.AbandonSession();   // recovery exhausted — see the response path above
                 }
                 return new Raw(false, hex.StatusCode, hex.Content, ExtractMessage(hex.Content) ?? hex.Message);
             }

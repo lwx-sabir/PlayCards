@@ -47,6 +47,12 @@ namespace PlayCard.UI
             Set(tokensText, b.Tokens);
         }
 
-        private void Set(TMP_Text t, decimal amount) { if (t != null) t.text = amount.ToString(moneyFormat); }
+        // Skips any label a ChipCountJuice is animating — otherwise this snaps the value mid-roll and the count looks
+        // like it jumps instead of counting.
+        private void Set(TMP_Text t, decimal amount)
+        {
+            if (t == null || ChipCountJuice.Owns(t)) return;
+            t.text = amount.ToString(moneyFormat);
+        }
     }
 }

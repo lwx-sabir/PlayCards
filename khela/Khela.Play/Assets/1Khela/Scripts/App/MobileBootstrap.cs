@@ -3,24 +3,19 @@ using UnityEngine;
 namespace PlayCard.App
 {
     /// <summary>
-    /// Applies mobile-first runtime defaults at launch, before any scene loads — no GameObject
-    /// needed. Caps the frame rate, turns off vSync so that cap is honoured, and keeps the screen
-    /// awake during play (a card game can sit idle mid-decision).
+    /// Applies mobile-first runtime defaults at launch, before any scene loads — no GameObject needed.
+    /// Turns off vSync (so the frame-rate cap is honoured) and keeps the screen awake during play (a card
+    /// game can sit idle mid-decision). The frame-rate cap itself is now owned by
+    /// <c>GraphicsQualityManager</c> (per-tier ceiling) + <c>SceneFrameRate</c> (per-scene preference), so
+    /// it is deliberately NOT set here.
     /// </summary>
     public static class MobileBootstrap
     {
-        // 60 fps target. Revisit for 120 Hz screens once you've profiled the table scene.
-        private const int TargetFrameRate = 60;
-
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Apply()
         {
-            // vSync off → Application.targetFrameRate actually takes effect.
-            QualitySettings.vSyncCount = 0;
-            Application.targetFrameRate = TargetFrameRate;
-
-            // Don't let the device dim/sleep while the game is open.
-            Screen.sleepTimeout = SleepTimeout.NeverSleep;
+            QualitySettings.vSyncCount = 0;                 // vSync off → the fps cap actually takes effect
+            Screen.sleepTimeout = SleepTimeout.NeverSleep;  // don't dim/sleep mid-decision
         }
     }
 }

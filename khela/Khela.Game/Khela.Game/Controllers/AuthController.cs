@@ -192,6 +192,10 @@ namespace Khela.Game.Controllers
             // Keep the provider-linked flags current regardless of which path we took.
             await UpdateProviderFlagsAsync(user, identity.Provider);
 
+            // Capture the real email from providers that expose one (Google/Facebook account-picker). Play Games
+            // gives no email, so this is a no-op for it. Stored in LinkedEmail — never overwrites the login Email.
+            await CaptureLinkedEmailAsync(user, identity);
+
             await LinkDeviceToUserAsync(request.DeviceId, user.Id);
             await EnsureProfileAndStarterAsync(user);
 
@@ -277,9 +281,25 @@ namespace Khela.Game.Controllers
             return user;
         }
 
+        /// <summary>
+        /// Stores the verified email from a social provider into <see cref="ApplicationUser.LinkedEmail"/> —
+        /// the player's real contact email. Deliberately does NOT touch <c>Email</c> (the device-guest login
+        /// handle). No-op when the provider gives no verified email (e.g. Play Games).
+        /// </summary>
+        private async Task CaptureLinkedEmailAsync(ApplicationUser user, ExternalIdentity identity)
+        {
+            if (!identity.EmailVerified || string.IsNullOrWhiteSpace(identity.Email)) return;
+            if (string.Equals(user.LinkedEmail, identity.Email, StringComparison.OrdinalIgnoreCase)) return;
+
+            user.LinkedEmail = identity.Email;
+            await _userManager.UpdateAsync(user);
+        }
+
         private async Task UpdateProviderFlagsAsync(ApplicationUser user, string provider)
         {
-            var isGoogle = provider == "google.com";
+            // Play Games sign-in (Android's one-tap Google flow) reports "playgames.google.com"; plain Google
+            // Sign-In (iOS/web later) reports "google.com". Both mean the account is Google-linked.
+            var isGoogle = provider == "google.com" || provider == "playgames.google.com";
             var isFacebook = provider == "facebook.com";
             if (!isGoogle && !isFacebook) return;
 

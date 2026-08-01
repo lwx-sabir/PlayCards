@@ -18,6 +18,7 @@ namespace PlayCard.Account
     public enum SocialProvider
     {
         PlayGames,
+        Google,
         Facebook,
         Apple
     }
@@ -61,6 +62,21 @@ namespace PlayCard.Account
         private FirebaseAuth _auth;
         private bool _firebaseReady;
         private bool _busy;
+
+        /// <summary>
+        /// Self-bootstrap before the first scene loads, so <see cref="Instance"/> is reachable from ANY scene
+        /// without hand-placing this in Boot (mirrors KhelaAnalytics). The serialized fields keep their
+        /// defaults — the correct firebase endpoint + no force-refresh — so nothing needs wiring in the editor.
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void Bootstrap()
+        {
+#if !UNITY_SERVER
+            if (Instance != null) return;
+            var go = new GameObject("[KhelaAuthService]");
+            go.AddComponent<KhelaAuthService>();
+#endif
+        }
 
         private void Awake()
         {
@@ -124,6 +140,35 @@ namespace PlayCard.Account
             Fail("Play Games sign-in is only available on an Android device.");
             return false;
 #endif
+        }
+
+        /// <summary>
+        /// Google Sign-In (the account-picker flow). Takes the Google ID token from a Google Sign-In plugin
+        /// (e.g. google-signin-unity) so this service stays free of a hard SDK dependency. Unlike Play Games,
+        /// this yields the player's REAL email — captured server-side into LinkedEmail.
+        /// </summary>
+        public async Task<bool> SignInWithGoogleAsync(string googleIdToken)
+        {
+            if (_busy) return false;
+            if (string.IsNullOrEmpty(googleIdToken))
+            {
+                Fail("Missing Google ID token.");
+                return false;
+            }
+
+            _busy = true;
+            try
+            {
+                if (!await EnsureFirebaseAsync()) return false;
+
+                // Second arg is the OAuth access token — null is fine when authenticating with the ID token.
+                var credential = GoogleAuthProvider.GetCredential(googleIdToken, null);
+                return await CompleteSignInAsync(credential, SocialProvider.Google, "google");
+            }
+            finally
+            {
+                _busy = false;
+            }
         }
 
         /// <summary>
