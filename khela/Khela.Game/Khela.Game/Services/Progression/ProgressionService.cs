@@ -29,8 +29,12 @@ namespace Khela.Game.Services.Progression
         /// Idempotent on <paramref name="idemKey"/> — the caller supplies a key unique within <paramref name="source"/>
         /// (e.g. source "dailylogin", idemKey "{userId}:{yyyy-MM-dd}"). Subject to the daily XP cap. Returns the XP
         /// actually granted (post-cap; 0 if duplicate, capped out, non-positive, or the layer is disabled).
+        ///
+        /// <paramref name="bypassDailyCap"/> pays the full amount OUTSIDE the daily budget (and without consuming it),
+        /// for server-authored rewards that are gated by something other than volume — a pass claim, a purchase. It is
+        /// opt-in per call: wager accrual and every other flat grant stay capped. Never expose it to a client-driven path.
         /// </summary>
-        Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey);
+        Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey, bool bypassDailyCap = false);
 
         /// <summary>The caller's live level/XP state for the profile bar.</summary>
         Task<ProgressionDto> GetMyProgressionAsync(Guid userId);
@@ -84,12 +88,12 @@ namespace Khela.Game.Services.Progression
                 (p, cfg) => ProgressionMath.RawXp(cleanWager, p.Level, win, cfg));
         }
 
-        public Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey)
+        public Task<long> GrantXpAsync(Guid userId, long amount, string source, string idemKey, bool bypassDailyCap = false)
         {
             // Flat XP from any non-wager source (daily login, quests, gifts, admin). Same cap + auto level-up +
             // reward path as round accrual. Caller supplies an idemKey unique within the source.
             if (!_cfg.Enabled || amount <= 0 || string.IsNullOrEmpty(idemKey)) return Task.FromResult(0L);
-            return ApplyXpAsync(userId, $"xpgrant:{source}:{idemKey}", (_, _) => amount);
+            return ApplyXpAsync(userId, $"xpgrant:{source}:{idemKey}", (_, _) => amount, bypassDailyCap);
         }
 
         /// <summary>
@@ -98,8 +102,11 @@ namespace Khela.Game.Services.Progression
         /// double the level-up CHIP rewards). <paramref name="rawXp"/> yields the pre-cap XP from the current profile +
         /// effective config; it is re-evaluated on each optimistic-concurrency attempt so a reload uses fresh values.
         /// Applies the daily cap (excess discarded), auto level-ups with carry-over, then idempotent per-(user,level) rewards.
+        /// With <paramref name="bypassDailyCap"/> the amount is paid in full and does NOT consume the daily budget, so a
+        /// reward can't quietly shrink the player's remaining round XP.
         /// </summary>
-        private async Task<long> ApplyXpAsync(Guid userId, string idemKey, Func<UserProfile, ProgressionConfig, long> rawXp)
+        private async Task<long> ApplyXpAsync(Guid userId, string idemKey, Func<UserProfile, ProgressionConfig, long> rawXp,
+            bool bypassDailyCap = false)
         {
             if (!await _redis.GetDatabase().StringSetAsync(idemKey, "1", TimeSpan.FromDays(30), When.NotExists))
                 return 0;
@@ -125,8 +132,16 @@ namespace Khela.Game.Services.Progression
                 }
 
                 var raw = Math.Max(0, rawXp(profile, cfg));
-                var grantedXp = Math.Min(raw, Math.Max(0, cfg.DailyXpCap - profile.DailyXp));   // excess over the cap DISCARDED
-                profile.DailyXp += grantedXp;
+                long grantedXp;
+                if (bypassDailyCap)
+                {
+                    grantedXp = raw;                 // paid in full, and NOT charged against the daily budget
+                }
+                else
+                {
+                    grantedXp = Math.Min(raw, Math.Max(0, cfg.DailyXpCap - profile.DailyXp));   // excess over the cap DISCARDED
+                    profile.DailyXp += grantedXp;
+                }
 
                 List<int> crossed = null;
                 if (grantedXp > 0)

@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Khela.Common.Rewards;
 using Microsoft.EntityFrameworkCore;
 
 namespace Khela.Game.Database.Models
@@ -27,6 +28,16 @@ namespace Khela.Game.Database.Models
 
         [Required] public Guid UserId { get; set; }
         [Required] public RewardSource Source { get; set; }
+
+        /// <summary>WHAT this reward pays out. Defaults to <see cref="RewardKind.Currency"/>, so every pre-existing row
+        /// keeps its exact meaning (<see cref="Currency"/> + <see cref="Amount"/>) and no backfill is needed. Non-currency
+        /// kinds carry their target in <see cref="ItemId"/>; XP/Chest/Item ignore <see cref="Currency"/>.</summary>
+        [Required] public RewardKind Kind { get; set; } = RewardKind.Currency;
+
+        /// <summary>The target within <see cref="Kind"/> — chest "key:tier", cosmetic SkuId, item key. Null for
+        /// Currency (which uses <see cref="Currency"/>) and XP.</summary>
+        [MaxLength(64)] public string ItemId { get; set; }
+
         [Required] public CurrencyType Currency { get; set; } = CurrencyType.Chips;
         [Precision(18, 4)] public decimal Amount { get; set; }
         [Required] public RewardStatus Status { get; set; } = RewardStatus.Pending;

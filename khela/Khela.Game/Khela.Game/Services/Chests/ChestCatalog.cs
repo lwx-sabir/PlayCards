@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Khela.Game.Database.Models;
+using Khela.Game.Services.Rewards;
 
 namespace Khela.Game.Services.Chests
 {
@@ -54,15 +55,13 @@ namespace Khela.Game.Services.Chests
         /// <summary>The ONLY currencies a chest may grant (allowlist — fail-CLOSED). The tradeable token, any undefined
         /// currency int, and any FUTURE non-listed currency are all rejected by construction, so a typo or an appended
         /// enum value can never re-open the legal guardrail (CLAUDE.md NON-NEGOTIABLE #2/#4). Enforced on save
-        /// (<see cref="Validate"/>) AND at open (<see cref="RollRewards"/>).</summary>
-        private static readonly CurrencyType[] AllowedRewards =
-            { CurrencyType.Chips, CurrencyType.Coins, CurrencyType.Gems, CurrencyType.Kash };
-
-        public static bool IsAllowedReward(CurrencyType c) => Array.IndexOf(AllowedRewards, c) >= 0;
+        /// (<see cref="Validate"/>) AND at open (<see cref="RollRewards"/>). Delegates to
+        /// <see cref="RewardCurrencies"/> — ONE allowlist for every reward system, so they can't drift apart.</summary>
+        public static bool IsAllowedReward(CurrencyType c) => RewardCurrencies.IsAllowed(c);
 
         /// <summary>The tradeable token specifically — kept only for a precise error message (the headline forbidden
         /// case). The actual gate is the <see cref="IsAllowedReward"/> allowlist.</summary>
-        public static bool IsForbidden(CurrencyType c) => c == CurrencyType.Tokens;
+        public static bool IsForbidden(CurrencyType c) => RewardCurrencies.IsForbidden(c);
 
         public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
@@ -137,7 +136,7 @@ namespace Khela.Game.Services.Chests
                     if (!IsAllowedReward(r.Currency))
                         return IsForbidden(r.Currency)
                             ? $"{c.Key} / {c.Tier}: '{r.Currency}' can never be a chest reward (tradeable token)."
-                            : $"{c.Key} / {c.Tier}: '{(int)r.Currency}' is not a permitted chest reward currency (allowed: Chips, Coins, Gems, Kash).";
+                            : $"{c.Key} / {c.Tier}: '{(int)r.Currency}' is not a permitted chest reward currency (allowed: {RewardCurrencies.AllowedList}).";
                     if (r.Min < 0 || r.Max < 0) return $"{c.Key} / {c.Tier}: amounts can't be negative.";
                     if (r.Max < r.Min) return $"{c.Key} / {c.Tier}: Max ({r.Max}) is below Min ({r.Min}) for {r.Currency}.";
                 }

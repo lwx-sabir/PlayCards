@@ -187,7 +187,14 @@ builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<Khela.Game.Services.Auth.IFirebaseTokenVerifier, Khela.Game.Services.Auth.FirebaseTokenVerifier>();   // Firebase-brokered social sign-in (Google/Facebook/Apple/guest)
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
-builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; credited on claim)
+// Reward payout seam (docs/PASS_SPEC.md §2): one line-based payload shape + one granter per RewardKind. Handing out a
+// NEW kind of thing later (lottery tickets, clothes, another currency) = a RewardKind value + an IRewardGranter here,
+// with no change to the systems that award rewards.
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.CurrencyGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.XpGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.ChestGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGrantService, Khela.Game.Services.Rewards.RewardGrantService>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; paid out on claim)
 builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();   // chest system (CK_Chest etc.; opened by the daily-mission bundle)
 builder.Services.AddScoped<Khela.Game.Services.Missions.IMissionService, Khela.Game.Services.Missions.MissionService>();   // daily missions (server-authoritative; progress at settle, reward on claim)
 builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
