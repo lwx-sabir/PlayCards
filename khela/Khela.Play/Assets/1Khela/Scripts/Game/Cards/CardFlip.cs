@@ -110,6 +110,11 @@ namespace PlayCard.Game.Cards
         /// event to trigger this on the hole card. Restarts cleanly if already peeking.</summary>
         public void PlayPeek(CardFlipTuning tuning)
         {
+            // A card that is not on the felt yet is INACTIVE — it sits parked and hidden at the shoe until the deal
+            // conductor throws it. Unity cannot start a coroutine on an inactive object, so asking one to peek
+            // throws and takes the caller's animation event down with it. Nothing to lift, so nothing to do.
+            if (!isActiveAndEnabled || !gameObject.activeInHierarchy) return;
+
             if (_run != null) StopCoroutine(_run);
             _run = StartCoroutine(PeekRoutine(tuning ?? Fallback));
         }

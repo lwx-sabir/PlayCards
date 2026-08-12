@@ -90,6 +90,7 @@ namespace PlayCard.UI
         private MonoBehaviour _settleDirector;
         private Coroutine _pop;
         private int _landed;   // chips that have hit the icon this burst — drives the chip-count ticks
+        private PlayCard.Audio.TableAudio _audio;   // cached; the per-chip tick must not do a scene find per landing
         private Vector3 _targetBaseScale = Vector3.one;
         private readonly List<RectTransform> _preview = new List<RectTransform>();
         private Vector3 _chipBaseScale = Vector3.one;
@@ -263,6 +264,11 @@ namespace PlayCard.UI
             // server's value — no drift, because the goal is always measured against that value, not accumulated here.
             _landed++;
             if (countJuice != null) countJuice.ReleaseCredit((float)_landed / Mathf.Max(1, chipCount));
+
+            // One tick per chip, on the same beat the number moves — so the count is HEARD rising, not just seen. The
+            // burst fires these in quick succession, which is what POL_Chips is for.
+            if (_audio == null) _audio = FindAnyObjectByType<PlayCard.Audio.TableAudio>(FindObjectsInactive.Include);
+            if (_audio != null) _audio.PlayChipToBalance();
         }
 
         private void Punch()

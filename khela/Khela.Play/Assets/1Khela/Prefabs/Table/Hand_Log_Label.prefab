@@ -95,9 +95,9 @@ MonoBehaviour:
   m_fontSize: 34
   m_fontSizeBase: 34
   m_fontWeight: 400
-  m_enableAutoSizing: 0
+  m_enableAutoSizing: 1
   m_fontSizeMin: 18
-  m_fontSizeMax: 72
+  m_fontSizeMax: 34
   m_fontStyle: 0
   m_HorizontalAlignment: 1
   m_VerticalAlignment: 512
@@ -171,8 +171,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 66.35096, y: 0.7999887}
-  m_SizeDelta: {x: 133.5549, y: 50}
+  m_AnchoredPosition: {x: 78.87546, y: 0.7999887}
+  m_SizeDelta: {x: 205.2845, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &3388892792075698807
 CanvasRenderer:
@@ -232,11 +232,11 @@ MonoBehaviour:
   m_fontSize: 34
   m_fontSizeBase: 34
   m_fontWeight: 400
-  m_enableAutoSizing: 0
+  m_enableAutoSizing: 1
   m_fontSizeMin: 18
-  m_fontSizeMax: 72
+  m_fontSizeMax: 34
   m_fontStyle: 0
-  m_HorizontalAlignment: 2
+  m_HorizontalAlignment: 4
   m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: 0
@@ -308,8 +308,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0.5}
   m_AnchorMax: {x: 0, y: 0.5}
-  m_AnchoredPosition: {x: 136.33066, y: 0.7999887}
-  m_SizeDelta: {x: 138.66, y: 50}
+  m_AnchoredPosition: {x: 131.08, y: 0.7999887}
+  m_SizeDelta: {x: 126.9423, y: 50}
   m_Pivot: {x: 0, y: 0.5}
 --- !u!222 &2133682930187830370
 CanvasRenderer:
@@ -369,9 +369,9 @@ MonoBehaviour:
   m_fontSize: 34
   m_fontSizeBase: 34
   m_fontWeight: 400
-  m_enableAutoSizing: 0
+  m_enableAutoSizing: 1
   m_fontSizeMin: 18
-  m_fontSizeMax: 72
+  m_fontSizeMax: 34
   m_fontStyle: 0
   m_HorizontalAlignment: 1
   m_VerticalAlignment: 512
@@ -535,7 +535,6 @@ MonoBehaviour:
   verifyButton: {fileID: 0}
   amountFormat: '#,0'
   timeFormat: HH:mm
-  bustText: BUST
   winColor: {r: 0.3, g: 0.85, b: 0.4, a: 1}
   loseColor: {r: 0.9, g: 0.35, b: 0.35, a: 1}
   pushColor: {r: 0.85, g: 0.8, b: 0.45, a: 1}
@@ -634,9 +633,9 @@ MonoBehaviour:
   m_fontSize: 34
   m_fontSizeBase: 34
   m_fontWeight: 400
-  m_enableAutoSizing: 0
+  m_enableAutoSizing: 1
   m_fontSizeMin: 18
-  m_fontSizeMax: 72
+  m_fontSizeMax: 34
   m_fontStyle: 0
   m_HorizontalAlignment: 2
   m_VerticalAlignment: 512

@@ -1,10 +1,19 @@
 # ninja log v5
 29	1351	8037640136788727	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	72bdb6dfc8f9123a
 56	1375	8037640137029148	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	a5d50af436d85f7b
-19	1390	8037640137167410	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	f4e84462cce077cc
-80	1424	8037640137538729	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	e018543c9b7cf37f
-0	1447	8037640137745971	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	874996cd3f61fb71
 68	1516	8037640138484635	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	ea13b990ab92e2b5
+19	1390	8037640137167410	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	f4e84462cce077cc
+0	1447	8037640137745971	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	874996cd3f61fb71
+80	1424	8037640137538729	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	e018543c9b7cf37f
 43	1703	8037640140363737	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	f79428c4fc86c909
 10	1774	8037640141017837	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	fa7145cf5eac87a0
 1857	2296	8037640146276809	D:/Projects/PlayCards/khela/Khela.Play/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/k6u6ju1j/obj/armeabi-v7a/libgame.so	294304be335980c1
+95	1619	8079112332616288	GameActivity/CMakeFiles/game.dir/UGAInputKeyEvent.cpp.o	a5d50af436d85f7b
+51	1636	8079112332787587	GameActivity/CMakeFiles/game.dir/UGAEntry.cpp.o	72bdb6dfc8f9123a
+80	1677	8079112333149101	GameActivity/CMakeFiles/game.dir/UGAInputMotionEvent.cpp.o	e018543c9b7cf37f
+7	1690	8079112333311109	GameActivity/CMakeFiles/game.dir/UGAConfiguration.cpp.o	f4e84462cce077cc
+25	1769	8079112334150779	GameActivity/CMakeFiles/game.dir/UGADebug.cpp.o	874996cd3f61fb71
+111	1917	8079112335584499	GameActivity/CMakeFiles/game.dir/UGASoftKeyboard.cpp.o	ea13b990ab92e2b5
+39	2186	8079112338278118	GameActivity/CMakeFiles/game.dir/UGAApplication.cpp.o	fa7145cf5eac87a0
+67	2262	8079112339016720	GameActivity/CMakeFiles/game.dir/UGAInput.cpp.o	f79428c4fc86c909
+2263	3126	8079112347642597	D:/Projects/PlayCards/khela/Khela.Play/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/k6u6ju1j/obj/armeabi-v7a/libgame.so	294304be335980c1

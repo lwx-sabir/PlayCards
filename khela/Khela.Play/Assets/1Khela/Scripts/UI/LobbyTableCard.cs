@@ -4,6 +4,7 @@ using Khela.Common.Blackjack;
 using PlayCard.App;
 using PlayCard.Core;
 using PlayCard.Game.Net;
+using PlayCard.Game.Profile;
 using PlayCard.Home;
 using TMPro;
 using UnityEngine;
@@ -127,7 +128,7 @@ namespace PlayCard.UI
             _joining = true;
             SetStatus("Joining…");
 
-            var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, "Player");
+            var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, JoinName());
             if (res.Ok)
             {
                 KhelaAnalytics.LogTableJoined(GameSession.SelectedGame ?? "blackjack", _tableId, 0);
@@ -140,6 +141,17 @@ namespace PlayCard.UI
             }
         }
 
+        /// <summary>
+        /// The name other players see on your seat banner. Sent ONCE at join and stored on the seat, so this is the
+        /// only chance to get it right — it was hardcoded "Player", which is why every seat at a multiplayer table
+        /// read "Player". Falls back to that literal only if the profile hasn't loaded, so a banner is never blank.
+        /// </summary>
+        private static string JoinName()
+        {
+            var name = ProfileManager.Instance != null ? ProfileManager.Instance.DisplayName : null;
+            return string.IsNullOrWhiteSpace(name) ? "Player" : name;
+        }
+
         /// <summary>Seat the player at a specific (empty) seat, then open the Table scene — wire each empty
         /// chair's click to this with its seat number. No-op on a taken/invalid seat. Server-authoritative.</summary>
         public async void JoinSeat(int seatNumber)
@@ -148,7 +160,7 @@ namespace PlayCard.UI
             _joining = true;
             SetStatus("Joining…");
 
-            var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, "Player", "", seatNumber);
+            var res = await BlackjackRestClient.Instance.JoinAsync(_tableId, JoinName(), "", seatNumber);
             if (res.Ok)
             {
                 KhelaAnalytics.LogTableJoined(GameSession.SelectedGame ?? "blackjack", _tableId, seatNumber);

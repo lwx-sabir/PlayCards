@@ -37,6 +37,18 @@ namespace PlayCard.Game.Betting
         /// would wipe it. Distinct from OnBetChanged(0), which also fires on a plain CLEAR/UNDO (no gather wanted).</summary>
         public event Action<long> OnDealCommitted;
 
+        /// <summary>
+        /// Fired when a committed bet is REFUSED by the server, carrying the amount that was announced by
+        /// <see cref="OnDealCommitted"/>. Everything that ran ahead of the server on that event — the chips gathered
+        /// onto the felt, the amount badge, the balance receipt — undoes itself here.
+        ///
+        /// It exists because the commit is optimistic by design: the chips are pulled into the stack the instant the
+        /// player taps, one or two round trips before the server has agreed. The common refusal is losing the race to
+        /// the end of the betting window ("cannot change bets during an active round"), which left a stake sitting on
+        /// the felt for a round the player was not in.
+        /// </summary>
+        public event Action<long> OnBetRejected;
+
         private void Notify()
         {
             if (totalLabel != null) totalLabel.text = Total.ToString(totalFormat);
@@ -71,7 +83,14 @@ namespace PlayCard.Game.Betting
         /// <summary>Place a chip of this (runtime) value. No-op if it would exceed the table max / balance.</summary>
         public void Add(long chipValue)
         {
-            if (!CanPlace(chipValue)) return;
+            if (!CanPlace(chipValue))
+            {
+                // The chip still animates onto the felt from the drag/repeat path, so a refusal here is invisible:
+                // the player sees their bet, the total stays 0, and DEAL does nothing. Never fail this quietly.
+                Debug.LogWarning($"[BetBuilder] chip {chipValue} REFUSED: Total={Total} + {chipValue} > Cap={Cap} " +
+                                 $"(MaxBet={MaxBet}, Balance={Balance}). The chip will still appear on the felt.");
+                return;
+            }
             _placed.Add(chipValue);
             Total += chipValue;
             Notify();
@@ -100,14 +119,37 @@ namespace PlayCard.Game.Betting
         /// (e.g. after a lag spike) can't fire several rounds back-to-back.</summary>
         public void Deal()
         {
-            if (_dealing || !MeetsMinimum || table == null) return;
-            if (table.Board != null && table.Board.RoundInProgress) return;   // a round is already live
+            // Every one of these bails SILENTLY, which is why "deal does nothing" is impossible to diagnose from the
+            // outside: the chips still visibly drop (that animation is a separate path from the bet total), so the
+            // table looks ready while the button is inert. Say WHY — the device log is the only view we get.
+            if (_dealing) { Debug.LogWarning("[BetBuilder] DEAL ignored: a deal is already in flight (_dealing)."); return; }
+            if (table == null) { Debug.LogWarning("[BetBuilder] DEAL ignored: no TableController."); return; }
+            if (!MeetsMinimum)
+            {
+                Debug.LogWarning($"[BetBuilder] DEAL ignored: bet below minimum. Total={Total} MinBet={MinBet} " +
+                                 $"MaxBet={MaxBet} Balance={Balance} Cap={Cap} placedChips={_placed.Count}. " +
+                                 "Total 0 with chips on the felt means Add() was refused by CanPlace — check Cap/Balance.");
+                return;
+            }
+            if (table.Board != null && table.Board.RoundInProgress)
+            {
+                Debug.LogWarning("[BetBuilder] DEAL ignored: the board says a round is already in progress. " +
+                                 "If the felt looks idle, this board is stale — the hub push or resync has stopped.");
+                return;
+            }
             _ = DealRoutine();
         }
 
         private async Task DealRoutine()
         {
             _dealing = true;
+
+            // Lock the bet controls on the PRESS. This used to happen inside table.Deal(), one or two round trips
+            // later — so through the whole bet request DEAL and REPEAT stayed lit while `_dealing` silently swallowed
+            // every further tap. On a phone that reads as "the button did nothing", you tap again, and nothing keeps
+            // happening. Greying them immediately IS the missing feedback.
+            if (table != null) table.CommitBetting();
+
             try
             {
                 var amount = Total;
@@ -115,8 +157,29 @@ namespace PlayCard.Game.Betting
                 _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
                 OnDealCommitted?.Invoke((long)amount);   // let the felt gather the dropped chips BEFORE Clear() wipes them
                 Clear();
-                await table.PlaceBet(amount);    // records the bet (debited at deal)
-                await table.Deal();
+                // A bet that never landed must NOT fall through to a deal: the server would hold it (this seat hasn't
+                // actively bet), so the chips sit on the felt, no round starts, and the controls stay greyed — the
+                // "it bet but the deal is pending" state. Hand the controls straight back instead.
+                if (!await table.PlaceBet(amount))   // records the bet (debited at deal)
+                {
+                    Debug.LogWarning("[BetBuilder] DEAL aborted: the bet was rejected, so no deal was requested.");
+                    // Roll back everything the optimistic commit above already showed — the gathered chips, the amount
+                    // badge and the balance receipt. Waiting for the next board push is not enough: the seat is skipped
+                    // while its gather animation is still running, so the phantom stake can outlive several snapshots.
+                    OnBetRejected?.Invoke((long)amount);
+                    table.ReleaseBetting();
+                    return;
+                }
+
+                // The BET can start the round on its own. Once every seated player has actively bet, the server's
+                // round-driver deals on its next tick without anyone pressing Deal (the all-bet backstop) — so by the
+                // time the stake lands the round may already be live. Asking to deal then is rejected with "A round is
+                // already in progress", which is harmless but surfaces to the player as a failed action. The board we
+                // just got back from PlaceBet is authoritative, so if it says we're live there is nothing left to ask
+                // for. Repeat hits this far more than a manual deal: its chip-drop animation delays the stake, which
+                // lands the bet much closer to a driver tick.
+                if (table.Board == null || !table.Board.RoundInProgress)
+                    await table.Deal();
             }
             finally { _dealing = false; }
         }

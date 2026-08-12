@@ -42,18 +42,37 @@ namespace Khela.Game.Controllers
 
             try
             {
-                await wallet.CreditAsync(userId, CurrencyType.Chips, StarterChips, TransactionType.Bonus,
-                    $"starter:{userId}:Chips", new WalletContext { Description = "Starter chips" });
-                await wallet.CreditAsync(userId, CurrencyType.Gems, StarterGems, TransactionType.Bonus,
-                    $"starter:{userId}:Gems", new WalletContext { Description = "Starter gems" });
+                // This is the balance HUD: it is on every screen and the client re-reads it constantly, so it has to
+                // be ONE query. It used to run two idempotent starter-grant WRITE transactions and then five
+                // separate balance reads — around fifteen database round trips for a read, every single time, with
+                // the grants taking row locks that concurrent reads then queued behind. On a database that isn't on
+                // the same machine that is seconds of latency the player feels on every screen.
+                //
+                // The grants still happen, but only for a wallet that genuinely has nothing yet (a brand-new guest,
+                // or a top-up of a currency they have never held). Registration already seeds these, so for every
+                // established player this endpoint is now a single SELECT.
+                var balances = await wallet.GetBalancesAsync(userId);
+
+                if (!balances.ContainsKey(CurrencyType.Chips) || !balances.ContainsKey(CurrencyType.Gems))
+                {
+                    if (!balances.ContainsKey(CurrencyType.Chips))
+                        await wallet.CreditAsync(userId, CurrencyType.Chips, StarterChips, TransactionType.Bonus,
+                            $"starter:{userId}:Chips", new WalletContext { Description = "Starter chips" });
+                    if (!balances.ContainsKey(CurrencyType.Gems))
+                        await wallet.CreditAsync(userId, CurrencyType.Gems, StarterGems, TransactionType.Bonus,
+                            $"starter:{userId}:Gems", new WalletContext { Description = "Starter gems" });
+                    balances = await wallet.GetBalancesAsync(userId);
+                }
+
+                decimal Of(CurrencyType c) => balances.TryGetValue(c, out var v) ? v : 0m;
 
                 return Ok(new
                 {
-                    Chips = await wallet.GetBalanceAsync(userId, CurrencyType.Chips),
-                    Coins = await wallet.GetBalanceAsync(userId, CurrencyType.Coins),
-                    Gems = await wallet.GetBalanceAsync(userId, CurrencyType.Gems),
-                    Tokens = await wallet.GetBalanceAsync(userId, CurrencyType.Tokens),
-                    Kash = await wallet.GetBalanceAsync(userId, CurrencyType.Kash)
+                    Chips  = Of(CurrencyType.Chips),
+                    Coins  = Of(CurrencyType.Coins),
+                    Gems   = Of(CurrencyType.Gems),
+                    Tokens = Of(CurrencyType.Tokens),
+                    Kash   = Of(CurrencyType.Kash)
                 });
             }
             catch (Exception ex)

@@ -24,4 +24,12 @@
   <assembly fullname="System.Runtime.CompilerServices.Unsafe" preserve="all"/>
   <assembly fullname="System.Numerics.Vectors" preserve="all"/>
   <assembly fullname="System.Threading.Tasks.Extensions" preserve="all"/>
+
+  <!--
+    AFPS (Codestage Advanced FPS Counter) dev/profiling overlay. Release builds strip more aggressively than
+    Development builds, so the counter can spawn yet render nothing on a release APK (its label/canvas path
+    getting stripped, same failure class as the STJ DTOs above). Preserve its runtime assembly so the overlay
+    is guaranteed to draw when Bootstrapper.SpawnFpsOverlay puts it in OperationMode.Normal on a release build.
+  -->
+  <assembly fullname="CodeStage.AFPSCounter.Runtime" preserve="all"/>
 </linker>

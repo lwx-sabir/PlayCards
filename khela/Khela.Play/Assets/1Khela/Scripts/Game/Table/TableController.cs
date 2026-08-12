@@ -7,6 +7,7 @@ using PlayCard.App;
 using PlayCard.Core;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Net;
+using PlayCard.Game.Profile;
 using PlayCard.Game.Wallet;
 using UnityEngine;
 
@@ -141,6 +142,10 @@ namespace PlayCard.Game.Table
 
         private async void Start()
         {
+            // Everything between the scene-load mark and this one is Unity building the scene — every Awake, every
+            // prefab, every shader the table needs. If the time is here, no amount of network work will help.
+            JoinTrace.Mark("table scene ready (TableController.Start)");
+
             bool fromLobby = !string.IsNullOrEmpty(GameSession.TableId);
             TableId = fromLobby ? GameSession.TableId : debugTableId;
             _hub = hubComponent as IBlackjackHubClient;
@@ -161,13 +166,35 @@ namespace PlayCard.Game.Table
                 // Standalone dev path (no lobby): take a seat ourselves so the table is playable.
                 if (!fromLobby && debugAutoJoin)
                 {
-                    await Rest.JoinAsync(TableId, "Player", "", debugSeat > 0 ? debugSeat : (int?)null);
+                    // Same name the lobby sends — the seat stores whatever arrives at join, so a hardcoded literal
+                    // here would put "Player" on the banner every other client sees, exactly as it did in the lobby.
+                    var joinName = ProfileManager.Instance != null ? ProfileManager.Instance.DisplayName : null;
+                    if (string.IsNullOrWhiteSpace(joinName)) joinName = "Player";
+
+                    await Rest.JoinAsync(TableId, joinName, "", debugSeat > 0 ? debugSeat : (int?)null);
                     GameSession.SeatNumber = debugSeat;   // so MySeat resolves locally in standalone too (0 = let the board decide)
                 }
 
-                await _hub.ConnectAsync();
-                await _hub.JoinTableAsync(TableId);
+                // The HUB is only the live-push channel — the table is perfectly playable over REST without it. It used
+                // to share one try block with the board fetch and the heartbeat, so a failed handshake skipped BOTH:
+                // no board (the client sits on "joining" forever) and no heartbeat (the server's reaper then takes the
+                // seat). Isolate it, and let the watchdog restore pushes in the background.
+                try
+                {
+                    await _hub.ConnectAsync();
+                    JoinTrace.Mark("hub connected");
+
+                    await _hub.JoinTableAsync(TableId);
+                    JoinTrace.Mark("hub joined table group");
+                }
+                catch (Exception hubEx)
+                {
+                    Debug.LogWarning($"[TableController] hub connect/join failed, continuing over REST: {hubEx.Message}");
+                    OnConnectionChanged?.Invoke(false);
+                }
+
                 await RefreshAsync();
+                JoinTrace.Mark("first board fetched");
 
                 StartHeartbeat();   // keep our seat alive so the server's stalled-player reaper doesn't remove us
             }
@@ -203,6 +230,51 @@ namespace PlayCard.Game.Table
 
         private bool _presentedSent;
         private bool _betPresentedSent;   // same handshake, but for the between-rounds betting window
+        private bool _firstBoardPainted;  // JoinTrace: only the FIRST board's paint is timed
+
+        /// <summary>
+        /// This player has COMMITTED their bet for the current betting window (pressed Deal or Repeat) and is now
+        /// only waiting on the other seats.
+        ///
+        /// The betting window is shared — the round cannot start until everyone has bet or the clock runs out — but
+        /// that is no reason to keep showing a player a countdown and a bet panel they have already finished with.
+        /// Tracked locally and applied the instant they commit, because waiting for the board to round-trip is
+        /// exactly the lag that makes the table feel stuck.
+        /// </summary>
+        public bool BettingCommitted { get; private set; }
+
+        private DateTimeOffset? _committedForWindow;
+
+        /// <summary>Called when the player commits (Deal / Repeat). Scoped to THIS window so the next one re-opens.</summary>
+        public void CommitBetting()
+        {
+            BettingCommitted = true;
+            _committedForWindow = Board?.BettingExpiresAt;
+        }
+
+        /// <summary>
+        /// Whether the LOCAL player should still be shown betting UI: no round running AND they have not yet committed
+        /// this window's bet.
+        ///
+        /// EVERY betting surface must gate on this, never on raw <c>!RoundInProgress</c>. The betting window is SHARED,
+        /// so <c>RoundInProgress</c> stays false until the last player bets or the clock expires — gating on it left a
+        /// player who had already pressed Deal or Repeat sitting in front of their own chip rail, glowing bet spot and
+        /// live DEAL button until everyone else finished. Callers still AND in their own
+        /// <see cref="BlackjackTableView.RoundEndSettling"/> check, which is about the PREVIOUS round's ceremony.
+        /// </summary>
+        public bool BettingOpenForMe => Board != null && !Board.RoundInProgress && !BettingCommitted;
+
+        /// <summary>
+        /// Give the bet controls back after a commit that came to nothing (the deal request failed or was rejected).
+        /// Without this a refused deal leaves <see cref="BettingCommitted"/> latched, and since the whole betting UI
+        /// now gates on it the player is left with no chip rail and no DEAL button to retry with — the self-inflicted
+        /// version of the "deal stopped working" bug.
+        /// </summary>
+        public void ReleaseBetting()
+        {
+            BettingCommitted = false;
+            _committedForWindow = null;
+        }
 
         /// <summary>
         /// Tell the server the moment we can ACTUALLY act. The server stamps turn deadlines generously
@@ -218,6 +290,14 @@ namespace PlayCard.Game.Table
         private void Update()
         {
             if (Board == null) { _presentedSent = false; _betPresentedSent = false; return; }
+
+            // Re-open betting for this player when a DIFFERENT window arms, or once the round is actually running.
+            // Keyed on the deadline rather than a bool so a commit can't leak into the next hand.
+            if (BettingCommitted && (Board.RoundInProgress || Board.BettingExpiresAt != _committedForWindow))
+            {
+                BettingCommitted = false;
+                _committedForWindow = null;
+            }
 
             // BETWEEN ROUNDS the same handshake collapses the BETTING window. The server arms it at settle with an
             // allowance for the whole round-end ceremony (reveal → dealer draws → collect → pay → sweep → finale);
@@ -313,8 +393,21 @@ namespace PlayCard.Game.Table
             // currencies, and a mirror that's stale because the same player is staking at another table).
             SyncChipsFromBoard(board);
 
+            // Split the FIRST board's paint into its two halves: the felt itself (cards, chips) versus everything
+            // listening on OnBoardChanged (seat plates, HUD, avatars, action bar). Joining a running table paints a
+            // populated felt on the very first push, so if the cost scales with other players it lands here.
+            bool firstPaint = !_firstBoardPainted;
+            if (firstPaint) JoinTrace.Mark("first board received (paint starting)");
+
             if (tableView != null) tableView.Render(board);
+            if (firstPaint) JoinTrace.Mark("felt rendered (cards + chips)");
+
             OnBoardChanged?.Invoke(board);
+            if (firstPaint)
+            {
+                _firstBoardPainted = true;
+                JoinTrace.End("board consumers done — table interactive");
+            }
 
             if (roundStarted)
                 KhelaAnalytics.LogRoundStarted(GameSession.SelectedGame ?? "blackjack", TableId);
@@ -348,13 +441,31 @@ namespace PlayCard.Game.Table
 
         // ---- intents (UI → server-authoritative REST) ----
 
-        public Task PlaceBet(decimal amount)   => Do(Rest.BetAsync(TableId, amount, MySeat),
+        // Returns whether the stake actually landed — the deal routine needs to know, because a bet that failed must
+        // give the player their controls back rather than leaving them greyed waiting for a round that never starts.
+        public Task<bool> PlaceBet(decimal amount)   => Do(Rest.BetAsync(TableId, amount, MySeat),
             _ => KhelaAnalytics.LogBetPlaced(GameSession.SelectedGame ?? "blackjack", amount, MySeat));
         // NOTE: no optimistic chip prediction here. Every action also kicks a balance refresh, so a refresh already in
         // flight would return carrying the debit and the prediction landed on top of it — the balance dipped twice and
         // then corrected back up, flashing "gain" green for a bet. SyncChipsFromBoard already paints the server's own
         // post-action balance off the response board, which is fast enough without guessing.
-        public Task Deal()                      => Do(Rest.DealAsync(TableId));
+        // Commit FIRST so the bet UI closes on the press rather than a round-trip later — but put it back if the deal
+        // never landed, or a rejected deal would leave the player with no bet controls and no way to retry.
+        public async Task Deal()
+        {
+            CommitBetting();
+
+            // "A round is already in progress" is NOT a failure for us. We asked for the round to start; it started.
+            // The server's round-driver deals on its own the moment every seated player has bet (the all-bet
+            // backstop), and another player pressing Deal does the same — either can legitimately beat our request,
+            // and no amount of client-side checking can close that gap, because the round can start between our
+            // /bet response and our /deal leaving the device. Treat it as success: adopt the board and keep the bet
+            // UI closed. Only a REAL rejection gives the player their controls back.
+            bool ok = await Do(Rest.DealAsync(TableId),
+                               benign: e => e != null &&
+                                            e.IndexOf("already in progress", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (!ok) ReleaseBetting();
+        }
         public Task Hit()                       => Do(Rest.HitAsync(TableId, MySeat, CurrentHand));
         public Task Stand()                     => Do(Rest.StandAsync(TableId, MySeat, CurrentHand));
         public Task DoubleDown()                => Do(Rest.DoubleAsync(TableId, MySeat, CurrentHand));
@@ -463,17 +574,30 @@ namespace PlayCard.Game.Table
         // Every action returns the authoritative board, so render it immediately — this covers a down /
         // mid-reconnect hub (RequestBoard would no-op). The server also pushes TableUpdated; the view diffs,
         // so the duplicate render is a no-op. Then refresh the chips HUD for any money that moved.
-        private async Task Do<T>(Task<ApiResult<T>> call, Action<T> onSuccess = null)
+        // Returns whether the action actually landed. Callers that changed local state OPTIMISTICALLY (Deal hides the
+        // bet UI before the round-trip) need to know so they can undo it; everyone else can keep ignoring the result,
+        // since Task<bool> is still a Task.
+        private async Task<bool> Do<T>(Task<ApiResult<T>> call, Action<T> onSuccess = null,
+                                       Func<string, bool> benign = null)
         {
             ApiResult<T> res;
             try { res = await call; }
-            catch (Exception ex) { OnActionError?.Invoke(ex.Message); return; }
+            catch (Exception ex) { OnActionError?.Invoke(ex.Message); return false; }
 
             if (!res.Ok)
             {
+                // Some rejections mean "someone already did what you asked". Those are not failures — reporting them
+                // spams a warning (with a stack trace, which visibly hitches on device) and can make the UI undo a
+                // commit that should stand. Adopt the server's real state and report success.
+                if (benign != null && benign(res.Error))
+                {
+                    await RefreshAsync();
+                    return true;
+                }
+
                 Debug.LogWarning($"[TableController] action failed: {res.Error}");
                 OnActionError?.Invoke(res.Error);
-                return;
+                return false;
             }
 
             onSuccess?.Invoke(res.Value);
@@ -484,6 +608,7 @@ namespace PlayCard.Game.Table
                 await RefreshAsync();   // non-board response — fall back to a push/fetch
 
             if (WalletManager.Instance != null) _ = WalletManager.Instance.RefreshAsync();
+            return true;
         }
 
     }

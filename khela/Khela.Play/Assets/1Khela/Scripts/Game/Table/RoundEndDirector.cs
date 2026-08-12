@@ -50,9 +50,14 @@ namespace PlayCard.Game.Table
         [Tooltip("Chip-count roll/punch juice. Held so a WIN doesn't tick the number up at the settle push — the count " +
                  "rises as the flying chips land, and this beat flushes any remainder. Optional (auto-found).")]
         [SerializeField] private ChipCountJuice countJuice;
+        [Tooltip("Your own banner — celebrates on the same PAY beat as the seat plates. Auto-found.")]
+        [SerializeField] private LocalPlayerBanner localBanner;
         [Tooltip("Dealer peek driver. On a dealer BLACKJACK the round settles instantly, so its mid-round trigger never " +
                  "fires — this director then plays the peek just before the reveal. Optional (auto-found).")]
         [SerializeField] private DealerPeek peekDriver;
+        [Tooltip("Table sound. The hole-card reveal is fired from the flip beat itself so it can't drift from the " +
+                 "animation. Optional (auto-found).")]
+        [SerializeField] private PlayCard.Audio.TableAudio tableAudio;
         [Tooltip("Dealer-hand point chips are GATHERED to (losers) and PAID from (winners). EMPTY = falls back to the " +
                  "view's Deal Source (her hand), so collect/pay work with your existing deal setup. Assign a dedicated " +
                  "Transform (e.g. her chip tray) to override.")]
@@ -105,12 +110,13 @@ namespace PlayCard.Game.Table
             if (view == null) view = FindAnyObjectByType<BlackjackTableView>(FindObjectsInactive.Include);
             if (dealer == null) dealer = FindAnyObjectByType<DealerAnimator>(FindObjectsInactive.Include);
             if (betStacks == null) betStacks = FindAnyObjectByType<BetStacks>(FindObjectsInactive.Include);
-            if (seatPlates == null || seatPlates.Length == 0)
-                seatPlates = FindObjectsByType<SeatPlates>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            seatPlates = ResolveSeatPlates(seatPlates);
             if (winChipFly == null) winChipFly = FindAnyObjectByType<WinChipFly>(FindObjectsInactive.Include);
             if (handLabels == null) handLabels = FindAnyObjectByType<HandBlackjackLabels>(FindObjectsInactive.Include);
             if (countJuice == null) countJuice = FindAnyObjectByType<ChipCountJuice>(FindObjectsInactive.Include);
+            if (localBanner == null) localBanner = FindAnyObjectByType<LocalPlayerBanner>(FindObjectsInactive.Include);
             if (peekDriver == null) peekDriver = FindAnyObjectByType<DealerPeek>(FindObjectsInactive.Include);
+            if (tableAudio == null) tableAudio = FindAnyObjectByType<PlayCard.Audio.TableAudio>(FindObjectsInactive.Include);
 
             if (table != null)
             {
@@ -124,6 +130,27 @@ namespace PlayCard.Game.Table
             if (winChipFly != null) winChipFly.RegisterSettleDirector(this); // win juice now fires on PAY, not the settle push
             if (handLabels != null) handLabels.RegisterSettleDirector(this); // per-hand + dealer win/lose banners held until PAY
             if (countJuice != null) countJuice.RegisterSettleDirector(this); // chip count won't tick up until chips land
+        }
+
+        /// <summary>
+        /// Resolve the seat-plate drivers, tolerating a HALF-AUTHORED array.
+        ///
+        /// The old test was <c>Length == 0</c>, and the scene held an array of length ONE whose single element was
+        /// empty — so the auto-find was skipped and the director ran with nothing but a null. Every seat-plate feature
+        /// silently did nothing (the balance hold, and the win FX), while <see cref="localBanner"/> — a single
+        /// reference, which DOES fall back when null — kept working. That asymmetry is exactly "my own celebration
+        /// fires, the other players' never do". Drop the nulls, and fall back to the scene sweep when nothing real is
+        /// authored, so neither an empty array nor an array of empty slots can disable this again.
+        /// </summary>
+        private static SeatPlates[] ResolveSeatPlates(SeatPlates[] authored)
+        {
+            if (authored != null)
+            {
+                var kept = new List<SeatPlates>(authored.Length);
+                foreach (var sp in authored) if (sp != null) kept.Add(sp);
+                if (kept.Count > 0) return kept.ToArray();
+            }
+            return FindObjectsByType<SeatPlates>(FindObjectsInactive.Include, FindObjectsSortMode.None);
         }
 
         private void OnDisable()
@@ -211,6 +238,14 @@ namespace PlayCard.Game.Table
                 yield return null;
             }
 
+            // The director owns her body from here. Waiting above is not enough: the peek/reveal below play on the SAME
+            // Animancer, so a throw still running gets cut before its Throw event — the only thing that hides her
+            // in-hand card prop and releases the parked card — leaving a card stuck in her hand while the felt already
+            // shows the real one. A dealer BLACKJACK hits this every time (the round settles the instant her second
+            // card is dealt, so we cut in while she is throwing to herself). Stop the pump cleanly; the snap below
+            // puts down anything it was still holding.
+            if (dealer != null) dealer.AbortThrows();
+
             // A natural blackjack / 21 settles the round the instant the opening cards are dealt — so the deal pump can
             // get cut off before it throws every card (leaving a card PARKED HIDDEN → the player shows only 1 card).
             // Snap any still-parked opening card into place now, so both hands are complete before the reveal. No-op when
@@ -244,6 +279,12 @@ namespace PlayCard.Game.Table
             // pinned to the cards and vanish when the felt is swept. (RevealPayout re-calls this idempotently, as a
             // safety net for force-finish paths that skip this beat.)
             if (handLabels != null) handLabels.RevealNow(_board);
+
+            // The win celebration starts WITH that badge — same beat, same moment the player learns they won. It used
+            // to start at RevealPayout, which is two beats later (after collect and pay), so it appeared long after
+            // the badge it is supposed to accompany.
+            ShowWinFx();
+
             Kick();
             if (holdSeconds > 0f) yield return new WaitForSecondsRealtime(holdSeconds);
 
@@ -280,6 +321,11 @@ namespace PlayCard.Game.Table
             Kick();
             if (view != null) view.SweepNow();
             yield return new WaitForSecondsRealtime(view != null ? view.SweepDuration : 0.5f);
+
+            // The celebration ends HERE, not before the sweep. RevealPayout only STARTS the chip count — WinChipFly
+            // feeds it chip by chip and the number rolls for a while afterwards, so clearing any earlier cut the
+            // particle off mid-payout, which is why it barely showed.
+            ClearWinFx();
 
             // 7) FINALE — the last beat, after the cards are collected. Betting reopens the moment this returns (its
             // RoundFinished event, else the clip ending). Complete() is NOT gated on it — it simply runs next.
@@ -336,6 +382,9 @@ namespace PlayCard.Game.Table
             if (view == null || _board?.Dealer?.Cards == null || _board.Dealer.Cards.Count < 2) return;
             var revealed = _board.Dealer.Cards[1];
             var card = view.DealerHoleCard();
+            // BEFORE the early-out below: a round where the card isn't on the felt still reveals, and going silent for
+            // it would drop the sound exactly on the reconnect / mid-round-join cases.
+            if (tableAudio != null) tableAudio.PlayDealerReveal();
             if (card == null) { view.RevealDealerHole(revealed); return; }   // no visible card → just fix the data
             // Juicy flip: edge-on (ease-in) → swap art + data at the apex → back with ease-out-back overshoot + scale
             // pop + lift. The reveal is the ONE notable flip per round, so it earns the full treatment. Time + edge axis
@@ -431,6 +480,18 @@ namespace PlayCard.Game.Table
             var chips = betStacks.BuildLooseStack(target, startLocal, amount);
             for (int i = 0; i < chips.Count; i++)
                 FlyChip(chips[i], worldTarget, chipFlightSeconds);
+
+            // The chips ARRIVING is a separate beat from her pushing them — the push is heard at the release frame,
+            // this is the winnings hitting the felt in front of the player. Every chip in a hand flies for the same
+            // duration, so they land together: ONE sound per hand, not one per chip.
+            if (tableAudio != null && chips.Count > 0)
+                StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget));
+        }
+
+        private IEnumerator PayLandAfter(float delay, Vector3 worldTarget)
+        {
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            if (tableAudio != null) tableAudio.PlayChipsPayLand(worldTarget);
         }
 
         // Fly one chip to a world target via CardMover (local-space ease), then destroy it. Tracked so a mid-flight
@@ -455,6 +516,23 @@ namespace PlayCard.Game.Table
 
         /// <summary>Reveal the credited balances (seat plates un-hold + re-render; win juice bursts). Fired once per
         /// sequence, on the PAY beat — or on a force-finish, since the payout is real server-side regardless.</summary>
+        // Starts the win celebration on every banner, at the HOLD beat — with the WIN badge, before the chips move.
+        private void ShowWinFx()
+        {
+            if (seatPlates != null)
+                foreach (var sp in seatPlates) if (sp != null) sp.ShowWinFx(_board);
+            if (localBanner != null) localBanner.RevealNow(_board);
+        }
+
+        // Ends the win celebration on every banner. Called when the payout is finished (chips landed, count rolled)
+        // and again on ForceFinish, so a torn-down sequence can never leave particles running over a swept felt.
+        private void ClearWinFx()
+        {
+            if (seatPlates != null)
+                foreach (var sp in seatPlates) if (sp != null) sp.ClearWinFx();
+            if (localBanner != null) localBanner.ClearWinFx();
+        }
+
         private void RevealPayout()
         {
             if (_payShown) return; _payShown = true;
@@ -512,6 +590,7 @@ namespace PlayCard.Game.Table
         private void ForceFinish()
         {
             _running = false;
+            ClearWinFx();   // a torn-down sequence must not leave particles running over a swept felt
             if (_seq != null) { StopCoroutine(_seq); _seq = null; }
             if (_flip != null) { StopCoroutine(_flip); _flip = null; }   // orphaned flip could tug a card SweepNow just pooled
             if (_watchdog != null) { StopCoroutine(_watchdog); _watchdog = null; }

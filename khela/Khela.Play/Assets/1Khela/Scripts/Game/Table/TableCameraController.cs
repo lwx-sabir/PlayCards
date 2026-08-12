@@ -92,7 +92,11 @@ namespace PlayCard.Game.Table
             // the deal is watched from the wide table pose; we zoom for the decision after MY cards settle; and on round
             // END we stay wide until the final/bust card lands + the felt clears, instead of snapping to bet mid-bust.
             bool roundEndSettling = view != null && view.RoundEndSettling;
-            bool betting = board != null && !board.RoundInProgress && !roundEndSettling;
+            // BettingOpenForMe, not !RoundInProgress. The betting window is SHARED, so the round stays "not started"
+            // until the last seat bets — this held the camera in the close bet pose + bet FOV while the player, who
+            // had already bet, just watched the clock. Once they commit they are a spectator until the deal, so pull
+            // back to the wide table pose and let them see the felt.
+            bool betting = table != null && table.BettingOpenForMe && !roundEndSettling;
             bool myTurn = board != null && board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat && dealt;
             bool close = betting || myTurn;
 
@@ -128,8 +132,29 @@ namespace PlayCard.Game.Table
             }
         }
 
+        /// <summary>
+        /// Park the camera at the entry pose and stop it resolving/moving. The loading screen holds this while the
+        /// scene builds — the dealer avatar alone takes 1-3s, and the camera used to start its move the instant the
+        /// first board arrived, which read as a lurch before anything was on screen. Released when the panel dismisses.
+        /// </summary>
+        public void HoldAtEntry(bool hold)
+        {
+            _held = hold;
+            if (!hold || entryPose == null) return;
+
+            // SNAP, don't damp — while held there is no animation, so the first frame after release starts from a
+            // known pose instead of wherever a partial move left it.
+            _target = entryPose;
+            transform.SetPositionAndRotation(entryPose.position, entryPose.rotation);
+            if (_cam) _cam.fieldOfView = tableFov;
+        }
+
+        private bool _held;
+
         private void LateUpdate()
         {
+            if (_held) return;   // loading screen owns the camera — don't resolve, don't move
+
             Resolve();   // re-evaluate every frame so the decision framing waits for the animated deal to land
             if (_target == null) return;
 

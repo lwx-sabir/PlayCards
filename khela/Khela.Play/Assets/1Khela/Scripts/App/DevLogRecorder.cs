@@ -9,14 +9,17 @@ using UnityEngine.Networking;
 namespace PlayCard.App
 {
     /// <summary>
-    /// GLOBAL, dev-build-only log recorder. Auto-starts at app launch via <see cref="RuntimeInitializeOnLoadMethod"/>
+    /// GLOBAL log recorder — Development builds and the Editor always; a RELEASE build too when
+    /// <see cref="AppConfig.RecordLogsInReleaseBuilds"/> is ticked on the AppConfig asset in Resources.
+    /// Auto-starts at app launch via <see cref="RuntimeInitializeOnLoadMethod"/>
     /// — no scene setup, no GameObject to place — and captures every Unity log/exception (from ANY thread) into a
     /// per-session file under <c>persistentDataPath/khela_logs/</c> with AutoFlush (survives a crash). Because it
     /// starts before the first scene, it catches boot/auth failures that only happen on-device.
     ///
     /// The UI (Send / Clear buttons + status) lives in whatever scene you want, wired by <see cref="DevLogBinder"/> —
     /// this class owns the recording + upload; the binder just calls <see cref="SendLogs"/> / <see cref="ClearOldLogs"/>
-    /// and reads <see cref="Status"/> / <see cref="OnStatus"/>. In a Release build it never instantiates (zero cost).
+    /// and reads <see cref="Status"/> / <see cref="OnStatus"/>. In a Release build with the flag off it never
+    /// instantiates (zero cost).
     /// </summary>
     public sealed class DevLogRecorder : MonoBehaviour
     {
@@ -39,11 +42,26 @@ namespace PlayCard.App
         private StreamWriter _writer;
         private readonly object _lock = new object();
 
-        // Self-instantiate before the first scene loads (dev builds + Editor only), so recording covers app start.
+        /// <summary>
+        /// True when this build should record: always in the Editor and Development builds, and in a RELEASE build
+        /// when <see cref="AppConfig.RecordLogsInReleaseBuilds"/> is ticked.
+        ///
+        /// The switch lives on the AppConfig asset rather than on <see cref="DevLogBinder"/> because this runs
+        /// BEFORE the first scene — the binder sits in Home, which loads well after boot, so a flag on it could
+        /// never enable the boot logging that matters most on device. AppConfig is in Resources, so it loads here.
+        /// </summary>
+        private static bool ShouldRecord()
+        {
+            if (Debug.isDebugBuild) return true;
+            try { return AppConfig.Instance != null && AppConfig.Instance.RecordLogsInReleaseBuilds; }
+            catch { return false; }   // never let a missing/broken config stop the app from starting
+        }
+
+        // Self-instantiate before the first scene loads, so recording covers app start.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
-            if (!Debug.isDebugBuild) return;           // Development Build or Editor only
+            if (!ShouldRecord()) return;
             if (Instance != null) return;
             var go = new GameObject("[DevLogRecorder]");
             DontDestroyOnLoad(go);

@@ -28,6 +28,14 @@ namespace PlayCard.Core
         [Tooltip("Per-request timeout in seconds for REST calls.")]
         [SerializeField] private int requestTimeoutSeconds = 20;
 
+        [Header("Diagnostics")]
+        [Tooltip("ON = the client log recorder runs in a RELEASE build too, exactly as it does in a Development " +
+                 "build (records every log to a file and the debug panel's Send button uploads it). OFF (default) " +
+                 "= Development builds and the Editor only. This lives here, not on DevLogBinder, because the " +
+                 "recorder starts BEFORE the first scene — a flag on a scene object would miss the boot logs " +
+                 "(auth, config, startup crashes), which are the ones worth having from a device.")]
+        [SerializeField] private bool recordLogsInReleaseBuilds;
+
         /// <summary>Base URL with any trailing slash stripped.</summary>
         public string BaseApiUrl => string.IsNullOrWhiteSpace(baseApiUrl) ? "http://localhost:5044" : baseApiUrl.TrimEnd('/');
 
@@ -38,6 +46,9 @@ namespace PlayCard.Core
         public string ThreeCardHubUrl => HubUrlFor(threeCardHubPath, "/threecardhub");
 
         public int RequestTimeoutSeconds => requestTimeoutSeconds;
+
+        /// <summary>Let the log recorder run in a Release build (see the field tooltip).</summary>
+        public bool RecordLogsInReleaseBuilds => recordLogsInReleaseBuilds;
 
         // Resolve a configured hub path against the base URL: a full http(s) value overrides entirely; an empty
         // value falls back to the game's default path. Shared by every per-game hub URL so they can't drift.

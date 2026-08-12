@@ -63,6 +63,9 @@ namespace PlayCard.Game.Dtos
         /// <summary>Provably-fair commitment for the current round (never the secret server seed).</summary>
         public FairnessView Fairness { get; set; }
 
+        /// <summary>Shoe state — lets the table show the cut card and a "new shoe" beat. Null from an older server.</summary>
+        public ShoeView Shoe { get; set; }
+
         public DealerView Dealer { get; set; }
         public List<PlayerView> Players { get; set; } = new List<PlayerView>();
         public List<SeatView> Seats { get; set; } = new List<SeatView>();
@@ -109,7 +112,42 @@ namespace PlayCard.Game.Dtos
         /// <summary>SHA-256 commitment of the secret server seed, published before the deal.</summary>
         public string ServerSeedHash { get; set; }
         public string ClientSeed { get; set; }
+
+        /// <summary>Rounds dealt at this table.</summary>
         public long RoundNonce { get; set; }
+
+        /// <summary>Shoes used at this table — this, NOT <see cref="RoundNonce"/>, is the nonce the shuffle is
+        /// derived from, since one shoe spans many rounds.</summary>
+        public long ShoeNonce { get; set; }
+    }
+
+    /// <summary>
+    /// The dealing shoe. A multi-deck shoe PERSISTS across rounds and is only replaced once the cut card is reached,
+    /// so these values move round to round. A table configured to reshuffle every round (a single deck, or
+    /// ReshuffleEveryRound) reports <see cref="CutCardAt"/> 0 and never sets <see cref="CutCardReached"/>.
+    ///
+    /// All-zero with a null <see cref="ShoeId"/> means the table has no managed shoe yet (it has not dealt since
+    /// the shoe was introduced) — render no cut-card indicator rather than an empty one.
+    /// </summary>
+    public sealed class ShoeView
+    {
+        /// <summary>Cards in the shoe when it was shuffled (52 × deck count). 0 from an older server.</summary>
+        public int ShoeSize { get; set; }
+
+        /// <summary>Cards still undealt. Falls through the round as cards come out.</summary>
+        public int CardsRemaining { get; set; }
+
+        /// <summary>The cut card sits here: once <see cref="CardsRemaining"/> drops to this, the shoe is spent.
+        /// 0 means no cut card (single-deck table).</summary>
+        public int CutCardAt { get; set; }
+
+        /// <summary>The cut card has been reached. The CURRENT round still finishes on this shoe — the next deal
+        /// comes from a freshly shuffled one. That is the cue for a "new shoe" presentation.</summary>
+        public bool CutCardReached { get; set; }
+
+        /// <summary>Hash of this shoe as shuffled — changes exactly when a new shoe is brought in, so the client can
+        /// detect the swap without inferring it from the counts.</summary>
+        public string ShoeId { get; set; }
     }
 
     public sealed class DealerView

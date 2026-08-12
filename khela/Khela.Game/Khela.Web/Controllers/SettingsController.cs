@@ -42,6 +42,9 @@ namespace Khela.Web.Controllers
         // Editable game timing — live via BlackjackTableManager's runtime overlay (same Redis hash, cached ~15s).
         private static readonly SettingDef[] GameDefs =
         {
+            new("Blackjack:DeckCount", "Decks in the shoe", "How many 52-card decks (1–8). 2+ persists across rounds and is replaced when the cut card is reached. Changing this rebuilds the shoe on the next deal.", "1"),
+            new("Blackjack:ShoePenetrationPercent", "Shoe penetration (%)", "How much of the shoe is dealt before the cut card. 75 = cut with 25% left. Floored so a round can always finish. Ignored when reshuffling every round.", "1"),
+            new("Blackjack:ReshuffleEveryRound", "Reshuffle every round", "1 = fresh shuffle each round (no cut card), whatever the deck count. 0 = persistent shoe. Note the original behaviour was 6 decks WITH this on — deck count 1 is a single 52-card deck, a different game.", "1", Min: 0),
             new("Blackjack:TurnSeconds", "Turn timer (seconds)", "How long a player has to act on their turn.", "1"),
             new("Blackjack:BettingSeconds", "Betting window (seconds)", "Between-rounds time to place a bet before auto-deal. 0 = no betting window.", "1"),
             new("Blackjack:MaxIdleBettingWindows", "Idle windows before kick", "Sit out this many betting windows with no bet ⇒ removed from the table (the warning shows one window before). 0 = never kick.", "1"),
@@ -95,7 +98,9 @@ namespace Khela.Web.Controllers
                 {
                     var raw = Request.Form[def.Key].ToString().Trim();
                     if (string.IsNullOrEmpty(raw)) continue;
-                    if (!int.TryParse(raw, out var n) || n <= 0) continue;   // positive integer seconds only
+                    // Whole numbers at or above the knob's own minimum. Durations keep the old positive-only rule;
+                    // an on/off flag declares Min 0 so it can be switched back off and not just on.
+                    if (!int.TryParse(raw, out var n) || n < def.Min) continue;
                     entries.Add(new HashEntry(def.Key, n.ToString()));
                 }
                 if (entries.Count > 0)
@@ -125,13 +130,16 @@ namespace Khela.Web.Controllers
                 Saved = TempData["Saved"] as string,
                 Error = TempData["Error"] as string,
                 Casino = CasinoDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key))).ToList(),
-                Game = GameDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key))).ToList(),
+                Game = GameDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key), d.Min)).ToList(),
                 GameReadOnly = GameReadOnlyDefs.Select(g => new ReadOnlySetting(g.Label, Cfg(g.Key))).ToList(),
             };
         }
     }
 
-    public sealed record SettingDef(string Key, string Label, string Help, string Step);
+    /// <summary>An editable knob. <paramref name="Min"/> is the lowest value that can be SAVED — it defaults to 1
+    /// because most knobs are durations where 0 is meaningless, but an on/off flag needs 0 or it becomes a switch
+    /// that can only be turned on.</summary>
+    public sealed record SettingDef(string Key, string Label, string Help, string Step, int Min = 1);
 
     public sealed class SettingsVm
     {
@@ -142,6 +150,6 @@ namespace Khela.Web.Controllers
         public string? Error { get; set; }
     }
 
-    public sealed record EditableSetting(string Key, string Label, string Help, string Step, string Value);
+    public sealed record EditableSetting(string Key, string Label, string Help, string Step, string Value, int Min = 1);
     public sealed record ReadOnlySetting(string Label, string Value);
 }

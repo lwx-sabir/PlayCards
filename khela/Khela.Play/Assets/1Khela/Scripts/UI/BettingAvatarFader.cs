@@ -35,6 +35,16 @@ namespace PlayCard.UI
                  "release, on the same alpha + timing as the avatars.")]
         [SerializeField] private List<GameObject> alsoFade = new List<GameObject>();
 
+        [Header("Shared avatar art")]
+        [Tooltip("Portrait shown for a seated player who has no avatar of their own. Lives here because this sits on " +
+                 "the panel that owns every seat layout, so ONE reference covers all of them — the seat banners read " +
+                 "it from their parent rather than each carrying a copy. Leave empty to keep whatever art the banner " +
+                 "prefab was authored with.")]
+        [SerializeField] private Sprite defaultAvatar;
+
+        /// <summary>Fallback portrait for a player with no avatar. Null = leave the prefab's authored art alone.</summary>
+        public Sprite DefaultAvatar => defaultAvatar;
+
         private readonly List<CanvasGroup> _cgFades = new List<CanvasGroup>();
         private readonly List<(Material mat, int id, float baseA)> _matFades = new List<(Material, int, float)>();
 
@@ -107,7 +117,10 @@ namespace PlayCard.UI
             int seat = table != null ? table.MySeat : -1;
             bool roundEndSettling = view != null && view.RoundEndSettling;
             bool dealt = view == null || view.DecisionReady(seat);
-            bool betting = !board.RoundInProgress && !roundEndSettling;
+            // BettingOpenForMe, not raw !RoundInProgress — see TableCameraController.Resolve, which this must keep
+            // matching. The shared window keeps the round "not started" until every seat has bet; once THIS player
+            // commits, the camera pulls back to the table pose, so the avatars have to fade back in with it.
+            bool betting = table != null && table.BettingOpenForMe && !roundEndSettling;
             bool myTurn = board.RoundInProgress && seat >= 1 && board.CurrentSeatNumber == seat && dealt;
             return betting || myTurn;
         }

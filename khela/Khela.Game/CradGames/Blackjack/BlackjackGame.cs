@@ -16,6 +16,20 @@ namespace CardGames.Blackjack
             [JsonInclude]
             public Deck Deck { get; private set; }
 
+            /// <summary>Seed the current shoe was shuffled from. Kept so the shoe can be extended reproducibly if it
+            /// ever runs dry mid-round; null for a shoe built without a seed.</summary>
+            [JsonInclude]
+            public byte[] ShoeSeed { get; private set; }
+
+            /// <summary>Decks the current shoe was built from.</summary>
+            [JsonInclude]
+            public int ShoeDeckCount { get; private set; }
+
+            /// <summary>How many times the current shoe has been extended mid-round (see <see cref="ExtendShoe"/>).
+            /// Normally 0 — a non-zero value means the cut card is sized too deep for how the table actually plays.</summary>
+            [JsonInclude]
+            public int ShoeExtensions { get; private set; }
+
             [JsonInclude]
             public Player Dealer { get; private set; }
 
@@ -56,23 +70,85 @@ namespace CardGames.Blackjack
             /// <summary>
             /// Deals a new game
             /// </summary>
-            public void DealNewGame(byte[] seed = null, int deckCount = 1)
+            /// <summary>
+            /// Build and shuffle a NEW shoe. With a seed the shuffle is deterministic and independently verifiable
+            /// (provably fair); without one it uses a crypto shuffle. Separate from <see cref="DealNewGame"/> so a
+            /// multi-deck shoe can PERSIST across rounds and only be replaced when the cut card is reached.
+            /// </summary>
+            public void StartShoe(byte[] seed, int deckCount)
             {
-                // Create and shuffle the shoe. With a seed the shuffle is deterministic and
-                // independently verifiable (provably fair); without one it uses a crypto shuffle.
                 Deck = new Deck(deckCount);
                 if (seed != null) Deck.Shuffle(seed);
                 else Deck.Shuffle();
 
+                ShoeSeed = seed;
+                ShoeDeckCount = deckCount;
+                ShoeExtensions = 0;
+                AttachDeck();
+            }
+
+            /// <summary>
+            /// Append a continuation to a shoe that ran dry mid-round. A round has no hard card limit — resplits and
+            /// long low-card hands can in principle out-run any cut card — and failing part-way through would leave
+            /// live stakes on a hand that can never finish. So instead of failing, the shoe grows.
+            ///
+            /// The continuation is derived from the shoe's own seed plus the extension number, so it stays fully
+            /// reproducible: anyone replaying the hand from the recorded seed rebuilds the same extra cards. Reaching
+            /// this at all means the cut card is set too deep for how the table plays; it is expected to stay at zero.
+            /// </summary>
+            private void ExtendShoe(Deck deck)
+            {
+                if (deck == null) return;
+
+                ShoeExtensions += 1;
+                var decks = ShoeDeckCount > 0 ? ShoeDeckCount : 1;
+                var extension = new Deck(decks);
+
+                if (ShoeSeed != null)
+                    extension.Shuffle(CardGames.Provable.ProvableShuffle.DeriveSeed(ShoeSeed, "shoe-ext", ShoeExtensions));
+                else
+                    extension.Shuffle();
+
+                deck.Cards.AddRange(extension.Cards);
+            }
+
+            /// <summary>Cards left in the current shoe (0 when there is no shoe).</summary>
+            [JsonIgnore]
+            public int CardsRemaining => Deck != null && Deck.Cards != null ? Deck.Cards.Count : 0;
+
+            /// <summary>
+            /// Point the dealer and every player at THE shoe. Everyone draws through their own <c>CurrentDeck</c>
+            /// reference, so they must all be the same object — otherwise each seat quietly deals itself cards from a
+            /// private deck and two seats can receive the same physical card.
+            ///
+            /// This matters because a table is stored as JSON between every action: object identity does not survive
+            /// that round-trip, so <c>CurrentDeck</c> is <see cref="JsonIgnoreAttribute">not serialised</see> and must
+            /// be re-attached after every load. Safe to call repeatedly.
+            /// </summary>
+            public void AttachDeck()
+            {
+                if (Deck == null) return;
+                Deck.OnExhausted = ExtendShoe;   // also not serialised — see Deck.OnExhausted
+                if (Dealer != null) Dealer.CurrentDeck = Deck;
+                foreach (var p in Players) p.CurrentDeck = Deck;
+            }
+
+            /// <param name="newShoe">
+            /// True (default) = the legacy single-deck behaviour: build a fresh shoe for this round. False = DEAL FROM
+            /// THE EXISTING SHOE, which is what a real multi-deck game does — the shoe survives between rounds and is
+            /// only replaced once the cut card is reached. A shoe is still created if there isn't one, or if it can't
+            /// cover the deal.
+            /// </param>
+            public void DealNewGame(byte[] seed = null, int deckCount = 1, bool newShoe = true)
+            {
+                int needed = (Players.Count(p => p.InRound) + 1) * 2;   // 2 cards each, plus the dealer
+                if (newShoe || Deck == null || Deck.Cards == null || Deck.Cards.Count < needed)
+                    StartShoe(seed, deckCount);
+
                 // Reset hands for dealer and all players
                 Dealer.NewHand();
-                Dealer.CurrentDeck = Deck;
-
-                foreach (var p in Players)
-                {
-                    p.NewHand();
-                    p.CurrentDeck = Deck;
-                }
+                foreach (var p in Players) p.NewHand();
+                AttachDeck();
 
                 // Deal two cards to each player and dealer
                 for (int i = 0; i < 2; i++)
@@ -85,13 +161,7 @@ namespace CardGames.Blackjack
 
                     var dealerCard = Deck.Draw();
                     if (i == 1) dealerCard.IsCardUp = false; // dealer second card facedown
-                    Dealer.Hand.Cards.Add(dealerCard); 
-                    Dealer.CurrentDeck = Deck;
-
-                    foreach (var p in Players)
-                    {
-                        p.CurrentDeck = Deck;
-                    }
+                    Dealer.Hand.Cards.Add(dealerCard);
                 }
 
                 // Flag each opening hand that's a splittable pair (the "pairs dealt" lifetime stat) — captured NOW,
@@ -164,8 +234,10 @@ namespace CardGames.Blackjack
             /// Every other hand reaches the <c>dealerBust || playerTotal &gt; dealerTotal</c> comparison and
             /// therefore DOES need her to play out — those return true.
             ///
-            /// Deck note: each round reshuffles a fresh shoe in <see cref="DealNewGame"/>, so consuming fewer
-            /// cards here cannot leak into a later round or affect the provably-fair commitment.
+            /// Deck note: with a persistent shoe, cards NOT drawn here stay in the shoe and are dealt in a later
+            /// round — so skipping the dealer's draw does shift what comes next. That is correct and matches a real
+            /// table (an unplayed dealer hand burns no cards), and it cannot affect the provably-fair commitment,
+            /// which covers the shoe's order rather than which round each card lands in.
             /// </summary>
             private bool AnyHandNeedsDealerToDraw()
             {

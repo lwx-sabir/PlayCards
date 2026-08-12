@@ -458,6 +458,9 @@ namespace Khela.Game.Migrations
                     b.Property<DateTime?>("SettledAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<int>("ShoeCardsDealt")
+                        .HasColumnType("int");
+
                     b.Property<string>("ShoeId")
                         .HasMaxLength(128)
                         .HasColumnType("varchar(128)");

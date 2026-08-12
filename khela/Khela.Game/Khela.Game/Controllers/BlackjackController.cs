@@ -59,7 +59,7 @@ namespace Khela.Game.Controllers
                 // request.SeatNumber (nullable) lets the client pick a seat; null = auto-assign first open.
                 var table = await tableManager.AddPlayerAsync(
                     tableId,
-                    new Player(userId, request.Balance, request.Name, request.Image),
+                    new Player(userId, request.Balance, await ResolveDisplayNameAsync(userId, request.Name), request.Image),
                     request.SeatNumber);
 
                 if (table == null) return NotFound("Table not found or expired.");
@@ -69,6 +69,32 @@ namespace Khela.Game.Controllers
             {
                 return BadRequest(new { message = ex.Message });
             }
+        }
+
+        /// <summary>
+        /// The name every OTHER player sees on this seat's banner. Taken from the caller's own moderated
+        /// <see cref="Khela.Game.Database.Models.UserProfile"/>, not from the request.
+        ///
+        /// The name is stored on the seat at join and never re-sent, so a client that joins before its profile has
+        /// finished loading brands itself "Player" for the whole sitting — which is why most seats at a multiplayer
+        /// table read "Player" while the occasional one (a client that happened to win the race) showed a real name.
+        /// The server always has the profile, so the race cannot happen here. It is also the right place on principle:
+        /// a display name is identity and is moderated, so it must not be whatever the client asserts.
+        /// Falls back to the request only when there is no profile row yet (a brand-new account mid-bootstrap).
+        /// </summary>
+        private async Task<string> ResolveDisplayNameAsync(string userId, string requested)
+        {
+            if (Guid.TryParse(userId, out var uid))
+            {
+                var name = await db.UserProfiles
+                    .AsNoTracking()
+                    .Where(p => p.UserId == uid)
+                    .Select(p => p.DisplayName)
+                    .FirstOrDefaultAsync();
+
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+            return string.IsNullOrWhiteSpace(requested) ? "Player" : requested;
         }
 
         [HttpPost("{tableId}/leave/{seatNumber:int}")]
@@ -330,6 +356,12 @@ namespace Khela.Game.Controllers
         /// <summary>
         /// Provably-fair verification for a settled hand: recompute the shoe from the recorded
         /// per-round seed and confirm it hashes to the recorded deck. Public so anyone can verify.
+        ///
+        /// The seed is only released once the shoe it governs has been RETIRED. A multi-deck shoe spans many hands,
+        /// so its seed is also the order of every card still to come out of it — releasing that while the shoe is
+        /// still in play would hand any player the rest of the deal, dealer hole cards included. Until then this
+        /// returns the commitment (which was published before the deal and cannot be changed after it), and the
+        /// full proof becomes available the moment the shoe is replaced.
         /// </summary>
         [AllowAnonymous]
         [HttpGet("verify/{handId}")]
@@ -338,9 +370,63 @@ namespace Khela.Game.Controllers
             var header = await db.GameHandHeaders.FindAsync(handId);
             if (header == null) return NotFound("Hand not found.");
 
-            var shoe = new Deck(6);
-            shoe.Shuffle(Convert.FromHexString(header.ShuffleSeed));
-            var recomputed = shoe.ComputeHash();
+            // May this hand's seed be published yet? The rule is ShoePlan.MayRevealSeed (unit-tested); this only
+            // supplies it with the table's current shoe. Fail CLOSED if that lookup is unavailable — withholding on
+            // a Redis blip costs a delayed proof, revealing early costs the game.
+            bool mayReveal;
+            try
+            {
+                var liveTable = string.IsNullOrEmpty(header.TableId) ? null : await tableManager.GetTableAsync(header.TableId);
+                mayReveal = ShoePlan.MayRevealSeed(header.ShoeId, liveTable?.ShoeHash);
+            }
+            catch
+            {
+                mayReveal = false;
+            }
+
+            if (!mayReveal)
+            {
+                return Ok(new
+                {
+                    header.HandId,
+                    header.TableId,
+                    header.RoundId,
+                    header.HandNumber,
+                    ShoeCommitment = header.ShoeId,
+                    RecordedDeckHash = header.DeckHash,
+                    header.ResultChecksum,
+                    header.ShoeCardsDealt,
+                    RevealPending = true,
+                    Reason = "This hand's shoe is still in play. Its seed is withheld until the shoe is retired, "
+                           + "because it also determines the cards still to be dealt from it. The commitment above "
+                           + "was published before the deal and cannot change; verify once the shoe is replaced."
+                });
+            }
+
+            // Rebuild the shoe from the recorded seed. The deck COUNT is configurable and can change between hands,
+            // so rather than assume it, try each plausible size and keep the one that reproduces the recorded hash —
+            // which is itself the proof. If none match, the last attempt is returned and Verified comes back false.
+            const int maxDecks = BlackjackTableManager.MaxSupportedDecks;
+            var seedBytes = Convert.FromHexString(header.ShuffleSeed);
+            Deck shoe = null;
+            string recomputed = null;
+            int decks = 0;
+            for (int n = 1; n <= maxDecks; n++)
+            {
+                var candidate = new Deck(n);
+                candidate.Shuffle(seedBytes);
+                var hash = candidate.ComputeHash();
+                shoe = candidate; recomputed = hash; decks = n;
+                if (string.Equals(hash, header.DeckHash, StringComparison.OrdinalIgnoreCase)) break;
+            }
+
+            // With a multi-deck shoe one shuffle spans many hands, so the seed identifies the SHOE and
+            // ShoeCardsDealt says where this hand began in it. Everything before that offset belonged to earlier
+            // hands; the cards from there on are this hand's.
+            var order = shoe.Cards.Select(ProvableShuffle.Canonical).ToList();
+            var fromThisHand = header.ShoeCardsDealt > 0 && header.ShoeCardsDealt < order.Count
+                ? order.Skip(header.ShoeCardsDealt).ToList()
+                : order;
 
             return Ok(new
             {
@@ -354,7 +440,11 @@ namespace Khela.Game.Controllers
                 RecomputedDeckHash = recomputed,
                 Verified = string.Equals(recomputed, header.DeckHash, StringComparison.OrdinalIgnoreCase),
                 header.ResultChecksum,
-                DeckOrder = shoe.Cards.Select(ProvableShuffle.Canonical)
+                DeckCount = decks,                     // decks in the shoe, established by the hash match above
+                ShoeNotes = header.MetadataJson,       // set only when the shoe had to be extended mid-round
+                header.ShoeCardsDealt,                 // cards already dealt from the shoe when this hand began
+                DeckOrder = order,                     // the whole shoe, as shuffled
+                HandDeckOrder = fromThisHand           // the shoe from THIS hand's first card onward
             });
         }
 

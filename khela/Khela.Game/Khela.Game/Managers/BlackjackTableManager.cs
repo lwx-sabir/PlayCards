@@ -2,7 +2,9 @@
 using Khela.Game.Services.Redis;
 using System.Text.Json;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using CardGames.Blackjack;
@@ -43,6 +45,25 @@ namespace Khela.Game.Managers
         private readonly int cfgPlayableSeats;            // highest occupiable seat number (client only supports 1-3)
         private readonly int cfgBettingSeconds;           // between-rounds betting window; 0 disables auto-deal entirely
         private readonly int cfgMaxIdleBettingWindows;    // evict a seat after this many betting windows with no bet; 0 disables
+        private readonly int cfgDeckCount;                // decks per shoe; 1 = reshuffle every round (no cut card)
+        private readonly int cfgShoePenetrationPercent;   // % of the shoe dealt before the cut card
+        private readonly bool cfgReshuffleEveryRound;     // force a fresh shuffle each round even with a multi-deck shoe
+
+        // ---- Lobby tiers ------------------------------------------------------------------------------------
+        // A tier is a stake bracket, NOT a single table: the lobby opens as many tables per tier as the players at
+        // that stake need, and closes the surplus again when they leave (see LobbyPlan).
+        private readonly List<BetTier> cfgTiers;
+        private readonly int cfgMinTablesPerTier;
+        private readonly int cfgMinJoinablePerTier;
+        private readonly int cfgMinEmptyPerTier;
+        private readonly int cfgEmptyTableGraceSeconds;
+        private readonly int cfgLobbyPageSize;
+        private readonly int cfgLobbyFullTablesShown;
+        private readonly int cfgLobbyEmptyTablesShown;
+
+        /// <summary>Largest shoe the audit can reconstruct: GET verify/{handId} identifies a hand's deck count by
+        /// rebuilding candidate sizes until the recorded hash matches, so a shoe bigger than this is unverifiable.</summary>
+        public const int MaxSupportedDecks = 8;
         private readonly int cfgStalledTimeout;     // no heartbeat for this long ⇒ stalled ⇒ §5 removal
         private readonly int cfgDisconnectGrace;    // no heartbeat for this long ⇒ show "disconnected…"
         private int turnDurationSeconds      => RuntimeInt("Blackjack:TurnSeconds", cfgTurnSeconds);
@@ -61,6 +82,55 @@ namespace Khela.Game.Managers
         // (only the heartbeat reaper removes seats). This is the ONLY thing that frees a seat held by a connected but
         // non-betting client — the heartbeat reaper can't, because a live client keeps pinging regardless of betting.
         private int maxIdleBettingWindows    => RuntimeInt("Blackjack:MaxIdleBettingWindows", cfgMaxIdleBettingWindows);
+        // Shoe size in 52-card decks. 1 = the classic behaviour: a fresh shuffle every round, no cut card. >1 = a real
+        // casino shoe that PERSISTS across rounds and is only replaced when the cut card is reached.
+        private int deckCount                => RuntimeInt("Blackjack:DeckCount", cfgDeckCount);
+        // How deep the shoe is dealt before the cut card, as a PERCENT of the shoe (75 = deal 75%, cut with 25% left).
+        // Stored as an int so it can be retuned live from the dashboard like every other knob.
+        private int shoePenetrationPercent   => RuntimeInt("Blackjack:ShoePenetrationPercent", cfgShoePenetrationPercent);
+        // Reshuffle every round even with a multi-deck shoe. This is what reproduces the ORIGINAL pre-shoe behaviour
+        // (six decks, freshly shuffled each round) — DeckCount 1 does not, since that is a single 52-card deck.
+        private bool reshuffleEveryRound     => RuntimeFlag("Blackjack:ReshuffleEveryRound", cfgReshuffleEveryRound);
+
+        private int minTablesPerTier         => RuntimeInt("Blackjack:MinTablesPerTier", cfgMinTablesPerTier);
+        private int minJoinablePerTier       => RuntimeInt("Blackjack:MinJoinableTablesPerTier", cfgMinJoinablePerTier);
+        private int minEmptyPerTier          => RuntimeInt("Blackjack:MinEmptyTablesPerTier", cfgMinEmptyPerTier);
+        private int emptyTableGraceSeconds   => RuntimeInt("Blackjack:EmptyTableGraceSeconds", cfgEmptyTableGraceSeconds);
+
+        // How much of a tier the browser actually receives. A popular tier is dozens of tables; a carousel is not a
+        // list, so the lobby sends a curated page rather than everything (see LobbyPlan.Page).
+        private int lobbyPageSize            => RuntimeInt("Blackjack:LobbyPageSize", cfgLobbyPageSize);
+        private int lobbyFullTablesShown     => RuntimeInt("Blackjack:LobbyFullTablesShown", cfgLobbyFullTablesShown);
+        private int lobbyEmptyTablesShown    => RuntimeInt("Blackjack:LobbyEmptyTablesShown", cfgLobbyEmptyTablesShown);
+
+        /// <summary>
+        /// The stake brackets the lobby offers. Admin-overridable live as a JSON array under
+        /// <c>Blackjack:Tiers</c> in the settings hash, so a tier can be added or retuned without a deploy;
+        /// anything unparseable falls back to appsettings rather than leaving the lobby with no tiers at all.
+        /// </summary>
+        public IReadOnlyList<BetTier> Tiers
+        {
+            get
+            {
+                var raw = RuntimeString("Blackjack:Tiers");
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    try
+                    {
+                        var parsed = JsonSerializer.Deserialize<List<BetTier>>(raw,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        var valid = LobbyPlan.Sanitize(parsed);
+                        if (valid.Count > 0) return valid;
+                        logger.LogWarning("Blackjack:Tiers override had no usable entries — using appsettings tiers.");
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Blackjack:Tiers override is not valid JSON — using appsettings tiers.");
+                    }
+                }
+                return cfgTiers;
+            }
+        }
         private int stalledTimeoutSeconds    => RuntimeInt("Table:StalledTimeoutSeconds", cfgStalledTimeout);
         private int disconnectGraceSeconds   => RuntimeInt("Table:DisconnectGraceSeconds", cfgDisconnectGrace);
         private const string SettingsHashKey = "khela:settings";
@@ -91,6 +161,27 @@ namespace Khela.Game.Managers
             this.cfgPlayableSeats = config.GetValue("Blackjack:PlayableSeats", 3);
             this.cfgBettingSeconds = config.GetValue("Blackjack:BettingSeconds", 15);
             this.cfgMaxIdleBettingWindows = config.GetValue("Blackjack:MaxIdleBettingWindows", 3);
+            this.cfgDeckCount = config.GetValue("Blackjack:DeckCount", 6);
+            this.cfgShoePenetrationPercent = config.GetValue("Blackjack:ShoePenetrationPercent", 75);
+            this.cfgReshuffleEveryRound = config.GetValue("Blackjack:ReshuffleEveryRound", false);
+
+            // Tiers from appsettings; if the section is missing or empty, fall back to the historical three brackets
+            // so an un-updated deployment still has a lobby rather than none.
+            this.cfgTiers = LobbyPlan.Sanitize(config.GetSection("Blackjack:Tiers").Get<List<BetTier>>());
+            if (this.cfgTiers.Count == 0)
+                this.cfgTiers = new List<BetTier>
+                {
+                    new() { MinBet = 1000m,  MaxBet = 10000m  },
+                    new() { MinBet = 5000m,  MaxBet = 25000m  },
+                    new() { MinBet = 25000m, MaxBet = 100000m },
+                };
+            this.cfgMinTablesPerTier      = config.GetValue("Blackjack:MinTablesPerTier", 3);
+            this.cfgMinJoinablePerTier    = config.GetValue("Blackjack:MinJoinableTablesPerTier", 3);
+            this.cfgMinEmptyPerTier       = config.GetValue("Blackjack:MinEmptyTablesPerTier", 1);
+            this.cfgEmptyTableGraceSeconds = config.GetValue("Blackjack:EmptyTableGraceSeconds", 120);
+            this.cfgLobbyPageSize          = config.GetValue("Blackjack:LobbyPageSize", 15);
+            this.cfgLobbyFullTablesShown   = config.GetValue("Blackjack:LobbyFullTablesShown", 3);
+            this.cfgLobbyEmptyTablesShown  = config.GetValue("Blackjack:LobbyEmptyTablesShown", 1);
             this.cfgStalledTimeout = config.GetValue("Table:StalledTimeoutSeconds", 30);
             this.cfgDisconnectGrace = config.GetValue("Table:DisconnectGraceSeconds", 20);
             this.emoteCooldownMs = config.GetValue("Emotes:CooldownMs", 1500);
@@ -124,6 +215,22 @@ namespace Khela.Game.Managers
                 }
             }
             return settingsSnapshot.TryGetValue(key, out var v) && int.TryParse(v, out var x) && x > 0 ? x : fallback;
+        }
+
+        // Same overlay as RuntimeInt, for a value that isn't a number (currently the tier list, as JSON).
+        // Returns null when there is no override, so the caller falls back to appsettings.
+        private string RuntimeString(string key)
+        {
+            RuntimeInt(key, 0);   // refresh the shared snapshot / honour the same cache window
+            return settingsSnapshot.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
+        }
+
+        // Same overlay as RuntimeInt, for an on/off knob. Unlike RuntimeInt this accepts 0, so a flag can be turned
+        // back OFF from the admin dashboard and not just on. Anything unparseable keeps the appsettings default.
+        private bool RuntimeFlag(string key, bool fallback)
+        {
+            RuntimeInt(key, 0);   // refresh the shared snapshot / honour the same cache window
+            return settingsSnapshot.TryGetValue(key, out var v) && int.TryParse(v, out var x) ? x != 0 : fallback;
         }
 
         // ---- Wallet integration (this manager is a singleton; resolve the scoped wallet per op) ----
@@ -326,8 +433,15 @@ namespace Khela.Game.Managers
         {
             try
             {
+                // Derive from the SHOE nonce, not the round nonce: with a persistent multi-deck shoe one shuffle spans
+                // many rounds, so RoundNonce would record a seed that never produced this hand's cards.
+                //
+                // ShoeNonce 0 means this round was DEALT before the shoe existed — a round in flight across a deploy,
+                // settling on the new build. Those cards came from a RoundNonce-derived shuffle, so record that
+                // instead; otherwise the one hand straddling the upgrade would verify false forever.
+                var seedNonce = table.ShoeNonce > 0 ? table.ShoeNonce : table.RoundNonce;
                 var roundSeed = ProvableShuffle.DeriveSeed(
-                    Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
+                    Convert.FromHexString(table.ServerSeed), table.ClientSeed, seedNonce);
 
                 var header = new GameHandHeader
                 {
@@ -338,7 +452,14 @@ namespace Khela.Game.Managers
                     StartedAt = table.RoundStartedAt?.UtcDateTime ?? DateTime.UtcNow,
                     SettledAt = DateTime.UtcNow,
                     Status = HandStatus.Settled,
-                    ShoeId = table.ServerSeedHash,
+                    ShoeId = string.IsNullOrEmpty(table.ShoeHash) ? table.ServerSeedHash : table.ShoeHash,
+                    ShoeCardsDealt = table.ShoeDealtAtRoundStart,   // where in the shoe this hand started
+                    // Normally absent. A shoe that had to extend itself mid-round dealt cards BEYOND the shuffle the
+                    // recorded hash covers, so replay needs to know to derive those continuation segments too —
+                    // otherwise the hand verifies against a shoe that is missing some of its own cards.
+                    MetadataJson = (table.Game?.ShoeExtensions ?? 0) > 0
+                        ? JsonSerializer.Serialize(new { shoeExtensions = table.Game.ShoeExtensions, extensionSeedLabel = "shoe-ext" })
+                        : null,
                     ShuffleSeed = Convert.ToHexString(roundSeed).ToLowerInvariant(),
                     DeckHash = table.CurrentDeckHash,
                     // Chain to the previous settled hand on this table (genesis = the published server-seed commitment),
@@ -426,7 +547,9 @@ namespace Khela.Game.Managers
             var dealer = string.Join(",", table.Game.Dealer.Hand.Cards.Select(ProvableShuffle.Canonical));
             var players = string.Join(";", participants.OrderBy(p => p.SeatNumber)
                 .Select(p => $"{p.SeatNumber}:{p.FinalHandValue}:{p.Outcome}:{p.Payout}"));
-            var canonical = $"{table.CurrentDeckHash}|D={dealer}|{players}";
+            // The deck hash identifies the SHOE, which now spans many rounds — so it no longer distinguishes one
+            // round from the next on its own. The round id and the shoe offset pin the checksum to this hand.
+            var canonical = $"{table.CurrentDeckHash}|R={table.CurrentRoundId}|O={table.ShoeDealtAtRoundStart}|D={dealer}|{players}";
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         }
 
@@ -483,10 +606,27 @@ namespace Khela.Game.Managers
             var json = await redisService.GetDatabase().StringGetAsync(GetKey(tableId));
             if (json.IsNullOrEmpty) return null;
 
-            var table = JsonSerializer.Deserialize<BlackjackTable>(json);
+            return ParseTable(json);
+        }
+
+        /// <summary>
+        /// Turn stored JSON into a usable table. Split out so a caller that has already fetched the bytes — the
+        /// round-driver tick, which reads once and only sometimes needs the full object — doesn't have to fetch
+        /// them again just to get them parsed.
+        /// </summary>
+        private BlackjackTable ParseTable(RedisValue json)
+        {
+            if (json.IsNullOrEmpty) return null;
+
+            BlackjackTable table;
+            try { table = JsonSerializer.Deserialize<BlackjackTable>(json); }
+            catch { return null; }
             if (table == null) return null;
 
             NormalizeSeats(table);
+            // Object identity doesn't survive JSON: re-point the dealer and every player at the single stored shoe,
+            // so mid-round draws all come off the same deck (see BlackJackGame.AttachDeck).
+            table.Game?.AttachDeck();
             return table;
         }
 
@@ -528,6 +668,29 @@ namespace Khela.Game.Managers
         /// Use as <c>await using var _ = await LockTableAsync(tableId);</c> at the top of any method that
         /// reads-mutates-writes the table, so concurrent actions on the same table serialise.
         /// </summary>
+        /// <summary>
+        /// Take the table lock only if it comes free within <paramref name="budget"/>, otherwise return null.
+        ///
+        /// For callers where waiting is worse than skipping — a keep-alive, a read-only refresh — because the full
+        /// <see cref="LockTableAsync"/> budget is ~5 seconds and ends in an exception, which turns "the table is
+        /// briefly busy" into a visible failure for the player.
+        /// </summary>
+        private async Task<TableLock> TryLockTableAsync(string tableId, TimeSpan budget)
+        {
+            var db = redisService.GetDatabase();
+            var key = $"bjlock:{tableId}";
+            var token = Guid.NewGuid().ToString("N");
+            var deadline = DateTime.UtcNow + budget;
+
+            while (true)
+            {
+                if (await db.StringSetAsync(key, token, TableLockTtl, When.NotExists))
+                    return new TableLock(db, key, token);
+                if (DateTime.UtcNow >= deadline) return null;
+                await Task.Delay(TableLockRetryDelay);
+            }
+        }
+
         private async Task<TableLock> LockTableAsync(string tableId)
         {
             var db = redisService.GetDatabase();
@@ -557,7 +720,7 @@ namespace Khela.Game.Managers
 
             public async ValueTask DisposeAsync()
             {
-                try { await _db.ScriptEvaluateAsync(ReleaseLua, new RedisKey[] { _key }, new RedisValue[] { _token }); }
+                 try { await _db.ScriptEvaluateAsync(ReleaseLua, new RedisKey[] { _key }, new RedisValue[] { _token }); }
                 catch { /* the lock TTL will clean it up */ }
             }
         }
@@ -568,89 +731,321 @@ namespace Khela.Game.Managers
         /// Browsable list of blackjack tables for the lobby, optionally filtered by mode.
         /// Self-heals: ids whose table key has expired (TTL) are pruned from the index.
         /// </summary>
-        public async Task<List<BlackjackTableSummary>> GetLobbyAsync(BlackjackMode? mode = null)
+        /// <param name="minBet">With <paramref name="maxBet"/>, restricts the list to ONE bet tier — what the
+        /// client's stake filter sends. Omit both to browse every tier.</param>
+        public async Task<List<BlackjackTableSummary>> GetLobbyAsync(
+            BlackjackMode? mode = null, decimal? minBet = null, decimal? maxBet = null)
+        {
+            // The table browser is the single most-requested screen in the game and its contents barely change
+            // between one player's request and the next. Serving a shared snapshot for a moment turns "every
+            // browsing player reads every table" into "one read regardless of how many are browsing" — which is
+            // the difference between the lobby costing nothing at a hundred players and costing everything.
+            var cacheKey = $"{mode?.ToString() ?? "*"}|{minBet?.ToString(CultureInfo.InvariantCulture) ?? "*"}|{maxBet?.ToString(CultureInfo.InvariantCulture) ?? "*"}";
+            if (lobbyCache.TryGetValue(cacheKey, out var hit) && DateTimeOffset.UtcNow < hit.Expires)
+                return hit.Rows;
+
+            var rows = await BuildLobbyAsync(mode, minBet, maxBet);
+
+            // A genuinely empty result means the tier has not been stocked yet — a cold start, before the driver's
+            // first balance pass. That is the ONE case worth making the player wait for, so they never see an
+            // empty lobby; every other load leaves balancing to the driver and returns immediately.
+            if (rows.Count == 0)
+            {
+                await BalanceLobbyAsync();
+                rows = await BuildLobbyAsync(mode, minBet, maxBet);
+            }
+
+            lobbyCache[cacheKey] = (DateTimeOffset.UtcNow.Add(LobbyCacheWindow), rows);
+            return rows;
+        }
+
+        /// <summary>How long a lobby snapshot is shared for. Long enough that a crowd costs one read, short enough
+        /// that a table filling up shows within a beat.</summary>
+        private static readonly TimeSpan LobbyCacheWindow = TimeSpan.FromMilliseconds(1500);
+
+        private readonly ConcurrentDictionary<string, (DateTimeOffset Expires, List<BlackjackTableSummary> Rows)>
+            lobbyCache = new();
+
+        private async Task<List<BlackjackTableSummary>> BuildLobbyAsync(
+            BlackjackMode? mode, decimal? minBet, decimal? maxBet)
         {
             var db = redisService.GetDatabase();
 
-            // Always ensure the full set of default house tables exists before listing — so a player never lands
-            // on an empty OR partial lobby (e.g. after some idle tables expired). Tops up only what's missing.
-            await EnsureDefaultTablesAsync();
-
             var ids = await db.SetMembersAsync(LobbyIndexKey);
-            var summaries = new List<BlackjackTableSummary>();
+            var rows = new List<(BlackjackTableSummary Summary, TableCapacity Capacity)>();
+            if (ids.Length == 0) return new List<BlackjackTableSummary>();
+
+            // ONE round trip for the whole lobby instead of one per table. With a tier holding thirty tables and
+            // several tiers open, the old per-table read made browsing cost more than playing.
+            var keys = ids.Select(id => (RedisKey)GetKey((string)id)).ToArray();
+            var blobs = await db.StringGetAsync(keys);
             var stale = new List<RedisValue>();
 
-            foreach (var id in ids)
+            for (int i = 0; i < ids.Length; i++)
             {
-                var table = await GetTableAsync((string)id);
-                if (table == null) { stale.Add(id); continue; } // key expired (TTL) -> drop from index
-                if (mode.HasValue && table.Mode != mode.Value) continue;
-                summaries.Add(ToSummary(table));
+                if (blobs[i].IsNullOrEmpty) { stale.Add(ids[i]); continue; }   // key expired (TTL) -> drop from index
+
+                // Parsed into the LIGHTWEIGHT shape. A stored table carries its whole shoe — 312 cards — plus every
+                // hand; rebuilding all of that for tables we are about to filter out by stake was the real cost
+                // here, not the round trips. TableLite declares only what the lobby shows and the parser skips the
+                // rest of the document without allocating it.
+                TableLite t;
+                try { t = JsonSerializer.Deserialize<TableLite>(blobs[i]); }
+                catch { continue; }
+                if (t == null) continue;
+
+                if (mode.HasValue && t.Mode != mode.Value) continue;
+                if (minBet.HasValue && t.MinBet != minBet.Value) continue;
+                if (maxBet.HasValue && t.MaxBet != maxBet.Value) continue;
+
+                int occupied = t.Seats?.Count(s => s.Player != null) ?? 0;
+                rows.Add((ToSummary(t), new TableCapacity
+                {
+                    TableId = t.TableId,
+                    Occupied = occupied,
+                    Capacity = Math.Clamp(playableSeats, 1, Math.Max(1, t.MaxPlayers)),
+                    EmptySince = occupied == 0 ? (t.EmptySince ?? DateTimeOffset.UtcNow) : null,
+                }));
             }
 
             if (stale.Count > 0) await db.SetRemoveAsync(LobbyIndexKey, stale.ToArray());
 
-            return summaries
-                .OrderBy(s => s.Mode)
-                .ThenBy(s => s.MinBet)
-                .ThenBy(s => s.TableId)
-                .ToList();
+            // Cap PER TIER, not across the whole result — so browsing unfiltered still shows a sensible spread of
+            // every bracket instead of the busiest one crowding the rest out. LobbyPlan.Page decides the mix;
+            // within a tier the order is fullest-first with the empty table last, which is what makes the final
+            // card in the carousel the one you sit at to play alone.
+            var result = new List<BlackjackTableSummary>(rows.Count);
+            foreach (var group in rows.GroupBy(r => (r.Summary.Mode, r.Summary.MinBet, r.Summary.MaxBet))
+                                      .OrderBy(g => g.Key.Mode).ThenBy(g => g.Key.MinBet))
+            {
+                var page = LobbyPlan.Page(group, r => r.Capacity,
+                    lobbyPageSize, lobbyFullTablesShown, lobbyEmptyTablesShown);
+                result.AddRange(page.Select(r => r.Summary));
+            }
+            return result;
         }
 
-        // The "house tables" the lobby always offers. EnsureDefaultTablesAsync tops up any that are missing
-        // (matched by mode + min/max), under an NX seed-lock so concurrent loads don't duplicate. Replace with
-        // proper table lifecycle + bot seeding later.
-        private static readonly (BlackjackMode mode, decimal min, decimal max)[] DefaultTables =
-        {
-            (BlackjackMode.Classic, 1000m, 10000m),
-            (BlackjackMode.Classic, 5000m, 25000m),
-            (BlackjackMode.Classic, 25000m, 100000m),
-        };
+        /// <summary>
+        /// Keeps every bet tier stocked: opens tables as a tier fills up, and reclaims the surplus once it empties
+        /// again. A tier is a STAKE BRACKET, not one table — ninety players at three seats is thirty tables, and the
+        /// lobby has to reach that on its own.
+        ///
+        /// What the floors are and why is documented on <see cref="LobbyPlan"/>; this only supplies the current
+        /// state and carries out the decision. A short NX lock serialises concurrent callers (every lobby load and
+        /// every driver tick lands here) so a burst of them can't each open the same batch of tables.
+        /// </summary>
+        /// <summary>Last time a balance pass actually ran, so player-facing calls can skip a redundant one.</summary>
+        private long lastBalanceTicks;
+        private static readonly TimeSpan BalanceMinInterval = TimeSpan.FromSeconds(5);
 
         /// <summary>
-        /// Ensures every default house table exists, creating ONLY the ones currently missing (matched by mode +
-        /// min/max) — so a player always gets the complete lobby, even if some idle tables had expired. A short NX
-        /// lock serialises concurrent lobby loads so the missing set is created once, never duplicated.
+        /// Balance only if nobody has in the last couple of seconds. The round-driver already balances on its own
+        /// tick, so a player loading the lobby should not pay for a pass that just happened — at scale that is the
+        /// difference between the lobby costing one Redis read and costing a full rebalance per browsing player.
         /// </summary>
-        public async Task EnsureDefaultTablesAsync()
+        public Task BalanceLobbyIfDueAsync()
         {
+            var now = DateTimeOffset.UtcNow.Ticks;
+            var last = Interlocked.Read(ref lastBalanceTicks);
+            if (now - last < BalanceMinInterval.Ticks) return Task.CompletedTask;
+            if (Interlocked.CompareExchange(ref lastBalanceTicks, now, last) != last) return Task.CompletedTask;
+            return BalanceLobbyAsync();
+        }
+
+        public async Task BalanceLobbyAsync()
+        {
+            Interlocked.Exchange(ref lastBalanceTicks, DateTimeOffset.UtcNow.Ticks);
             var db = redisService.GetDatabase();
-            if ((await MissingDefaultsAsync(db)).Count == 0) return;   // fast path — the full set is already present
+            var tiers = Tiers;
+            if (tiers.Count == 0) return;
+
+            var grace = TimeSpan.FromSeconds(Math.Max(0, emptyTableGraceSeconds));
+            var now = DateTimeOffset.UtcNow;
+
+            // Cheap unlocked pre-check so a settled lobby does no work and takes no lock on most ticks.
+            var snapshot = await LoadTierStateAsync(db, tiers);
+            bool anyWork = tiers.Any(t =>
+                LobbyPlan.TablesToCreate(snapshot[t.Key], minTablesPerTier, minJoinablePerTier, minEmptyPerTier) > 0 ||
+                LobbyPlan.TablesToRemove(snapshot[t.Key], minTablesPerTier, minJoinablePerTier, minEmptyPerTier, grace, now).Count > 0);
+            if (!anyWork) return;
 
             var lockKey = "blackjack:tables:seedlock";
             var token = Guid.NewGuid().ToString("N");
             if (!await db.StringSetAsync(lockKey, token, TimeSpan.FromSeconds(10), When.NotExists))
-                return;   // another lobby load is already creating them
+                return;   // another caller is already balancing
             try
             {
-                foreach (var d in await MissingDefaultsAsync(db))   // re-check under the lock
-                    await CreateTableAsync(maxPlayers: 5, maxSeatsPerUser: 1, mode: d.mode, minBet: d.min, maxBet: d.max);
+                snapshot = await LoadTierStateAsync(db, tiers);   // re-read under the lock
+                foreach (var tier in tiers)
+                {
+                    var state = snapshot[tier.Key];
+
+                    int create = LobbyPlan.TablesToCreate(state, minTablesPerTier, minJoinablePerTier, minEmptyPerTier);
+                    for (int i = 0; i < create; i++)
+                        await CreateTableAsync(maxPlayers: 5, maxSeatsPerUser: 1,
+                            mode: BlackjackMode.Classic, minBet: tier.MinBet, maxBet: tier.MaxBet);
+                    if (create > 0)
+                        logger.LogInformation("Lobby: opened {N} table(s) for tier {Tier} ({Have} existing)", create, tier.Key, state.Count);
+
+                    foreach (var id in LobbyPlan.TablesToRemove(state, minTablesPerTier, minJoinablePerTier, minEmptyPerTier, grace, now))
+                    {
+                        // The decision came from a snapshot, and a player can sit down between reading it and acting
+                        // on it. Take the table's own lock and re-check that it is STILL empty and idle before
+                        // deleting — deleting a table with someone at it would strand a live stake.
+                        await using var tableLock = await LockTableAsync(id);
+                        var live = await GetTableAsync(id);
+                        if (live == null)
+                        {
+                            await db.SetRemoveAsync(LobbyIndexKey, id);   // already gone; just tidy the index
+                            continue;
+                        }
+                        if (live.RoundInProgress || live.Seats.Any(s => s.Player != null))
+                        {
+                            logger.LogDebug("Lobby: table {TableId} was claimed while being reclaimed — left alone", id);
+                            continue;
+                        }
+
+                        await db.SetRemoveAsync(LobbyIndexKey, id);
+                        await db.KeyDeleteAsync(GetKey(id));
+                        logger.LogInformation("Lobby: reclaimed empty table {TableId} from tier {Tier}", id, tier.Key);
+                    }
+                }
             }
             finally
             {
+                // Tables were opened or reclaimed, so any shared lobby snapshot now describes a lobby that no
+                // longer exists. Drop it rather than let a browsing player see a table that has just been removed.
+                lobbyCache.Clear();
+
                 await db.ScriptEvaluateAsync(
                     "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
                     new RedisKey[] { lockKey }, new RedisValue[] { token });
             }
         }
 
-        // The default-table configs that have no matching live table right now (matched by mode + min/max).
-        private async Task<List<(BlackjackMode mode, decimal min, decimal max)>> MissingDefaultsAsync(IDatabase db)
+        /// <summary>Current tables grouped by tier key. Tables whose stakes match no configured tier are ignored —
+        /// a retired tier's tables are left alone to empty out naturally rather than being deleted under players.</summary>
+        private async Task<Dictionary<string, List<TableCapacity>>> LoadTierStateAsync(IDatabase db, IReadOnlyList<BetTier> tiers)
         {
+            // Built with an explicit loop, not ToDictionary: a duplicate key must never be able to throw out of the
+            // lobby endpoint. Sanitize already removes duplicates — this is the belt to that braces.
+            var byTier = new Dictionary<string, List<TableCapacity>>(StringComparer.Ordinal);
+            foreach (var t in tiers) byTier[t.Key] = new List<TableCapacity>();
+
             var ids = await db.SetMembersAsync(LobbyIndexKey);
-            var live = new List<BlackjackTable>();
-            foreach (var id in ids)
+            if (ids.Length == 0) return byTier;
+
+            // ONE round trip for every table, not one per table. This runs on the driver's tick, so it must not
+            // scale its latency with the size of the lobby.
+            var keys = ids.Select(id => (RedisKey)GetKey((string)id)).ToArray();
+            var blobs = await db.StringGetAsync(keys);
+            var stale = new List<RedisValue>();
+
+            for (int i = 0; i < ids.Length; i++)
             {
-                var t = await GetTableAsync((string)id);
-                if (t != null) live.Add(t);
+                if (blobs[i].IsNullOrEmpty) { stale.Add(ids[i]); continue; }   // TTL-expired — drop from the index
+
+                // Parsed into a LIGHTWEIGHT shape, never the whole table. A stored table carries its entire shoe —
+                // 312 cards — and every player's hands; materialising all of that just to count occupied seats
+                // would mean tens of thousands of throwaway objects per pass. TableLite declares only the handful
+                // of fields the balancer reads, and System.Text.Json skips the rest of the document without
+                // allocating it.
+                TableLite t;
+                try { t = JsonSerializer.Deserialize<TableLite>(blobs[i]); }
+                catch { continue; }
+                if (t == null) continue;
+
+                // Tiers describe the stakes of the tables the balancer itself opens, which are Classic. A variant
+                // table with the same stakes is a different product and must not be counted as stocking this tier.
+                if (t.Mode != BlackjackMode.Classic) continue;
+
+                var tier = tiers.FirstOrDefault(x => x.Matches(t.MinBet, t.MaxBet));
+                if (tier == null) continue;
+
+                int occupied = t.Seats?.Count(s => s.Player != null) ?? 0;
+                byTier[tier.Key].Add(new TableCapacity
+                {
+                    TableId = t.TableId,
+                    Occupied = occupied,
+                    Capacity = Math.Clamp(playableSeats, 1, Math.Max(1, t.MaxPlayers)),
+                    // Tables that predate this field, or that emptied before it existed, are treated as empty from
+                    // now — they get a full grace period rather than being reclaimed instantly on upgrade.
+                    EmptySince = occupied == 0 ? (t.EmptySince ?? DateTimeOffset.UtcNow) : null,
+                });
             }
-            return DefaultTables
-                .Where(d => !live.Any(t => t.Mode == d.mode && t.MinBet == d.min && t.MaxBet == d.max))
-                .ToList();
+
+            if (stale.Count > 0) await db.SetRemoveAsync(LobbyIndexKey, stale.ToArray());
+            return byTier;
         }
 
-        /// <summary>DEV: wipe the seeded house tables (lobby index + table entries + seed guard) and re-create
-        /// them. Use after editing <see cref="DefaultTables"/> so the lobby reflects the new stakes/seats.</summary>
+        /// <summary>
+        /// The few fields the lobby balancer needs from a stored table. Deliberately does NOT declare Game, so the
+        /// shoe and every hand are skipped by the parser instead of being rebuilt as objects nobody looks at.
+        /// </summary>
+        private sealed class TableLite
+        {
+            public string TableId { get; set; }
+            public BlackjackMode Mode { get; set; }
+            public decimal MinBet { get; set; }
+            public decimal MaxBet { get; set; }
+            public int MaxPlayers { get; set; }
+            public bool RoundInProgress { get; set; }
+            public DateTimeOffset? EmptySince { get; set; }
+            public List<SeatLite> Seats { get; set; }
+
+            internal sealed class SeatLite
+            {
+                public int SeatNumber { get; set; }
+                public PlayerLite Player { get; set; }
+            }
+
+            /// <summary>Just what a lobby card shows about someone sitting there — never their hand or their shoe.</summary>
+            internal sealed class PlayerLite
+            {
+                public string Id { get; set; }
+                public string Name { get; set; }
+                public string Image { get; set; }
+                public decimal Balance { get; set; }
+                public int SeatNumber { get; set; }
+            }
+        }
+
+        /// <summary>
+        /// Build a lobby card from the lightweight shape. Mirrors <see cref="ToSummary(BlackjackTable)"/> — keep the
+        /// two in step; this one exists so browsing never has to rebuild a table's shoe just to show its stakes.
+        /// </summary>
+        private BlackjackTableSummary ToSummary(TableLite t)
+        {
+            var occupants = (t.Seats ?? new List<TableLite.SeatLite>())
+                .Where(s => s.Player != null)
+                .Select(s => new TableOccupant
+                {
+                    SeatNumber = s.SeatNumber != 0 ? s.SeatNumber : s.Player.SeatNumber,
+                    Name = s.Player.Name,
+                    Image = s.Player.Image,
+                    Balance = s.Player.Balance
+                })
+                .ToList();
+
+            return new BlackjackTableSummary
+            {
+                TableId = t.TableId,
+                Mode = t.Mode,
+                MinBet = t.MinBet,
+                MaxBet = t.MaxBet,
+                // Advertise the PLAYABLE capacity, not the raw seat count — see ToSummary(BlackjackTable).
+                MaxPlayers = Math.Clamp(playableSeats, 1, Math.Max(1, t.MaxPlayers)),
+                SeatsOccupied = occupants.Count,
+                RoundInProgress = t.RoundInProgress,
+                Occupants = occupants
+            };
+        }
+
+        /// <summary>Back-compat alias — the lobby used to seed a fixed set of house tables. See <see cref="BalanceLobbyAsync"/>.</summary>
+        public Task EnsureDefaultTablesAsync() => BalanceLobbyAsync();
+
+        /// <summary>DEV: wipe every lobby table (index + entries) and let the balancer rebuild each tier from
+        /// scratch. Use after changing the configured tiers so the lobby reflects the new stakes.</summary>
         public async Task<List<BlackjackTableSummary>> ReseedDefaultTablesAsync()
         {
             var db = redisService.GetDatabase();
@@ -692,10 +1087,36 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> AddPlayerAsync(string tableId, Player player, int? requestedSeat = null)
         {
+            // Read the wallet BEFORE taking the table lock. It is a database round trip, and on a cold server that
+            // means EF's first model build and connection open — seconds, not milliseconds. Holding a table's lock
+            // across it blocks every other action on that table for the duration, and the joiner's own request can
+            // outlive the client's patience. Nothing here depends on the table, so it does not belong inside.
+            var chips = await GetWalletChipsAsync(player.Id);
+
             await using var _tableLock = await LockTableAsync(tableId);
 
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
+
+            // IDEMPOTENT: joining a table you are already sitting at SUCCEEDS and returns the board.
+            //
+            // A join is "make sure I am seated here", not "add another seat". Treating a repeat as an error breaks
+            // the one case that matters most: a slow join that the client gave up on. The request still lands, the
+            // player IS seated, the client retries, and the retry is rejected — so the table reports failure while
+            // the lobby shows them sitting at it. Retrying a request that already succeeded must be safe.
+            var alreadyMine = table.Seats.FirstOrDefault(s => s.Player != null && s.Player.Id == player.Id);
+            if (alreadyMine != null &&
+                (!requestedSeat.HasValue || requestedSeat.Value == alreadyMine.SeatNumber
+                 || table.Seats.Count(s => s.Player != null && s.Player.Id == player.Id) >= table.MaxSeatsPerUser))
+            {
+                // Treat it as a fresh arrival for liveness — a client that had to retry has not been heartbeating.
+                alreadyMine.LastHeartbeatAt = DateTime.UtcNow;
+                alreadyMine.IsConnected = true;
+                alreadyMine.IsStalled = false;
+                table.EmptySince = null;
+                await SaveTableAsync(tableId, table);
+                return table;
+            }
 
             var existingSeatsForUser = table.Seats.Count(s => s.Player != null && s.Player.Id == player.Id);
             if (existingSeatsForUser >= table.MaxSeatsPerUser)
@@ -723,8 +1144,9 @@ namespace Khela.Game.Managers
                     throw new InvalidOperationException("Table is full.");
             }
 
-            // Seat from the AUTHORITATIVE wallet balance — never trust a client-supplied balance.
-            var chips = await GetWalletChipsAsync(player.Id);
+            // Seat from the AUTHORITATIVE wallet balance — never trust a client-supplied balance. Read above the
+            // lock (see the top of this method); it is only a display mirror and the board re-syncs it on every
+            // money operation, so reading it a moment earlier costs nothing and keeps the lock short.
             var seatedPlayer = new Player(player.Id, chips, player.Name, player.Image, openSeat.SeatNumber);
 
             openSeat.Player = seatedPlayer;
@@ -733,6 +1155,9 @@ namespace Khela.Game.Managers
             openSeat.IsStalled = false;
             openSeat.MissedBetWindows = 0;
             table.Game.Players.Add(seatedPlayer);
+
+            // Someone is here: this table is no longer surplus, so stop its reclaim clock.
+            table.EmptySince = null;
 
             // Start the betting clock so a player who sits and NEVER bets still accumulates idle windows toward
             // eviction. No-op mid-round (ArmBettingWindow bails on RoundInProgress) — settle arms it when the round ends.
@@ -789,11 +1214,28 @@ namespace Khela.Game.Managers
             // player to sit gets a FRESH full window: ArmBettingWindow deliberately won't reset a live deadline, so
             // without this a fast rejoin would inherit the previous occupant's leftover countdown — the "bet timer
             // starts at a random time / where the last player left" bug. Shared windows survive while anyone remains.
-            if (!table.Seats.Any(s => s.Player != null))
+            if (ShoePlan.TableIsEmpty(table))
             {
                 table.BettingExpiresAt = null;
                 table.BetPresentAcked = false;
                 table.BetPresentAckedSeats = new List<int>();
+
+                // A table that has gone COMPLETELY empty also retires its shoe, so whoever opens it next starts on a
+                // fresh one — the way a real table opens with a new shoe rather than resuming a stranger's half-dealt
+                // one. Note this is the LAST player leaving, not any player: a shoe has to survive people coming and
+                // going, or a busy table would reshuffle every few minutes and the shoe would mean nothing.
+                //
+                // Only the shoe's identity is cleared, never Game.Deck: clearing that could pull cards out from under
+                // a round still settling. Dropping the identity is enough — the next deal sees no shoe and builds one
+                // (ShoePlan.Decide), and the verify endpoint sees nothing live and releases the seeds of every hand
+                // played on the old shoe, which is what stops a proof being withheld indefinitely.
+                table.ShoeHash = null;
+                table.ShoeSize = 0;
+                table.CutCardAt = 0;
+                table.ShoeDealtAtRoundStart = 0;
+
+                // Start the clock the lobby balancer uses to decide whether this table is surplus.
+                table.EmptySince ??= DateTimeOffset.UtcNow;
             }
         }
 
@@ -804,7 +1246,14 @@ namespace Khela.Game.Managers
         /// </summary>
         public async Task<BlackjackTable?> RecordHeartbeatAsync(string tableId, string userId)
         {
-            await using var _tableLock = await LockTableAsync(tableId);
+            // A heartbeat stamps ONE timestamp. It must never wait on, or fail because of, whatever else the table
+            // is doing: a deal holds the table lock across its wallet debit, and if a keep-alive blocks for the full
+            // retry budget and then throws, the player sees an error, their seat goes stale, and the reaper evicts
+            // someone who was sitting right there playing. So take the lock only if it is free RIGHT NOW, and if it
+            // isn't, skip this beat — the next one is seconds away, and the reaper's own mid-round guard covers the
+            // gap. Losing a heartbeat is nothing; losing the seat is the game.
+            await using var _tableLock = await TryLockTableAsync(tableId, TimeSpan.FromMilliseconds(400));
+            if (_tableLock == null) return await GetTableAsync(tableId);   // busy — report state, write nothing
 
             var table = await GetTableAsync(tableId);
             if (table == null) return null;
@@ -1009,11 +1458,25 @@ namespace Khela.Game.Managers
             // work (a corrupt ServerSeed would make FromHexString throw); doing it first means a failure
             // here can never strand a stake that was already debited.
             var roundId = table.CurrentRoundId;
-            var roundSeed = ProvableShuffle.DeriveSeed(
-                Convert.FromHexString(table.ServerSeed), table.ClientSeed, table.RoundNonce);
-            var shoeForHash = new Deck(6);
-            shoeForHash.Shuffle(roundSeed);
-            var deckHash = shoeForHash.ComputeHash();
+
+            // ---- SHOE lifecycle -------------------------------------------------------------------------------
+            // Decided by ShoePlan.Decide (pure, unit-tested). NOTHING is written back to the table here: a deal can
+            // still fail below (e.g. "No funded bets"), and committing a shoe that was never dealt would leave the
+            // table pinned to a phantom shoe whose hash the audit would then certify against cards nobody saw.
+            // The plan is applied only once DealNewGame has actually installed it.
+            var shoePlan = ShoePlan.Decide(table, deckCount, shoePenetrationPercent, reshuffleEveryRound);
+            int decks = shoePlan.Decks;
+
+            byte[] roundSeed = ProvableShuffle.DeriveSeed(
+                Convert.FromHexString(table.ServerSeed), table.ClientSeed, shoePlan.ShoeNonce);
+
+            if (shoePlan.NewShoe)
+            {
+                var fresh = new Deck(decks);
+                fresh.Shuffle(roundSeed);
+                shoePlan.ShoeHash = fresh.ComputeHash();
+            }
+            var deckHash = shoePlan.ShoeHash;
 
             // Reserve each wager from the AUTHORITATIVE wallet NOW (debit-on-bet): the stake leaves the
             // wallet at deal, so the same chips can't be staked at another table/seat and a loss can never
@@ -1055,7 +1518,21 @@ namespace Khela.Game.Managers
             // chips (e.g. a Redis/SignalR blip in SaveTableAsync).
             try
             {
-                table.Game.DealNewGame(roundSeed, 6);
+                // newShoe: false keeps dealing from the PERSISTENT shoe; the block above already replaced it if this
+                // round needed a fresh one (single deck, first deal, or the cut card was reached last round).
+                table.Game.DealNewGame(roundSeed, decks, newShoe: shoePlan.NewShoe);
+
+                // The shoe is now actually installed, so it is safe to commit its identity to the table. Doing this
+                // BEFORE the deal would leave a failed deal pinned to a shoe that was never dealt.
+                table.ShoeNonce = shoePlan.ShoeNonce;
+                table.ShoeHash = shoePlan.ShoeHash;
+                table.ShoeSize = shoePlan.ShoeSize;
+                table.CutCardAt = shoePlan.CutCardAt;
+                table.ShoeDealtAtRoundStart = shoePlan.ShoeDealtAtRoundStart;
+                if (shoePlan.NewShoe)
+                    logger.LogInformation("Table {TableId}: new {Decks}-deck shoe #{Nonce} ({Reason}); cut card at {Cut} cards left",
+                        table.TableId, shoePlan.Decks, shoePlan.ShoeNonce, shoePlan.Reason, shoePlan.CutCardAt);
+
                 ApplyDevDealerRig(table);        // DEV: force dealer cards for insurance testing (no-op unless armed)
                 ApplyDevDealerTenUpRig(table);   // DEV: force a TEN up-card for PEEK testing (runs after, so it wins if both armed)
                 ApplyDevPlayerPairRig(table);    // DEV: force a splittable player pair for split testing (no-op unless armed)
@@ -1292,12 +1769,29 @@ namespace Khela.Game.Managers
             AutoStandOnTwentyOne(player, handIndex);
             AutoStandOnTwentyOne(player, splitIndex);
 
-            // Split aces are locked to one card each (both hands Done) → advance off this player. A normal
-            // split leaves the current hand playable → keep the turn here so the player plays hand `handIndex`.
-            if (player.GetHand(handIndex).Done)
-                AdvanceTurn(table);
+            // Hand the turn to whichever of THIS seat's hands canonical order says acts first. After a split that is
+            // the RIGHT-hand position — i.e. the hand just created, NOT the hand that was split — so we can't simply
+            // keep the turn on `handIndex` any more. Asking GetOrderedHands rather than assuming an index keeps this
+            // correct whichever direction that ordering runs, and it already skips the hands AutoStandOnTwentyOne
+            // just finished. If neither hand can act (split aces, or both auto-stood on 21) the seat is done.
+            int? firstHandThisSeat = null;
+            foreach (var h in GetOrderedHands(table))
+            {
+                if (h.seat != seatNumber) continue;
+                firstHandThisSeat = h.hand;
+                break;
+            }
+
+            if (firstHandThisSeat.HasValue)
+            {
+                table.CurrentSeatNumber = seatNumber;
+                table.CurrentHandIndex = firstHandThisSeat.Value;
+                StampTurn(table);
+            }
             else
-                RefreshTurn(table);
+            {
+                AdvanceTurn(table);
+            }
 
             await SaveTableAsync(tableId, table);
             return table;
@@ -1727,19 +2221,46 @@ namespace Khela.Game.Managers
         /// </summary>
         public async Task TickTableAsync(string tableId)
         {
-            // Cheap unlocked peek so idle tables aren't locked every tick. Prune ids whose table key has
-            // TTL-expired so the driver stops re-probing them forever (mirrors GetLobbyAsync's self-heal).
-            var peek = await GetTableAsync(tableId);
-            if (peek == null)
+            // Read the table ONCE, and decide whether it is worth understanding before paying to understand it.
+            //
+            // This runs for every table in the lobby every couple of seconds. Fully deserializing one rebuilds its
+            // entire shoe — 312 cards — plus every seat and hand, and a lobby is now dozens of tables rather than
+            // three. Doing that for tables nobody is sitting at made the driver loop overrun its own tick, and a
+            // driver that never finishes is holding table locks while players are waiting on them: bets and deals
+            // then stall for seconds for no visible reason.
+            var db0 = redisService.GetDatabase();
+            var json = await db0.StringGetAsync(GetKey(tableId));
+            if (json.IsNullOrEmpty)
             {
-                await redisService.GetDatabase().SetRemoveAsync(LobbyIndexKey, tableId);
+                // Prune ids whose table key has TTL-expired so the driver stops re-probing them forever.
+                await db0.SetRemoveAsync(LobbyIndexKey, tableId);
                 return;
             }
-            // Keep every lobby table alive while the server runs: an IDLE table is never re-saved (the fast-path
-            // below returns without a write, and reads don't extend TTL), so without this its 2h key TTL lapses
-            // and it silently vanishes from the lobby — leaving only the table being actively played. Refreshing
-            // the TTL each tick (cheap O(1)) holds the house tables in place.
-            await redisService.GetDatabase().KeyExpireAsync(GetKey(tableId), TimeSpan.FromHours(2));
+
+            // Keep every lobby table alive while the server runs (see the TTL note below) — this must happen even
+            // for the idle tables we are about to skip, since that is exactly what keeps them in the lobby.
+            await db0.KeyExpireAsync(GetKey(tableId), TimeSpan.FromHours(2));
+
+            // The cheap question first: is anyone here? An empty table with no round has nothing to drive — no
+            // turn to expire, no window to close, no seat to sweep — so it costs one lightweight parse and stops.
+            TableLite lite = null;
+            try { lite = JsonSerializer.Deserialize<TableLite>(json); } catch { }
+            if (lite != null)
+            {
+                bool anyoneSeated = lite.Seats?.Any(s => s.Player != null) ?? false;
+                if (!anyoneSeated && !lite.RoundInProgress) return;
+            }
+
+            var peek = ParseTable(json);
+            if (peek == null)
+            {
+                await db0.SetRemoveAsync(LobbyIndexKey, tableId);
+                return;
+            }
+            // (TTL note: an IDLE table is never re-saved — the fast-path returns without a write and reads don't
+            // extend a TTL — so without the KeyExpire above its 2h key lapses and it silently vanishes from the
+            // lobby, leaving only the table being actively played.)
+            //
             // Idle fast-path: only take the lock when there's a round in progress OR a seated player's
             // connection state has drifted (needs a flag update or stalled-removal). Idle, all-fresh tables
             // stay lock-free.
@@ -2329,8 +2850,9 @@ namespace Khela.Game.Managers
             // in lockstep with GetOrderedHands' ordering: when it was flipped to descending while this still
             // read `h.seat > curSeat`, no lower seat could ever satisfy it, so the first seat to finish sent the
             // round straight to the dealer and every remaining seat was settled on a hand it never got to play
-            // (with its stake already debited). Hands WITHIN a seat are still yielded ascending, so the
-            // same-seat clause stays `h.hand > curHand`.
+            // (with its stake already debited). Hands WITHIN a seat are now yielded DESCENDING as well (the
+            // right-hand split acts first), so the same-seat clause is `h.hand < curHand` — the exact same failure
+            // mode waits here for anyone who flips one of these two without the other.
             int curSeat = table.CurrentSeatNumber;
             int curHand = table.CurrentHandIndex;
 
@@ -2338,7 +2860,7 @@ namespace Khela.Game.Managers
             foreach (var h in GetOrderedHands(table))
             {
                 if (h.seat == -1) continue; // dealer sentinel
-                if (h.seat < curSeat || (h.seat == curSeat && h.hand > curHand)) { next = h; break; }
+                if (h.seat < curSeat || (h.seat == curSeat && h.hand < curHand)) { next = h; break; }
             }
 
             var n = next ?? (seat: -1, hand: 0);
@@ -2353,10 +2875,14 @@ namespace Khela.Game.Managers
             // Turn order follows the deal: the dealer serves her LEFT first (blackjack "first base"), which is the
             // player's RIGHTMOST seat = the HIGHEST seat number, then round to her right. So act highest-seat → lowest,
             // NOT join order. (Ascending here made the middle seat act before the right one when the left seat was empty.)
+            // SPLIT HANDS RUN RIGHT→LEFT TOO, so iterate them DESCENDING. Player.Split APPENDS the new hand, and the
+            // table lays hands out with the highest index on the player's RIGHT — so the highest index is the one
+            // sitting at "first base" for that seat and must act first. Ascending here made the dealer offer the LEFT
+            // hand first, against the direction the rest of the table plays in.
             foreach (var seat in table.Seats.OrderByDescending(s => s.SeatNumber))
             {
                 if (seat.Player == null || !seat.Player.InRound) continue;
-                for (int i = 0; i < seat.Player.Hands.Count; i++)
+                for (int i = seat.Player.Hands.Count - 1; i >= 0; i--)
                 {
                     var hand = seat.Player.Hands[i];
                     // >= 21 (not > 21): a bust hand is over, and a hand ON 21 auto-stands — it must never be
@@ -2465,6 +2991,25 @@ namespace Khela.Game.Managers
         public string ServerSeedHash { get; set; }
         public string ClientSeed { get; set; }
         public long RoundNonce { get; set; }
+
+        // ---- Multi-deck SHOE (casino-grade). A shoe of >1 deck PERSISTS across rounds and is replaced only when
+        // the cut card is reached; a 1-deck game reshuffles every round (the original behaviour). The shoe seed is
+        // derived from ShoeNonce (not RoundNonce), because one shoe now spans many rounds.
+        public long ShoeNonce { get; set; }
+        /// <summary>Hash of the shoe as shuffled — identifies THIS shoe across every round dealt from it.</summary>
+        public string ShoeHash { get; set; }
+        /// <summary>Cards the shoe held when it was built — the denominator for penetration.</summary>
+        public int ShoeSize { get; set; }
+        /// <summary>Cards left when the cut card is considered reached (0 = no cut card / single-deck).</summary>
+        public int CutCardAt { get; set; }
+        /// <summary>Cards already dealt from this shoe when the CURRENT round started — with a persistent shoe this
+        /// is what lets a single round be replayed from the shoe's seed. Persisted per hand for audit.</summary>
+        public int ShoeDealtAtRoundStart { get; set; }
+
+        /// <summary>When this table last became empty, or null while anyone is seated. The lobby balancer only
+        /// reclaims a table that has been empty for a grace period, so a table can't vanish the moment its last
+        /// player stands up (or flicker when they sit straight back down).</summary>
+        public DateTimeOffset? EmptySince { get; set; }
 
         // Audit capture for the in-progress round, persisted to GameHandHeader at settle.
         public string CurrentDeckHash { get; set; }

@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using PlayCard.App;        // NetworkStatus — global connection state for the reconnect overlay
 using PlayCard.Game.Dtos;
 using UnityEngine;
 
@@ -42,6 +43,7 @@ namespace PlayCard.Game.Net
         public Task ConnectAsync()
         {
             IsConnected = true;
+            NetworkStatus.Report(NetState.Online);
             OnConnected?.Invoke();
             return Task.CompletedTask;
         }
@@ -53,6 +55,7 @@ namespace PlayCard.Game.Net
             if (IsConnected)
             {
                 IsConnected = false;
+                NetworkStatus.Report(NetState.Offline, "left");   // deliberate — not something to show an overlay for
                 OnDisconnected?.Invoke("disconnected");
             }
             return Task.CompletedTask;
@@ -126,6 +129,7 @@ namespace PlayCard.Game.Net
                     if (_reportedDown)
                     {
                         _reportedDown = false;
+                        NetworkStatus.Report(NetState.Online);
                         OnConnected?.Invoke(); // recovered
                     }
                     _consecutiveFailures = 0;
@@ -134,9 +138,14 @@ namespace PlayCard.Game.Net
                 else
                 {
                     _consecutiveFailures++;
+                    // Report only on the EDGE, and only once `failuresBeforeDisconnect` polls in a row have failed.
+                    // A poll fails on every hiccup, so reporting per-failure would strobe the overlay; the latch plus
+                    // the threshold means one report per genuine outage. The loop keeps polling, so "Reconnecting" is
+                    // literally what it's doing — and recovery above clears it on the first good poll.
                     if (!_reportedDown && _consecutiveFailures >= failuresBeforeDisconnect)
                     {
                         _reportedDown = true;
+                        NetworkStatus.Report(NetState.Reconnecting, res.Error ?? "server unreachable");
                         OnDisconnected?.Invoke(res.Error ?? "server unreachable");
                     }
                 }

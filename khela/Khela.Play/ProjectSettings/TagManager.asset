@@ -31,6 +31,7 @@ TagManager:
   - CoverPoint
   - Interactable
   - AIAction
+  - Chip
   layers:
   - Default
   - TransparentFX

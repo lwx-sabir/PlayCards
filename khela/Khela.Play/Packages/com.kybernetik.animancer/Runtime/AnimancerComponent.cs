@@ -1,9 +1,5 @@
 // Animancer // https://kybernetik.com.au/animancer // Copyright 2018-2026 Kybernetik //
 
-#if ! UNITY_EDITOR
-#pragma warning disable CS0618 // Type or member is obsolete (for TransitionLibraries in Animancer Lite).
-#endif
-
 using Animancer.TransitionLibraries;
 using System;
 using System.Collections;
@@ -233,11 +229,7 @@ namespace Animancer
 
         /************************************************************************************************************************/
 
-// KHELA PATCH: was `#if UNITY_ASSERTIONS || ANIMANCER_ON_PLAY_EVENTS`. Animancer Lite's precompiled runtime core
-// omits the assert-only AnimancerGraph.OnPlay, so a Development *player* build (UNITY_ASSERTIONS on) failed to compile
-// this property (CS1061). It's not referenced by game code — scoping it to the Editor lets Dev builds compile while
-// Lite's Pro serialized-events keep working in the Editor + Development builds. Revert this line if you move to Pro.
-#if UNITY_EDITOR || ANIMANCER_ON_PLAY_EVENTS
+#if UNITY_ASSERTIONS || ANIMANCER_ON_PLAY_EVENTS
         /// <summary>[Assert-Only] An event which is triggered whenever a state is played.</summary>
         /// <remarks>
         /// Some useful methods for this event are <see cref="AnimancerState.LogPlayingMessage"/>

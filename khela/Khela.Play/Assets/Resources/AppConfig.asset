@@ -16,3 +16,4 @@ MonoBehaviour:
   hubPath: /blackjackhub
   threeCardHubPath: /threecardhub
   requestTimeoutSeconds: 20
+  recordLogsInReleaseBuilds: 1

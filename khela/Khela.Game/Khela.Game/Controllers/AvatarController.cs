@@ -69,13 +69,59 @@ namespace Khela.Game.Controllers
             var entitled = await _cosmetics.ValidateEquipsAsync(me.Value, clean);
             if (!entitled.Ok) return BadRequest(new { message = entitled.Error });
 
+            // Self-heal a missing profile rather than refusing the save. The profile is normally created during
+            // registration, but that bootstrap deliberately swallows its own failures so it can never block a login —
+            // which means a single hiccup there leaves an account with no profile row, and from then on EVERY avatar
+            // save 404s and the player can never finish onboarding. There is nothing to look up here that we can't
+            // simply create, so create it.
             var prof = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == me.Value);
-            if (prof == null) return NotFound(new { message = "Profile not found." });
+            if (prof == null)
+            {
+                prof = await CreateMissingProfileAsync(me.Value);
+                if (prof == null) return StatusCode(500, new { message = "Could not create a profile for this account." });
+            }
 
             prof.AvatarConfig = JsonSerializer.Serialize(clean, Json);
             prof.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
             return Ok(new { avatar = clean });   // echo the sanitized result so the client re-syncs to what was stored
+        }
+
+        /// <summary>
+        /// Create the profile row this account should already have had. Mirrors the fields registration seeds, and
+        /// tolerates losing a race with another request creating the same row (unique on UserId) by re-reading.
+        /// </summary>
+        private async Task<Database.Models.UserProfile> CreateMissingProfileAsync(Guid userId)
+        {
+            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.ToString());
+            var region = (user?.CountryCode ?? "").Trim().ToUpperInvariant();
+            if (region.Length != 2) region = "ZZ";
+
+            // A safe, non-colliding placeholder — the player renames themselves in onboarding anyway.
+            var name = string.IsNullOrWhiteSpace(user?.UserName)
+                ? $"Player{userId.ToString("N").Substring(0, 6)}"
+                : user.UserName.Trim();
+            if (name.Length > 24) name = name.Substring(0, 24);
+
+            try
+            {
+                var prof = new Database.Models.UserProfile
+                {
+                    UserId = userId,
+                    DisplayName = name,
+                    DisplayNameNormalized = name.ToUpperInvariant(),
+                    Region = region
+                };
+                _db.UserProfiles.Add(prof);
+                await _db.SaveChangesAsync();
+                return prof;
+            }
+            catch (DbUpdateException)
+            {
+                // Someone else created it between our read and our write — take theirs.
+                _db.ChangeTracker.Clear();
+                return await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+            }
         }
 
         private async Task<string> ConfigJsonAsync(Guid userId) =>

@@ -38,6 +38,12 @@ namespace PlayCard.UI
             if (table != null) table.OnBoardChanged -= Apply;
         }
 
+        // ⚠️ DO NOT make this follow BettingOpenForMe, and DO NOT hide by CanvasGroup. Both were tried on 2026-08-10
+        // and both broke the action bar. These objects are children of a Layout Group that only has room for ONE
+        // mode's buttons: SetActive is load-bearing, because the collapsed slots are what let the other mode fit.
+        // Keeping the space pushed DEAL out of the row entirely. And switching on commit rather than on the round
+        // starting doubled how often the group re-flows, which is the flicker. The per-player "I've bet" state is
+        // handled where it costs nothing — TableActionBar greys the buttons, and the chip rail / timer / camera hide.
         private void Apply(BoardSnapshot board)
         {
             bool inPlay = board != null && board.RoundInProgress;

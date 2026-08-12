@@ -207,10 +207,8 @@ namespace Animancer
                     $" for every state created by the transition" +
                     $" after its {nameof(MainObject)} is changed." +
                     $" This includes {nameof(ClipTransition)}.{nameof(ClipTransition.Clip)}," +
-#pragma warning disable CS0618 // Type or member is obsolete.
                     $" {nameof(ControllerTransition)}.{nameof(ControllerTransition.Controller)}, and" +
                     $" {nameof(PlayableAssetTransition)}.{nameof(PlayableAssetTransition.Asset)}" +
-#pragma warning restore CS0618
                     $"\n• State: {state}" +
                     $"\n• State.{nameof(MainObject)}: {state.MainObject}" +
                     $"\n• Transition.{nameof(MainObject)}: {MainObject}" +
@@ -326,7 +324,7 @@ namespace Animancer
             {
                 var layer = state.Layer;
                 state = CreateState();
-                state.Key = Key;
+                state._Key = Key;
                 state.SetParent(layer);
             }
 

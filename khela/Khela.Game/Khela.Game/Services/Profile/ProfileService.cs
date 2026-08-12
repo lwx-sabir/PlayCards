@@ -134,7 +134,35 @@ namespace Khela.Game.Services.Profile
             if (req == null) return (false, "Empty request.");
 
             var p = await _db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == userId);
-            if (p == null) return (false, "Profile not found.");
+            if (p == null)
+            {
+                // Same self-heal as the avatar save: registration's profile bootstrap swallows its own failures, so
+                // an account can end up with no profile row and then be permanently unable to finish onboarding.
+                // There is nothing here we can't create, so create it rather than refuse.
+                var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId.ToString());
+                var region = (user?.CountryCode ?? "").Trim().ToUpperInvariant();
+                if (region.Length != 2) region = "ZZ";
+                var seed = string.IsNullOrWhiteSpace(user?.UserName)
+                    ? $"Player{userId:N}".Substring(0, 12)
+                    : user.UserName.Trim();
+                if (seed.Length > 24) seed = seed.Substring(0, 24);
+
+                p = new UserProfile
+                {
+                    UserId = userId,
+                    DisplayName = seed,
+                    DisplayNameNormalized = seed.ToUpperInvariant(),
+                    Region = region
+                };
+                _db.UserProfiles.Add(p);
+                try { await _db.SaveChangesAsync(); }
+                catch (DbUpdateException)
+                {
+                    _db.ChangeTracker.Clear();   // lost a race — take the row the other request created
+                    p = await _db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == userId);
+                    if (p == null) return (false, "Could not create a profile for this account.");
+                }
+            }
 
             bool changed = false;
 

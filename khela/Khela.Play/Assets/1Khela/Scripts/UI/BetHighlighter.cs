@@ -19,6 +19,7 @@ namespace PlayCard.UI
         [SerializeField] private GameObject[] highlightersBySeat;
 
         private bool _lastSettling;
+        private bool _lastCommitted;   // betting commit flips on the button press, between board pushes
 
         private void OnEnable()
         {
@@ -37,9 +38,16 @@ namespace PlayCard.UI
         // RoundEndSettling too — else the bet glow would stay dark until the next server push after the ceremony.
         private void Update()
         {
-            if (view == null) return;
-            bool settling = view.RoundEndSettling;
-            if (settling != _lastSettling) { _lastSettling = settling; OnBoard(table != null ? table.Board : null); }
+            // Both of these flip BETWEEN board pushes — the ceremony ends on the director's own clock, and the betting
+            // commit happens on the local button press — so neither can wait for a server push to be noticed.
+            bool settling = view != null && view.RoundEndSettling;
+            bool committed = table != null && table.BettingCommitted;
+            if (settling != _lastSettling || committed != _lastCommitted)
+            {
+                _lastSettling = settling;
+                _lastCommitted = committed;
+                OnBoard(table != null ? table.Board : null);
+            }
         }
 
         private void OnBoard(BoardSnapshot board)
@@ -49,7 +57,9 @@ namespace PlayCard.UI
             // Only between rounds AND once the previous round-end has fully finished. A blackjack settles the round
             // INSTANTLY (RoundInProgress flips false while the payout ceremony is still playing), so without the
             // settling guard the bet glow would pop back on over the payout — same bug the bet bar had.
-            bool betting = board != null && !board.RoundInProgress && !(view != null && view.RoundEndSettling);
+            // BettingOpenForMe, not !RoundInProgress — the shared window keeps the round "not started" until the last
+            // seat bets, which kept the bet spot glowing at a player who had already committed.
+            bool betting = table != null && table.BettingOpenForMe && !(view != null && view.RoundEndSettling);
             int active = betting ? mySeat - 1 : -1;                  // index to show, or -1 for none
 
             for (int i = 0; i < highlightersBySeat.Length; i++)

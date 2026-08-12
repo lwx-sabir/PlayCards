@@ -4,6 +4,7 @@ using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace PlayCard.UI
 {
@@ -29,6 +30,32 @@ namespace PlayCard.UI
         [SerializeField] private RectTransform panel;
         [Tooltip("Turn countdown label, shown as mm:ss + \"s\" (e.g. 00:15s).")]
         [SerializeField] private TMP_Text timerLabel;
+        [Tooltip("Optional radial countdown — the Image on the widget's playing frame (Image Type = Filled, Fill " +
+                 "Method = Radial 360). Drains full → empty across your turn, matching the ring on the other " +
+                 "players' seat avatars. Leave empty for a text-only timer.")]
+        [SerializeField] private Image countdownFill;
+
+        [Header("Running out")]
+        [Tooltip("Image recoloured once the turn is running out — usually the countdown ring itself, but it can be " +
+                 "any graphic (the frame, a glow). Leave empty to disable. Its AUTHORED colour is captured at start " +
+                 "and restored on the next turn, so don't drive this image's colour from anywhere else.")]
+        [SerializeField] private Image warnImage;
+        [Tooltip("Colour it turns once past the threshold.")]
+        [SerializeField] private Color warnColor = new Color(0.9f, 0.2f, 0.2f, 1f);
+        [Tooltip("Fraction of the turn REMAINING at which it switches — 0.5 = half the time gone.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float warnBelow = 0.5f;
+
+        [Tooltip("ON = the warn image also BREATHES once past the threshold — a soft alpha pulse, the same effect the " +
+                 "felt signs use, so it reads as urgency rather than a static colour change. OFF = colour only.")]
+        [SerializeField] private bool warnBreathe = true;
+        [Tooltip("Seconds for one full fade-out-and-back. Shorter = more urgent.")]
+        [SerializeField] private float breathePeriod = 0.8f;
+        [Tooltip("How far down the pulse dips. 1 = no dip, 0 = fades right out.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float breatheMinAlpha = 0.35f;
+
+        private Color _warnBaseColor = Color.white;
 
         [Header("Slide")]
         [Tooltip("Slide in from the TOP (park above the shown spot, drop down into view). Uncheck to slide up from below.")]
@@ -48,6 +75,8 @@ namespace PlayCard.UI
         private void Awake()
         {
             if (panel == null) panel = transform as RectTransform;
+            // Capture the authored colour BEFORE anything recolours it — this is what a fresh turn resets to.
+            if (warnImage != null) _warnBaseColor = warnImage.color;
             _shownPos = panel.anchoredPosition;                 // designed = SHOWN position (read even while inactive)
             _hiddenPos = _shownPos + (slideFromTop ? Vector2.up : Vector2.down) * slideDistance;
 
@@ -89,22 +118,54 @@ namespace PlayCard.UI
                 if (ready != _lastReady) { _lastReady = ready; Apply(table.Board); }
             }
 
-            if (!_shown || timerLabel == null) return;
+            // NB: not gated on timerLabel any more — the ring below is a valid countdown on its own, so a widget with
+            // no text still animates.
+            if (!_shown) return;
             var board = table != null ? table.Board : null;
             var exp = board != null ? board.TurnExpiresAt : null;
             double remaining = exp.HasValue ? (exp.Value - DateTimeOffset.UtcNow).TotalSeconds : 0d;
+
             // Clamp to a real turn — the deadline is a generous ceiling until our /presented call collapses it.
-            if (board != null && board.TurnDurationSeconds > 0)
-                remaining = Math.Min(remaining, board.TurnDurationSeconds);
-            timerLabel.text = Format(remaining);
+            float turnSeconds = board != null ? board.TurnDurationSeconds : 0f;
+            if (turnSeconds > 0f) remaining = Math.Min(remaining, turnSeconds);
+            if (remaining < 0d) remaining = 0d;
+
+            if (timerLabel != null) timerLabel.text = Format(remaining);
+
+            // Radial ring drains with the clock — the same widget the opponents' seat avatars use, so your own
+            // countdown reads identically to theirs. Full when there's no turn length to divide by, rather than
+            // empty: an unarmed ring should look idle, not expired.
+            float left01 = turnSeconds > 0f ? Mathf.Clamp01((float)(remaining / turnSeconds)) : 1f;
+
+            if (countdownFill != null) countdownFill.fillAmount = left01;
+
+            // Running out. Driven off the same fraction as the ring so the colour flips exactly when the ring passes
+            // the mark, and assigned every frame rather than on the edge — cheap, and it self-corrects if anything
+            // else touches the colour.
+            if (warnImage != null)
+            {
+                bool warning = left01 < warnBelow;
+                var c = warning ? warnColor : _warnBaseColor;
+
+                // Breathe on the warn colour's OWN alpha (multiply, don't overwrite) so an authored translucency is
+                // preserved instead of the pulse snapping it to opaque. Sine, so there's no hard edge at either end.
+                if (warning && warnBreathe && breathePeriod > 0f)
+                {
+                    float u = (Mathf.Sin(Time.unscaledTime * (2f * Mathf.PI / breathePeriod)) + 1f) * 0.5f;
+                    c.a *= Mathf.Lerp(breatheMinAlpha, 1f, u);
+                }
+
+                warnImage.color = c;
+            }
         }
 
-        // mm:ss + "s", e.g. 15.3s → "00:15s". Ceil so the first whole second shows the full value.
+        // Seconds only, e.g. 15.3s → "15s". Ceil so the first whole second shows the full value. Two digits keeps the
+        // label a constant width as it counts down, so the number doesn't shuffle sideways inside the ring at 9→8.
         private static string Format(double seconds)
         {
             if (seconds < 0d) seconds = 0d;
             int total = Mathf.CeilToInt((float)seconds);
-            return $"{total / 60:00}:{total % 60:00}s";
+            return $"{total:00}s";
         }
 
         private void Apply(BoardSnapshot board)
@@ -122,7 +183,9 @@ namespace PlayCard.UI
         {
             _shown = true;
             if (!_selfHosted && !panel.gameObject.activeSelf) panel.gameObject.SetActive(true);
-            panel.anchoredPosition = _hiddenPos;               // start off-screen (top by default), then slide in
+            if (countdownFill != null) countdownFill.fillAmount = 1f;   // start whole, not on last turn's leftover
+            if (warnImage != null) warnImage.color = _warnBaseColor;    // and not still red from the last one
+            panel.anchoredPosition = _hiddenPos;               // start off-screen, then slide in
             StartSlide(_shownPos, deactivateAtEnd: false, showing: true);
         }
 

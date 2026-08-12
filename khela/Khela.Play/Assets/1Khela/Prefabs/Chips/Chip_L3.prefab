@@ -237,6 +237,10 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 6
       objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: f6069d4d1c314d240a4e959c8c9cbf02, type: 3}
+      propertyPath: m_TagString
+      value: Chip
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects:
@@ -250,6 +254,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: f6069d4d1c314d240a4e959c8c9cbf02, type: 3}
       insertIndex: -1
       addedObject: {fileID: 4845295730107071326}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: f6069d4d1c314d240a4e959c8c9cbf02, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -8810950132162680775}
   m_SourcePrefab: {fileID: 100100000, guid: f6069d4d1c314d240a4e959c8c9cbf02, type: 3}
 --- !u!1 &4767360959475562833 stripped
 GameObject:
@@ -291,6 +298,64 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Betting.ChipView
   label: {fileID: 7442486936687764704}
+  maxInlineDigits: 2
+--- !u!114 &-8810950132162680775
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4767360959475562833}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cec114f8f572a4c41bd76979d0eca0ea, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Sonity.Public.Runtime::Sonity.SoundPhysics
+  internals:
+    soundPhysicsComponentType: 0
+    physicsDimension: 0
+    soundTagOverride: 0
+    impactExpand: 1
+    impactPlay: 1
+    impactSoundPhysicsParts:
+    - soundEvent: {fileID: 0}
+      soundEvents:
+      - {fileID: 11400000, guid: dad2bf1c80e6aa748b61818f0bca5a39, type: 2}
+      soundTag: {fileID: 0}
+      physicsPlayOn: 0
+      conditionsUse: 1
+      conditions:
+      - {fileID: 11400000, guid: 5efdba0359205ef43b453200b3301250, type: 2}
+    - soundEvent: {fileID: 0}
+      soundEvents:
+      - {fileID: 11400000, guid: 85c82bfd8d141ce4b8f6e8788a2c9939, type: 2}
+      soundTag: {fileID: 0}
+      physicsPlayOn: 0
+      conditionsUse: 1
+      conditions:
+      - {fileID: 11400000, guid: 50378fc524c5c964cab980920833bb0f, type: 2}
+    frictionExpand: 1
+    frictionPlay: 0
+    frictionSoundPhysicsParts:
+    - soundEvent: {fileID: 0}
+      soundEvents:
+      - {fileID: 0}
+      soundTag: {fileID: 0}
+      physicsPlayOn: 0
+      conditionsUse: 0
+      conditions:
+      - {fileID: 0}
+    exitExpand: 1
+    exitPlay: 0
+    exitSoundPhysicsParts:
+    - soundEvent: {fileID: 0}
+      soundEvents:
+      - {fileID: 0}
+      soundTag: {fileID: 0}
+      physicsPlayOn: 0
+      conditionsUse: 0
+      conditions:
+      - {fileID: 0}
 --- !u!4 &5288001273439413227 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: f6069d4d1c314d240a4e959c8c9cbf02, type: 3}

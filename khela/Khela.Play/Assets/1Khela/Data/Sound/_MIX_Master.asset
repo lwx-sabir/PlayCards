@@ -1,0 +1,63 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6c60adbb55d7ed24abfd50b2cbcb4e9e, type: 3}
+  m_Name: _MIX_Master
+  m_EditorClassIdentifier: Sonity.Public.Runtime::Sonity.SoundMix
+  internals:
+    notes: Notes
+    soundEventModifier:
+      volumeDecibel: 0
+      volumeRatio: 1
+      pitchSemitone: 0
+      pitchRatio: 1
+      delay: 0
+      increase2D: 0
+      intensity: 1
+      reverbZoneMixDecibel: 0
+      reverbZoneMixRatio: 1
+      startPosition: 0
+      reverse: 0
+      stereoPan: 0
+      polyphony: 1
+      distanceScale: 1
+      distortionIncrease: 0
+      fadeInLength: 0
+      fadeInShape: 2
+      fadeOutLength: 0
+      fadeOutShape: -2
+      followPosition: 1
+      bypassReverbZones: 0
+      bypassVoiceEffects: 0
+      bypassListenerEffects: 0
+      volumeUse: 0
+      pitchUse: 0
+      delayUse: 0
+      increase2DUse: 0
+      intensityUse: 0
+      reverbZoneMixUse: 0
+      startPositionUse: 0
+      reverseUse: 0
+      stereoPanUse: 0
+      polyphonyUse: 0
+      distanceScaleUse: 0
+      distortionIncreaseUse: 0
+      fadeInLengthUse: 0
+      fadeInShapeUse: 0
+      fadeOutLengthUse: 0
+      fadeOutShapeUse: 0
+      followPositionUse: 0
+      bypassReverbZonesUse: 0
+      bypassVoiceEffectsUse: 0
+      bypassListenerEffectsUse: 0
+    soundMixParent: {fileID: 0}
+  assetGuid: f24e7294db4085d48b88888e5ad7d352
+  assetGuidHash: -942685527292673223

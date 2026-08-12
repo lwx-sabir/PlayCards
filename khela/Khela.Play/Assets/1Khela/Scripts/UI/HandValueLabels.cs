@@ -32,6 +32,20 @@ namespace PlayCard.UI
         [Tooltip("Extra rotation to lay the badge FLAT like the cards (a world-space UI badge stands vertical → try (90,0,0)).")]
         [SerializeField] private Vector3 labelFlatEuler = new Vector3(90f, 0f, 0f);
 
+        [Header("Tucked hand — its OWN placement (a finished split hand is smaller and sits elsewhere)")]
+        [Tooltip("ON: a TUCKED hand uses Tucked Corner Offset below instead of scaling the offset above. The badge " +
+                 "keeps its authored SIZE while the card shrinks, so a scaled offset no longer lands it on the corner — " +
+                 "author the tucked position directly instead.")]
+        [SerializeField] private bool overrideWhenTucked = true;
+        [Tooltip("Offset from the tucked hand's LAST card, in that CARD's local frame. Used RAW — no card scaling. " +
+                 "LEAVE AT (0,0,0) and the tucked hand keeps using the main offset above, so nothing changes until " +
+                 "you actually author this. Preview with the anchor gizmo: Preview Tuck = Both Hands.")]
+        [SerializeField] private Vector3 tuckedCornerOffset = Vector3.zero;
+
+        [Tooltip("Extra rotation ADDED to Label Flat Euler while the hand is tucked, on all three axes. A DELTA, not " +
+                 "a replacement — (0,0,0) means 'exactly as authored above'.")]
+        [SerializeField] private Vector3 tuckedFlatEulerOffset = Vector3.zero;
+
         [Header("Background colour by situation (Normal = the prefab's own colour)")]
         [Tooltip("Hand finished by standing / double / split-ace and is ≤ 21.")]
         [SerializeField] private Color standColor = new Color(0.35f, 0.55f, 0.90f);     // blue
@@ -51,6 +65,7 @@ namespace PlayCard.UI
         private readonly HashSet<int> _desired = new HashSet<int>();
         private readonly List<int> _stale = new List<int>();
 
+        private Vector3 _baseScale = Vector3.one;        // prefab root scale — a badge is drawn at this × its hand's card scale
         private Color _normalColor = Color.white;        // bg colour for Normal — captured from the prefab default
         private Color _normalTextColor = Color.white;    // value-text colour for non-BJ — captured from the prefab default
         private bool _capturedNormal;
@@ -58,10 +73,18 @@ namespace PlayCard.UI
 
         // Editor-tooling accessors so the CardAnchorGizmo can show + position a sample badge before Play.
         public GameObject LabelPrefab => labelPrefab;
-        public Vector3 CornerOffset => cornerOffset;
-        public Vector3 LabelFlatEuler => labelFlatEuler;
-        public bool ScaleOffsetWithCard => true;   // glued to the card corner — tracks the split-shrunk card
-        public bool AnchorAtHandCenter => false;   // per-card: pinned to the hand's last card
+
+        /// <summary>Authored rotation, plus the tucked delta while tucked. Additive so zero = unchanged.</summary>
+        public Vector3 FlatEulerFor(bool tucked) => tucked ? labelFlatEuler + tuckedFlatEulerOffset : labelFlatEuler;
+        // Always per-card: the total reads at the END of the fan, next to the card that just landed.
+        public bool AnchorsAtHandCenter(bool tucked) => false;
+
+        /// <summary>The placement rule, in one place, so the gizmo preview and the live table cannot disagree: a
+        /// tucked hand can use its own hand-authored offset; otherwise the authored offset tracks the shrunken card.</summary>
+        public Vector3 OffsetFor(bool tucked, float cardScale)
+            => tucked && overrideWhenTucked && tuckedCornerOffset != Vector3.zero
+                ? tuckedCornerOffset                 // hand-authored against the tucked hand — used exactly as typed
+                : cornerOffset * cardScale;          // unauthored (or not tucked) — the main offset, tracking the card
 
         private void OnEnable()
         {
@@ -139,15 +162,31 @@ namespace PlayCard.UI
 
             int key = SlotKey(seat, handIndex);
             _desired.Add(key);
-            view.CardLocalTRS(seat, handIndex, handCount, last, landed, out var pos, out var rot, out var scale);
+            // cards.Count, NOT `landed` — the FULL hand including cards still in the air. The fan is centred on the
+            // hand, so the view re-lays every card the moment the board announces the next one, long before it arrives:
+            // the cards shift over to make room while `landed` still says the hand is one shorter. Asking for the pose
+            // of "the last card of a 1-card hand" then put the badge where that card USED to be, leaving it stranded a
+            // gap away from the card it labels — worst on the opening deal, where the first card sits offset for two
+            // while only one has landed. `last` picks WHICH card to pin to; the hand's real size decides where it is.
+            //
+            // Prefer the card's LIVE pose while the layout is gliding it, so the badge travels with the tuck and the
+            // re-centre rather than snapping ahead; the computed pose covers every other frame.
+            view.CardLocalTRS(seat, handIndex, handCount, last, cards.Count, out var pos, out var rot, out var scale);
+            if (view.TryCardPose(seat, handIndex, last, out var livePos, out var liveRot, out var liveScale))
+            { pos = livePos; rot = liveRot; scale = liveScale; }
             Vector3 cardWorldPos = anchor.TransformPoint(pos);
             Quaternion cardWorldRot = anchor.rotation * rot;
 
             var b = Rent(key);
             if (b.Go == null) return;
             b.Go.transform.SetPositionAndRotation(
-                cardWorldPos + cardWorldRot * (cornerOffset * scale),   // *scale → tracks a shrunk split card's corner
-                cardWorldRot * Quaternion.Euler(labelFlatEuler));
+                cardWorldPos + cardWorldRot * OffsetFor(view.IsHandTucked(seat, handIndex, handCount), scale),
+                cardWorldRot * Quaternion.Euler(FlatEulerFor(view.IsHandTucked(seat, handIndex, handCount))));
+            // ALWAYS the authored SIZE — deliberately NOT scaled with the card. The badge is a readability element, not
+            // part of the card art: a shrunken hand is exactly the one whose total is hardest to read, so shrinking its
+            // badge to match defeats the point. Only the OFFSET scales (above), which is what keeps it pinned to the
+            // corner of the smaller card rather than floating off it.
+            b.Go.transform.localScale = _baseScale;
             bool isBlackjack = landed == 2 && value == 21 && handCount == 1;
             if (b.Text != null)
             {
@@ -223,6 +262,7 @@ namespace PlayCard.UI
         private void CaptureNormalColor()
         {
             if (_capturedNormal || labelPrefab == null) return;
+            _baseScale = labelPrefab.transform.localScale;   // authored size — every badge is drawn as a fraction of it
             var bg = labelPrefab.GetComponentInChildren<Image>(true);
             if (bg != null) _normalColor = bg.color;
             var tmp = labelPrefab.GetComponentInChildren<TMP_Text>(true);

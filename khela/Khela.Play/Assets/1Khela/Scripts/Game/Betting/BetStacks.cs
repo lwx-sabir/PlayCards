@@ -53,6 +53,24 @@ namespace PlayCard.Game.Betting
         [Tooltip("Little mid-flight lift so a chip arcs into the stack instead of sliding flat (world units).")]
         [SerializeField] private float gatherArc = 0.05f;
 
+        [Header("Tuck — a finished split hand's chips follow its cards")]
+        [Tooltip("When the view tucks a played-out split hand (shrinks it and slides it in toward the seat), move and " +
+                 "shrink that hand's chip stack with it. Off = the stack stays where the bet was placed while the " +
+                 "cards move away from it.")]
+        [SerializeField] private bool followTuck = true;
+        [Tooltip("How much smaller a tucked hand's chips are drawn — 0.2 = 20% smaller. Also tightens the stack's " +
+                 "vertical step by the same fraction, so a tall stack shrinks as a whole rather than stretching.")]
+        [Range(0f, 0.6f)] [SerializeField] private float tuckChipShrink = 0.20f;
+        [Tooltip("Extra shift for a TUCKED hand's chip stack, in the BET anchor's own frame (Z = toward the dealer, " +
+                 "so a negative Z pulls the stack back toward the player and a positive Z closes the gap up to the " +
+                 "cards). The hand-to-chips distance is authored as the gap between the card and bet anchors, and that " +
+                 "was set for a FULL-SIZE hand — once the hand shrinks the same gap reads as too much empty felt, and " +
+                 "the pull-in cannot close it because the cards and the chips move together. Nudge it here.")]
+        [SerializeField] private Vector3 tuckChipNudge = new Vector3(0f, 0f, 0.2f);
+        [Tooltip("Roughly how long the chips take to settle into the tucked pose. Keep it close to the view's Tuck " +
+                 "Seconds so the chips and the cards travel together.")]
+        [SerializeField] private float tuckFollowSeconds = 0.35f;
+
         [Header("Float-away — the stack shrinks out just before the win burst")]
         [Tooltip("How long the stack takes to shrink to nothing (seconds). ALL chips shrink together, so this is the " +
                  "whole effect length regardless of how many chips are on the spot. Keep it short (~0.2).")]
@@ -71,6 +89,8 @@ namespace PlayCard.Game.Betting
         private bool _prevInRound;                // last board's RoundInProgress — to catch the in-round → settle transition
         private decimal _lastMinBet, _lastMaxBet; // stakes cached while live so BuildLooseStack decomposes winnings with the right denominations
         private int _gatheringSeat;               // 1-based seat whose dropped chips are mid-gather; OnBoard skips it until adopted
+        private Coroutine _gatherRoutine;         // the running gather, so a rejected bet can cancel exactly that one
+        private List<GameObject> _gatherChips;    // chips it has in flight — untracked until adoption, so a cancel must destroy them itself
 
         private void Awake()
         {
@@ -92,6 +112,7 @@ namespace PlayCard.Game.Betting
                 // Dropping a chip is a purely LOCAL action — no board push follows it — so without this the bet
                 // amount wouldn't appear until the next snapshot arrived. This makes the label track the pile live.
                 builder.OnBetChanged += OnLocalBetChanged;
+                builder.OnBetRejected += OnBetRejected;
             }
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
@@ -105,8 +126,12 @@ namespace PlayCard.Game.Betting
             {
                 builder.OnDealCommitted -= OnDealCommitted;
                 builder.OnBetChanged -= OnLocalBetChanged;
+                builder.OnBetRejected -= OnBetRejected;
             }
-            _gatheringSeat = 0;   // a disable stops the gather coroutine; don't leave the seat skipped on re-enable
+            // A disable stops the gather coroutine; don't leave the seat skipped — or a dead routine/chip list held — on re-enable.
+            _gatheringSeat = 0;
+            _gatherRoutine = null;
+            _gatherChips = null;
         }
 
         private void OnBoard(BoardSnapshot board)
@@ -131,6 +156,10 @@ namespace PlayCard.Game.Betting
                 _prevInRound = false;
                 return;
             }
+            // Was the round ALREADY running on the previous push? Chips appearing on the very first in-round push are
+            // the bets that were placed during the window (or a mid-round join seeing the felt for the first time) —
+            // not chips being added. Only a seat that grows while we were already watching is a double or a split.
+            bool wasInRound = _prevInRound;
             _prevInRound = inRound;
             if (render && chipSet != null) { _lastMinBet = board.MinBet; _lastMaxBet = board.MaxBet; }   // cache stakes for BuildLooseStack
 
@@ -144,7 +173,16 @@ namespace PlayCard.Game.Betting
                 if (i + 1 == _gatheringSeat) continue;   // a deal gather owns this seat's chips right now — don't build/clear over it
 
                 var player = SeatPlayer(board, i + 1);
-                bool showRound = inRound && player != null;                                   // round running → all committed hands
+                // While a round RUNS, only a seat that is actually IN it has money on the felt. `InRound` is the
+                // server's own per-seat flag, set inside the deal alongside the stake debit, so it can never disagree
+                // with what was wagered.
+                //
+                // Without it, a seat that holds a bet it never got to play showed chips through a round it wasn't in:
+                // join mid-round, press DEAL as the betting window closes, and the server rejects the bet ("cannot
+                // change bets during an active round") — but the chips have already been gathered onto the felt
+                // locally, and the amount badge with them. The player then sits behind a wager, watching a round he is
+                // not in, with the "waiting for the next round" panel up. Same guard covers a remote seat that sat out.
+                bool showRound = inRound && player != null && player.InRound;                 // round running → all committed hands
                 bool showWindow = windowOpen && player != null && player.BetThisWindow;       // window → just this window's single bet
                 var hands = (showRound || showWindow) ? player.Hands : null;
                 int handCount = (showRound && hands != null && hands.Count > 0) ? hands.Count : 1;  // window shows only hand 0
@@ -164,12 +202,20 @@ namespace PlayCard.Game.Betting
                     seatTotal += amount;
 
                     if (!handCountChanged && amount == _lastAmount[slot]) continue;   // unchanged → leave as-is (no flicker)
+                    long previous = _lastAmount[slot];
                     _lastAmount[slot] = amount;
 
                     if (amount > 0 && values != null && values.Count > 0)
                         Build(slot, i, HandOffset(i + 1, h, handCount), amount, values, prefabs);
                     else
                         Clear(slot);
+
+                    // MORE chips on a live hand: a DOUBLE (this slot's stake grows) or a SPLIT (the second hand's slot
+                    // gets its matching bet from nothing). Both are the player putting money down mid-round and both
+                    // want the same sound. `previous` clamped at 0 so a slot's first-ever build counts as growth;
+                    // wasInRound is what keeps the opening deal and a mid-round join from firing it for every seat.
+                    if (inRound && wasInRound && amount > System.Math.Max(0L, previous))
+                        ChipsAdded?.Invoke(i + 1, ChipWorldPoint(i + 1, h, handCount));
                 }
 
                 // While the LOCAL player is still dropping chips, the board has no bet yet — PlaceBet isn't sent until
@@ -189,6 +235,70 @@ namespace PlayCard.Game.Betting
         }
 
         /// <summary>
+        /// Chips were ADDED to a hand that is already in play — a double, or the matching bet on a freshly split hand.
+        /// Carries the seat and the world point of that hand's stack. Not raised for the opening bets, which arrive
+        /// with the round rather than during it.
+        /// </summary>
+        public event System.Action<int, Vector3> ChipsAdded;
+
+        // World point of one hand's stack, for callers that only have the seat/hand. Safe on an unauthored seat.
+        private Vector3 ChipWorldPoint(int seatNumber, int handIndex, int handCount)
+        {
+            var anchor = ChipAnchor(seatNumber);
+            return anchor != null ? anchor.TransformPoint(HandOffset(seatNumber, handIndex, handCount)) : transform.position;
+        }
+
+        /// <summary>
+        /// Keep every committed stack sitting under its hand. The tuck flips BETWEEN board pushes (it waits for the
+        /// last card to land, then a delay), and OnBoard only rebuilds a stack when its AMOUNT changes — so nothing
+        /// here can be driven off the board. Easing toward the target every frame also gives the move for free, so the
+        /// chips travel with the cards instead of snapping once the rebuild happens to fire.
+        ///
+        /// Deliberately skipped while a gather owns the seat (those chips are mid-flight under their own animation) and
+        /// while the round-end director holds the felt (it detaches the stacks it is flying, and the ones it leaves
+        /// should stay put).
+        /// </summary>
+        private void Update()
+        {
+            if (!followTuck || _held || tableView == null) return;
+            if (_stacks == null || anchorsBySeat == null || _lastHandCount == null) return;
+
+            // Frame-rate independent ease. tuckFollowSeconds is the visual settle time, so the time constant is a
+            // fraction of it (an exponential is asymptotic — it never formally arrives).
+            float k = tuckFollowSeconds > 0.001f
+                ? 1f - Mathf.Exp(-Time.unscaledDeltaTime / (tuckFollowSeconds * 0.35f))
+                : 1f;
+
+            for (int i = 0; i < anchorsBySeat.Length; i++)
+            {
+                if (i + 1 == _gatheringSeat) continue;
+                int handCount = Mathf.Max(1, _lastHandCount[i]);
+
+                for (int h = 0; h < MaxHands; h++)
+                {
+                    int slot = i * MaxHands + h;
+                    if (slot >= _stacks.Length) continue;
+                    var list = _stacks[slot];
+                    if (list == null || list.Count == 0) continue;
+
+                    bool tucked = tableView.IsHandTucked(i + 1, h, handCount);
+                    float shrink = tucked ? Mathf.Max(0.1f, 1f - tuckChipShrink) : 1f;
+                    Vector3 baseOffset = HandOffset(i + 1, h, handCount);
+                    Vector3 targetScale = Vector3.one * (FeltChipScale * shrink);
+                    float step = stackStep * shrink;   // a shorter chip needs a shorter climb, or the stack stretches
+
+                    for (int c = 0; c < list.Count; c++)
+                    {
+                        if (list[c] == null) continue;
+                        var t = list[c].transform;
+                        t.localPosition = Vector3.Lerp(t.localPosition, baseOffset + new Vector3(0f, step * c, 0f), k);
+                        t.localScale = Vector3.Lerp(t.localScale, targetScale, k);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// This seat's split offset for <paramref name="handIndex"/>, expressed in the seat's BET-anchor frame.
         ///
         /// The offset comes from the view (<see cref="BlackjackTableView.HandCenterLocal"/>) in the seat's CARD-anchor
@@ -201,17 +311,31 @@ namespace PlayCard.Game.Betting
         private Vector3 HandOffset(int seatNumber, int handIndex, int handCount)
         {
             if (tableView == null) return Vector3.zero;
-            Vector3 local = tableView.HandCenterLocal(handIndex, handCount);
-            if (local == Vector3.zero) return local;                  // single hand sits on the anchor — nothing to convert
+            // HandCenterDrawn, not HandCenterLocal: a tucked hand has been pulled in toward the seat, and its chips
+            // belong under its cards. This is also what HandChipPoint is built on, so the round-end director collects
+            // from and pays to wherever the stack actually ended up — the two can't drift apart.
+            Vector3 local = followTuck
+                ? tableView.HandCenterDrawn(seatNumber, handIndex, handCount)
+                : tableView.HandCenterLocal(handIndex, handCount);
+            // A tucked hand's stack gets its own extra shift, in the BET anchor's own frame. The tuck pulls the CARDS
+            // in, and the chips inherit that — but the distance from a hand to its chips is authored as the gap between
+            // the two anchors, and that gap was set for a full-size hand. Once the hand shrinks it reads as too much
+            // empty felt, and no amount of pull-in closes it because both ends move together.
+            Vector3 tuckShift = followTuck && tableView.IsHandTucked(seatNumber, handIndex, handCount)
+                ? tuckChipNudge
+                : Vector3.zero;
+
+            if (local == Vector3.zero) return tuckShift;               // single hand sits on the anchor — nothing to convert
 
             var cardAnchor = tableView.SeatAnchor(seatNumber);
             int idx = seatNumber - 1;
             var betAnchor = (anchorsBySeat != null && idx >= 0 && idx < anchorsBySeat.Length) ? anchorsBySeat[idx] : null;
-            if (cardAnchor == null || betAnchor == null) return local;   // not authored → previous behaviour
+            if (cardAnchor == null || betAnchor == null) return local + tuckShift;   // not authored → previous behaviour
 
             // Direction-only conversion (TransformVector, not TransformPoint): honours rotation + scale, ignores
-            // the anchors' differing positions, which is exactly what a per-hand offset needs.
-            return betAnchor.InverseTransformVector(cardAnchor.TransformVector(local));
+            // the anchors' differing positions, which is exactly what a per-hand offset needs. The tuck shift is added
+            // AFTER, because it is authored in the bet anchor's frame — it is about the chips, not about the hand.
+            return betAnchor.InverseTransformVector(cardAnchor.TransformVector(local)) + tuckShift;
         }
 
         // The seat's player (holds Hands + BetThisWindow), or null if the seat is empty.
@@ -367,7 +491,47 @@ namespace PlayCard.Game.Betting
                 return;
             }
             _gatheringSeat = seat;
-            StartCoroutine(GatherRoutine(idx, anchor, chips, amount));
+            _gatherChips = chips;
+            _gatherRoutine = StartCoroutine(GatherRoutine(idx, anchor, chips, amount));
+        }
+
+        /// <summary>
+        /// The server refused the bet we already gathered onto the felt. Take those chips straight back off — stack,
+        /// amount badge and the sentinels — so the seat reads as unbet immediately rather than carrying a wager it
+        /// does not hold. Cancels a gather still in flight; those chips are destroyed with the stack.
+        /// </summary>
+        private void OnBetRejected(long amount)
+        {
+            int seat = LocalSeat();
+            int seatIdx = seat - 1;
+            if (_stacks == null || seatIdx < 0 || _lastHandCount == null || seatIdx >= _lastHandCount.Length) return;
+
+            // A gather mid-flight owns this seat and would otherwise adopt the chips AFTER we cleared them. Stop just
+            // that routine — not every coroutine on this component, which would strand a round-end float-away at
+            // scale 0 instead of destroying its chips. Its in-flight PullChips exit on their own once the chips are
+            // destroyed below (they null-check every frame).
+            if (_gatheringSeat == seat)
+            {
+                if (_gatherRoutine != null) { StopCoroutine(_gatherRoutine); _gatherRoutine = null; }
+                if (_gatherChips != null)
+                {
+                    // Not in _stacks yet (adoption is the LAST thing the gather does), so Clear below would miss them.
+                    for (int i = 0; i < _gatherChips.Count; i++)
+                        if (_gatherChips[i] != null) Destroy(_gatherChips[i]);
+                    _gatherChips = null;
+                }
+                _gatheringSeat = 0;
+            }
+
+            for (int h = 0; h < MaxHands; h++)
+            {
+                int slot = seatIdx * MaxHands + h;
+                if (slot < 0 || slot >= _stacks.Length) continue;
+                Clear(slot);
+                _lastAmount[slot] = -1;   // sentinel must reset or the same amount won't rebuild when it IS accepted
+            }
+            _lastHandCount[seatIdx] = -1;
+            SetLabel(seatIdx, string.Empty);
         }
 
         private IEnumerator GatherRoutine(int seatIdx, Transform anchor, List<GameObject> chips, long amount)
@@ -386,6 +550,8 @@ namespace PlayCard.Game.Betting
 
             AdoptAsStack(seatIdx, chips, amount);
             _gatheringSeat = 0;
+            _gatherRoutine = null;
+            _gatherChips = null;
         }
 
         // Tween one chip from where it landed to its slot in the stack: a smooth pull with a small mid-flight arc, then

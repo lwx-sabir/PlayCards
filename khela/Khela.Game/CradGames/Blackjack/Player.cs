@@ -56,7 +56,13 @@ namespace CardGames.Blackjack
         [JsonInclude]
         public int SeatNumber { get; set; }
 
-        [JsonInclude]
+        /// <summary>
+        /// The shoe this player draws from — the SAME object the dealer and every other player hold, never a copy
+        /// (see <c>BlackJackGame.AttachDeck</c>). Deliberately NOT serialised: the game already persists the one
+        /// authoritative shoe as <c>BlackJackGame.Deck</c>, and writing a second copy here would both bloat the
+        /// stored table and, on reload, hand this player a private deck to deal itself from.
+        /// </summary>
+        [JsonIgnore]
         public Deck CurrentDeck { get; set; }
 
         [JsonIgnore]
@@ -224,9 +230,11 @@ namespace CardGames.Blackjack
 
             Balance -= handState.Bet; // pay for second hand
 
-            // Draw one card to each hand
-            handState.Hand.Cards.Add(CurrentDeck.Draw());
+            // Draw one card to each hand — the NEW hand first. It sits on the player's right, which is the side the
+            // dealer serves and plays first, so it takes the next card off the shoe. (Drawing to the original hand
+            // first dealt the pair left-to-right, against the direction the rest of the table runs in.)
             newHandState.Hand.Cards.Add(CurrentDeck.Draw());
+            handState.Hand.Cards.Add(CurrentDeck.Draw());
 
             // Split aces get exactly one card each and cannot be hit/doubled/re-split (standard rule). Lock
             // both hands so the turn engine skips them and the action endpoints reject further play. A

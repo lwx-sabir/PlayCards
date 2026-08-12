@@ -58,7 +58,9 @@ namespace PlayCard.Game.Betting
             // Betting window = between rounds AND the previous round-end has fully finished. A blackjack settles the
             // round INSTANTLY (RoundInProgress flips false while the payout ceremony is still playing), so gating on
             // RoundInProgress alone popped the chip rail up over the payout.
-            bool betting = !board.RoundInProgress && !(view != null && view.RoundEndSettling);
+            // BettingOpenForMe, not !RoundInProgress: the window is shared, so the round stays "not in progress" until
+            // every seat has bet — the rail used to stay on the screen of a player who had already committed.
+            bool betting = table != null && table.BettingOpenForMe && !(view != null && view.RoundEndSettling);
             bool stakesChanged = board.MinBet != _min || board.MaxBet != _max;
 
             // Nothing that affects the rail changed → leave it as-is (don't rebuild every snapshot).

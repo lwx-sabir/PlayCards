@@ -5,6 +5,7 @@ using Best.SignalR;
 using Best.SignalR.Authentication;
 using Best.SignalR.Encoders;
 using PlayCard.Account;
+using PlayCard.App;        // NetworkStatus — global connection state for the reconnect overlay
 using PlayCard.Core;
 using PlayCard.Game.Dtos;
 using UnityEngine;
@@ -42,6 +43,22 @@ namespace PlayCard.Game.Net
 
         private HubConnection _hub;
         private volatile bool _connected;
+
+        // --- reconnect watchdog ---------------------------------------------------------------------------------
+        // Best SignalR's ReconnectPolicy retries a BOUNDED number of times and then fires OnClosed for good. Nothing
+        // reopened the connection after that, so one long tunnel / backgrounded app / server restart left the table
+        // permanently frozen — still rendering, never updating again, with no way back short of leaving the table.
+        // These drive a retry loop that outlives the policy, for as long as the caller still wants a connection.
+        private bool _wantConnected;      // set by ConnectAsync, cleared by DisconnectAsync — "should we be up?"
+        private bool _reconnecting;       // an attempt is in flight; don't stack another
+        // ⚠️ THE WATCHDOG MUST ONLY RUN ONCE BEST HAS GIVEN UP (OnClosed). Best raises OnReconnecting while it is
+        // still retrying, which also reads as "not connected" — acting on that tore down the connection Best was
+        // about to restore. The hub then churned, hub Heartbeats stopped landing, the server's stalled-seat reaper
+        // evicted the player, and because §5 defers pulling a seat that has a live stake, the eviction surfaced the
+        // instant the round settled: "kicked to the lobby right after the dealer reveals". Do not widen this.
+        private bool _policyGaveUp;
+        private int _retry;               // consecutive failures, for the backoff curve
+        private float _nextAttemptAt;     // unscaled time of the next attempt
         private readonly ConcurrentQueue<BoardSnapshot> _boards = new ConcurrentQueue<BoardSnapshot>();
         private readonly ConcurrentQueue<ConnChange> _conn = new ConcurrentQueue<ConnChange>();
 
@@ -49,7 +66,16 @@ namespace PlayCard.Game.Net
         {
             public readonly bool Connected;
             public readonly string Reason;
-            public ConnChange(bool connected, string reason) { Connected = connected; Reason = reason; }
+            /// <summary>Best's own reconnect policy is FINISHED with this connection (OnClosed) — as opposed to
+            /// OnReconnecting/OnError, where it is still working and must be left alone.</summary>
+            public readonly bool Terminal;
+
+            public ConnChange(bool connected, string reason, bool terminal = false)
+            {
+                Connected = connected;
+                Reason = reason;
+                Terminal = terminal;
+            }
         }
 
         private void Awake()
@@ -59,14 +85,21 @@ namespace PlayCard.Game.Net
 
         public async Task ConnectAsync()
         {
+            _wantConnected = true;   // from here on, any close that isn't ours is something to recover from
             if (_hub == null) Build();
             try
             {
+                await EnsureTokenAsync();
                 await _hub.ConnectAsync();
                 _connected = true;   // immediate; the OnConnected event (queued) also re-fires our event in Update
+                _retry = 0;
             }
             catch (Exception ex)
             {
+                // Arm the watchdog. A connect that never OPENED won't raise OnClosed, so without this the retry loop
+                // stays disarmed and a failed FIRST connect is permanent — the table then runs REST-only for the whole
+                // session with no live pushes and no way back.
+                _policyGaveUp = true;
                 _conn.Enqueue(new ConnChange(false, ex.Message));
                 throw;
             }
@@ -74,8 +107,35 @@ namespace PlayCard.Game.Net
 
         public Task DisconnectAsync()
         {
-            _hub?.StartClose();     // graceful; OnClosed fires → queued → Update raises OnDisconnected
+            _wantConnected = false;   // deliberate — the watchdog must NOT drag it back up
+            _hub?.StartClose();       // graceful; OnClosed fires → queued → Update raises OnDisconnected
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Make sure the token the authenticator is about to read is actually valid.
+        ///
+        /// <see cref="TokenProvider"/> is synchronous and hands back whatever <see cref="AccountManager"/> has cached,
+        /// so a connect attempt that lands after expiry but before the background refresh has run will 401 the
+        /// handshake — and each failed handshake burns one of the reconnect policy's finite attempts, which is how a
+        /// recoverable blip turns into a dead connection. Refreshing here costs nothing when the token is healthy
+        /// (a clock compare), and is bounded so a stalled refresh can't wedge the connect the way it wedged REST.
+        /// </summary>
+        private static async Task EnsureTokenAsync()
+        {
+            if (AccountManager.Instance == null) return;
+            try
+            {
+                var gate = AccountManager.Instance.EnsureValidTokenAsync();
+                var budget = Task.Delay(TimeSpan.FromSeconds(Mathf.Max(1, AppConfig.Instance.RequestTimeoutSeconds)));
+                if (await Task.WhenAny(gate, budget) == budget)
+                    _ = gate.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            }
+            catch (Exception ex)
+            {
+                // Never let auth trouble stop us ATTEMPTING — a stale token that 401s is still better than not trying.
+                Debug.LogWarning($"[Hub] token refresh before connect failed: {ex.Message}");
+            }
         }
 
         public Task JoinTableAsync(string tableId)    => Send("JoinTable", tableId);
@@ -122,7 +182,9 @@ namespace PlayCard.Game.Net
             _hub.OnConnected    += _         => _conn.Enqueue(new ConnChange(true, null));
             _hub.OnReconnected  += _         => _conn.Enqueue(new ConnChange(true, null));
             _hub.OnReconnecting += (_, r)    => _conn.Enqueue(new ConnChange(false, r ?? "reconnecting"));
-            _hub.OnClosed       += _         => _conn.Enqueue(new ConnChange(false, "closed"));
+            // ONLY OnClosed is terminal. OnReconnecting/OnError mean Best is still working the problem — the watchdog
+            // must not touch the connection then, or it tears down the one Best is about to restore.
+            _hub.OnClosed       += _         => _conn.Enqueue(new ConnChange(false, "closed", terminal: true));
             _hub.OnError        += (_, err)  => _conn.Enqueue(new ConnChange(false, err ?? "error"));
         }
 
@@ -134,13 +196,75 @@ namespace PlayCard.Game.Net
             while (_conn.TryDequeue(out var change))
             {
                 _connected = change.Connected;
-                if (change.Connected) OnConnected?.Invoke();
-                else OnDisconnected?.Invoke(change.Reason);
+                if (change.Connected)
+                {
+                    _retry = 0;
+                    _policyGaveUp = false;   // Best is healthy again — the watchdog stands down
+                    NetworkStatus.Report(NetState.Online);
+                    OnConnected?.Invoke();
+                }
+                else
+                {
+                    // Arm the watchdog ONLY on a terminal close. While Best is mid-reconnect, leave its connection
+                    // alone — see _policyGaveUp.
+                    if (change.Terminal) _policyGaveUp = true;
+
+                    // Only call it "reconnecting" while we actually intend to be up; a deliberate leave is just offline.
+                    NetworkStatus.Report(_wantConnected ? NetState.Reconnecting : NetState.Offline, change.Reason);
+                    OnDisconnected?.Invoke(change.Reason);
+                }
             }
+
+            PumpReconnect();
+        }
+
+        /// <summary>
+        /// Keep trying to get back up after Best SignalR's own policy has given up, with exponential backoff capped so
+        /// a long outage settles into a slow poll rather than hammering. Runs from Update (main thread) and only while
+        /// <see cref="_wantConnected"/> — leaving the table stops it immediately.
+        /// </summary>
+        private void PumpReconnect()
+        {
+            // While we're up, keep the flag clear. Rebuilding closes the OLD connection, and that late "closed" can
+            // land after the NEW one is already connected — leaving the watchdog armed for the next ordinary blip,
+            // which is precisely the state that caused it to fight Best's reconnect.
+            if (_connected) { _policyGaveUp = false; return; }
+
+            if (!_wantConnected || _reconnecting) return;
+            if (!_policyGaveUp) return;   // Best is still retrying — hands off (see the field comment)
+            if (Time.unscaledTime < _nextAttemptAt) return;
+
+            _reconnecting = true;
+            NetworkStatus.Report(NetState.Reconnecting, "retrying");
+            _ = AttemptReconnect();
+        }
+
+        private async Task AttemptReconnect()
+        {
+            try
+            {
+                // Rebuild rather than reuse: a HubConnection that has run out of retries is terminal, and calling
+                // ConnectAsync on it again just throws.
+                try { _hub?.StartClose(); } catch { /* already dead */ }
+                _hub = null;
+
+                await ConnectAsync();   // refreshes the token first, and resets _retry on success
+            }
+            catch (Exception ex)
+            {
+                _retry++;
+                // 2s, 4s, 8s, 16s, capped at 30s. Unbounded ATTEMPTS (the player may sit on a dead network for
+                // minutes and should still recover), just never faster than this.
+                float wait = Mathf.Min(30f, 2f * Mathf.Pow(2f, Mathf.Min(_retry - 1, 4)));
+                _nextAttemptAt = Time.unscaledTime + wait;
+                Debug.LogWarning($"[Hub] reconnect attempt {_retry} failed ({ex.Message}); retrying in {wait:0}s.");
+            }
+            finally { _reconnecting = false; }
         }
 
         private void OnDestroy()
         {
+            _wantConnected = false;   // stop the watchdog before we drop the connection
             try { _hub?.StartClose(); } catch { /* shutting down */ }
             _hub = null;
         }

@@ -38,6 +38,11 @@ namespace PlayCard.UI
         [Tooltip("Optional: shows the insurance window countdown.")]
         [SerializeField] private TMP_Text timerLabel;
 
+        [Tooltip("Failsafe: once the insurance window has this many seconds left, offer it regardless of whether " +
+                 "the deal animation has finished. A player must never be denied the decision because something " +
+                 "on screen was still moving.")]
+        [SerializeField] private float forceShowWithinSeconds = 8f;
+
         [Header("Slide")]
         [Tooltip("Slide in from the TOP (park above the shown spot, drop down into view). Uncheck to slide up from below.")]
         [SerializeField] private bool slideFromTop = true;
@@ -141,10 +146,21 @@ namespace PlayCard.UI
             if (board == null || !board.RoundInProgress || !board.InsuranceExpiresAt.HasValue) return null;
             if (board.InsuranceExpiresAt.Value <= DateTimeOffset.UtcNow) return null;   // window already closed — never pop a dead offer
             if (!DealerShowsAce(board)) return null;
-            // Hold only until the LOCAL decision inputs land — my hand + the dealer's (seat 0) — NOT the whole table's
-            // deal. The server insurance window is a fixed ~12s wall-clock; gating on the global animation would let a
-            // full-table deal eat it (or close it before I'm ever offered).
-            if (view != null && !view.DecisionReady(table.MySeat)) return null;
+
+            // Hold only until MY hand has landed. Deliberately NOT DecisionReady, which also requires the DEALER's
+            // seat to settle — and her second card is dealt FACE DOWN and parked, so that seat may never report
+            // settled during the round. Insurance is decided on her UP card, which the board already confirms is an
+            // Ace; making the offer wait on a card the player will never see means it can never appear at all.
+            //
+            // The failsafe below matters more than either gate: an insurance offer that is silently skipped costs
+            // the player a decision they are entitled to and money they might have saved. If the window is running
+            // out and we still have not shown it, show it — a slightly early popup is a nuisance, a missing one is
+            // a wrong outcome.
+            double left = (board.InsuranceExpiresAt.Value - DateTimeOffset.UtcNow).TotalSeconds;
+            bool windowRunningOut = left <= forceShowWithinSeconds;
+
+            if (!windowRunningOut && view != null && (view.PeekHeld || !view.SeatSettled(table.MySeat)))
+                return null;
 
             var me = board.Seats?.Find(s => s.SeatNumber == table.MySeat)?.Player;
             if (me?.Hands == null || me.Hands.Count == 0) return null;

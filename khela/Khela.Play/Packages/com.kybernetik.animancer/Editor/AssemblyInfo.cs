@@ -4,16 +4,8 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 [assembly: AssemblyTitle("Kybernetik.Animancer.Editor")]
-[assembly: AssemblyProduct("Animancer Lite")]
-[assembly: AssemblyDescription("An animation system for Unity which is based on the Playables API." +
-    " This assembly was compiled for Unity " +
-#if UNITY_6000_0_OR_NEWER
-    "6000.0+.")]
-#elif UNITY_2023_1_OR_NEWER
-    "2023.1+.")]
-#else
-    "2022.3+.")]
-#endif
+[assembly: AssemblyProduct("Animancer Pro")]
+[assembly: AssemblyDescription("An animation system for Unity which is based on the Playables API.")]
 [assembly: AssemblyCompany("Kybernetik")]
 [assembly: AssemblyCopyright("Copyright © Kybernetik 2018-2026")]
 [assembly: AssemblyVersion("8.4.0.39")]

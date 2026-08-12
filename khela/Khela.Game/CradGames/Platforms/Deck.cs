@@ -15,6 +15,14 @@ namespace CardGames.Platforms
         [JsonInclude]
         public List<Card> Cards = [];
 
+        /// <summary>
+        /// Optional hook invoked when <see cref="Draw"/> finds the deck empty, giving the owner a chance to append
+        /// more cards. Blackjack uses it to extend a shoe deterministically rather than fail mid-round with live
+        /// stakes on the table (see <c>BlackJackGame.ExtendShoe</c>). Not serialised — re-attach it after loading.
+        /// </summary>
+        [JsonIgnore]
+        public Action<Deck> OnExhausted;
+
         // Returns the card at the given position
         public Card this[int position] { get { return (Card)Cards[position]; } }
 
@@ -59,6 +67,14 @@ namespace CardGames.Platforms
         /// <returns></returns>
         public Card Draw()
         {
+            // Running dry mid-round must never fail: a throw here would land on a hand with live stakes already
+            // debited. Give the owner a chance to extend the shoe (blackjack appends a deterministic, replayable
+            // continuation), and only give up if nothing was added. Never reshuffle implicitly — the dealt order has
+            // to stay reproducible from the published shuffle.
+            if (Cards.Count == 0) OnExhausted?.Invoke(this);
+            if (Cards.Count == 0)
+                throw new InvalidOperationException("The shoe is empty and could not be extended — cannot draw.");
+
             Card card = Cards[0];
             Cards.RemoveAt(0);
             return card;

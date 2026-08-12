@@ -54,6 +54,31 @@ namespace PlayCard.UI
         [Tooltip("Extra rotation to lay the banner flat like the cards (a world-space UI banner stands vertical → try (90,0,0)).")]
         [SerializeField] private Vector3 labelFlatEuler = new Vector3(90f, 0f, 0f);
 
+        [Header("Tucked hand — its OWN placement (a finished split hand is smaller and sits elsewhere)")]
+        [Tooltip("ON: on a TUCKED hand the banner anchors to the HAND itself (centred over the fan, hand-aligned) " +
+                 "instead of hanging off the last card. A result belongs to the HAND — pinned to the last card it " +
+                 "walks sideways as the fan grows, which on a shrunken hand puts it off the cards entirely and into " +
+                 "the neighbouring hand's banner. Anchored to the hand it sits in the same place at 2 cards or 5.")]
+        [SerializeField] private bool tuckedAtHandCenter = true;
+
+        [Tooltip("ON: a TUCKED hand uses Tucked Corner Offset below instead of scaling the offset above. The normal " +
+                 "offset is authored against a FULL-SIZE card, and simply scaling it does not land the banner right — " +
+                 "the banner keeps its authored size while the card shrinks, so the geometry no longer matches. " +
+                 "Author the tucked position directly and it is exact.")]
+        [SerializeField] private bool overrideWhenTucked = true;
+
+        [Tooltip("Offset for a TUCKED hand, in the frame it anchors to — the HAND's frame when Tucked At Hand Center " +
+                 "is on (X = sideways, Y = lift off the felt, Z = toward the dealer), else the last CARD's. Used RAW " +
+                 "— no card scaling — because you author it against the tucked hand you can see. LEAVE AT (0,0,0) " +
+                 "and the tucked hand keeps using the main offset above, so nothing changes until you author this. " +
+                 "Preview with the anchor gizmo: Preview Tuck = Both Hands.")]
+        [SerializeField] private Vector3 tuckedCornerOffset = Vector3.zero;
+
+        [Tooltip("Extra rotation ADDED to Label Flat Euler while the hand is tucked, on all three axes. It is a DELTA, " +
+                 "not a replacement, so (0,0,0) means 'exactly as authored above' and you dial in the difference from " +
+                 "there instead of re-deriving the whole rotation.")]
+        [SerializeField] private Vector3 tuckedFlatEulerOffset = Vector3.zero;
+
         [Header("Unroll tween — the active variant scales open on its X axis (set its pivot for the roll origin)")]
         [Tooltip("Seconds for the unroll.")]
         [SerializeField] private float tweenDuration = 0.35f;
@@ -101,10 +126,27 @@ namespace PlayCard.UI
 
         // IAnchorLabel — lets the editor CardAnchorGizmo preview this banner before Play.
         public GameObject LabelPrefab => labelPrefab;
-        public Vector3 CornerOffset => cornerOffset;
-        public Vector3 LabelFlatEuler => labelFlatEuler;
-        public bool ScaleOffsetWithCard => true;    // offset scales with the (split-shrunk) card — same as the value badge
-        public bool AnchorAtHandCenter => false;    // pinned to the hand's LAST card, like the value badge
+
+        /// <summary>Authored rotation, plus the tucked delta while tucked. Additive so zero = unchanged.</summary>
+        public Vector3 FlatEulerFor(bool tucked) => tucked ? labelFlatEuler + tuckedFlatEulerOffset : labelFlatEuler;
+        // Full-size hand: pinned to the LAST card, like the value badge. Tucked: lifted to the hand centre — see the
+        // Tucked At Hand Center tooltip.
+        //
+        // ALSO requires an authored offset, and that is not a detail: the main offset is measured from the LAST CARD,
+        // so re-anchoring to the hand centre while still using it means measuring a card-relative offset from a
+        // completely different origin. The banner lands displaced by the whole distance between the two, which is
+        // exactly the "flung up and to the left" result. Until there is a hand-frame offset to use, stay on the card.
+        public bool AnchorsAtHandCenter(bool tucked) => tucked && tuckedAtHandCenter && HasTuckedOffset;
+
+        // An offset of exactly zero means "not authored yet" — see the Tucked Corner Offset tooltip.
+        private bool HasTuckedOffset => overrideWhenTucked && tuckedCornerOffset != Vector3.zero;
+
+        /// <summary>The placement rule, in one place, so the gizmo preview and the live table cannot disagree: a
+        /// tucked hand uses its own hand-authored offset; anything else scales the authored offset with the card.</summary>
+        public Vector3 OffsetFor(bool tucked, float cardScale)
+            => tucked && HasTuckedOffset
+                ? tuckedCornerOffset                 // hand-authored against the tucked hand — used exactly as typed
+                : cornerOffset * cardScale;          // unauthored (or not tucked) — the main offset, tracking the card
 
         private void OnEnable()
         {
@@ -221,18 +263,36 @@ namespace PlayCard.UI
             _desired.Add(key);
 
             // Pin to the hand's LAST card, tilted with it, offset scaled by the card — IDENTICAL to the value badge
-            // (single-hand correct). On a split the *scale shrinks the offset 10% with the card.
+            // (single-hand correct). Prefer the card's LIVE pose so the banner travels with it through the split-hand
+            // tuck and the fan re-centre; CardLocalTRS is the fallback for a card that isn't on the felt yet.
             view.CardLocalTRS(seat, handIndex, handCount, cards.Count - 1, cards.Count, out var pos, out var rot, out var scale);
-            Vector3 worldPos = anchor.TransformPoint(pos);
-            Quaternion worldRot = anchor.rotation * rot;
+            if (view.TryCardPose(seat, handIndex, cards.Count - 1, out var livePos, out var liveRot, out var liveScale))
+            { pos = livePos; rot = liveRot; scale = liveScale; }
+
+            bool tucked = view.IsHandTucked(seat, handIndex, handCount);
+            Vector3 worldPos;
+            Quaternion worldRot;
+            if (AnchorsAtHandCenter(tucked))
+            {
+                // Anchored to the HAND: centred over the fan and aligned with the seat, so it sits in the same place
+                // whether the hand holds 2 cards or 5, instead of walking sideways with the last card.
+                worldPos = anchor.TransformPoint(view.HandCenterDrawn(seat, handIndex, handCount));
+                worldRot = anchor.rotation;
+            }
+            else
+            {
+                worldPos = anchor.TransformPoint(pos);
+                worldRot = anchor.rotation * rot;   // tilted with the card it hangs off
+            }
 
             var b = Rent(key);
             if (b.Go == null) return;
 
-            // Root stays FULL scale + positioned, so the badge sits exactly where you set it (matches the gizmo).
+            // SIZE stays exactly as authored — the banner is a readability element, not card art, and a tucked hand is
+            // the one whose result most needs to be legible. Placement comes from OffsetFor, which the gizmo calls too.
             b.Go.transform.SetPositionAndRotation(
-                worldPos + worldRot * (cornerOffset * scale),
-                worldRot * Quaternion.Euler(labelFlatEuler));
+                worldPos + worldRot * OffsetFor(tucked, scale),
+                worldRot * Quaternion.Euler(FlatEulerFor(tucked)));
             b.Go.transform.localScale = _baseScale;
 
             // Show the variant for this situation, hide the rest.

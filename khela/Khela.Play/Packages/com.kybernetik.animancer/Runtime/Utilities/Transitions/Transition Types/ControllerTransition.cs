@@ -10,9 +10,6 @@ namespace Animancer
     /// <inheritdoc/>
     /// https://kybernetik.com.au/animancer/api/Animancer/ControllerTransition_1
     [Serializable]
-#if ! UNITY_EDITOR
-    [System.Obsolete(Validate.ProOnlyMessage)]
-#endif
     public abstract class ControllerTransition<TState> : Transition<TState>,
         IAnimationClipCollection,
         ICopyable<ControllerTransition<TState>>
@@ -115,11 +112,7 @@ namespace Animancer
 
         /// <inheritdoc/>
         public override bool IsValid
-#if UNITY_EDITOR
             => _Controller != null;
-#else
-            => false;
-#endif
 
         /************************************************************************************************************************/
 
@@ -171,9 +164,6 @@ namespace Animancer
     /// <inheritdoc/>
     /// https://kybernetik.com.au/animancer/api/Animancer/ControllerTransition
     [Serializable]
-#if ! UNITY_EDITOR
-    [System.Obsolete(Validate.ProOnlyMessage)]
-#endif
     public class ControllerTransition : ControllerTransition<ControllerState>,
         ICopyable<ControllerTransition>
     {

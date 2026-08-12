@@ -58,6 +58,14 @@ namespace Khela.Game.Services.Wallet
             return wallet;
         }
 
+        public async Task<IReadOnlyDictionary<CurrencyType, decimal>> GetBalancesAsync(string userId)
+        {
+            var uid = ParseUserId(userId);
+            return await _db.PlayerWallets.AsNoTracking()
+                .Where(w => w.UserId == uid)
+                .ToDictionaryAsync(w => w.Currency, w => w.Balance);
+        }
+
         public async Task<decimal> GetBalanceAsync(string userId, CurrencyType currency)
         {
             var uid = ParseUserId(userId);

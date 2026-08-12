@@ -77,8 +77,23 @@ namespace PlayCard.Game.Wallet
             OnBalancesChanged?.Invoke(Balances);
         }
 
+        // SINGLE-FLIGHT. Every HUD refreshes on enable and TableController.Do kicks one after EVERY action, so joining
+        // a table fired five or six identical /wallet/balances at once and each action added another. On a phone that
+        // is the bulk of the REST traffic, and Best HTTP only opens a few connections per host — the surplus queues
+        // behind the ones that matter (bet, deal, stand) and they time out. Callers that arrive while a fetch is in
+        // flight now await THAT fetch instead of starting their own; the result is identical, since they all want the
+        // same server value.
+        private Task<bool> _inFlight;
+
         /// <summary>Re-fetch balances from the server. Call after settles, purchases, or on screen load.</summary>
-        public async Task<bool> RefreshAsync()
+        public Task<bool> RefreshAsync()
+        {
+            if (_inFlight != null && !_inFlight.IsCompleted) return _inFlight;
+            _inFlight = RefreshCoreAsync();
+            return _inFlight;
+        }
+
+        private async Task<bool> RefreshCoreAsync()
         {
             int gen = _writeGen;
             var res = await BlackjackRestClient.Instance.GetWalletAsync();

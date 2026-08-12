@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using PlayCard.Game.Betting;  // BetBuilder — the stake receipt fires on its DEAL commit, not on the server's debit
 using PlayCard.Game.Dtos;     // BoardSnapshot — re-arming the hold each round
 using PlayCard.Game.Net;      // WalletBalances
 using PlayCard.Game.Table;    // TableController
@@ -34,6 +35,9 @@ namespace PlayCard.UI
         [Tooltip("The table (auto-found; leave empty off-table). Used ONLY to re-arm the credit hold when a new round " +
                  "starts — without it just the first win would wait for the flying chips.")]
         [SerializeField] private TableController table;
+        [Tooltip("The bet builder (auto-found; leave empty off-table). Its DEAL commit is what fires the stake " +
+                 "receipt — see Predict Stakes.")]
+        [SerializeField] private BetBuilder betBuilder;
         [Tooltip("Numeric format, e.g. \"#,0\" -> 1,234,567.")]
         [SerializeField] private string format = "#,0";
 
@@ -78,6 +82,18 @@ namespace PlayCard.UI
         [SerializeField] private float floatFadeOutShare = 0.6f;
         [SerializeField] private bool floatOnGain = true;
         [SerializeField] private bool floatOnLoss = true;
+
+        [Header("Stake prediction")]
+        [Tooltip("Announce a committed stake the moment the player taps DEAL/REPEAT — receipt + count roll — instead " +
+                 "of waiting for the server's debit. The server only debits when the round DEALS, which at a busy " +
+                 "table is after EVERY other seat has bet, so the receipt for your own tap arrived seconds late and " +
+                 "at a moment decided by other players. DISPLAY ONLY: the wallet stays server-authoritative and this " +
+                 "reconciles against it (silently) on the next value.")]
+        [SerializeField] private bool predictStakes = true;
+        [Tooltip("Safety net for a stake the server never takes (a bet refused at the close of the betting window): " +
+                 "after this long the prediction is dropped and the label reconciles to the server, with no receipt " +
+                 "and no flash. Normal play clears it within a second, when the deal debits.")]
+        [SerializeField] private float stakePredictionTimeout = 25f;
 
         [Header("Colours — shared by the count flash AND the floating amount")]
         [Tooltip("Flash the COUNT label on a change. The two colours below apply to the floating amount either way.")]
@@ -126,6 +142,12 @@ namespace PlayCard.UI
         private decimal _creditFrom;
         private bool _creditActive;
         private bool _expectingBurst;   // WinChipFly owns the pending credit — RevealNow must not jump ahead of the chips
+
+        // Locally-announced stake, not yet reflected by the server (see predictStakes). _stakeBaseline is the server
+        // value when it was announced, which is how we recognise the debit landing.
+        private decimal _stakePending;
+        private decimal _stakeBaseline;
+        private float _stakeDeadline;
 
         private void Reset() => label = GetComponent<TMP_Text>();
 
@@ -194,6 +216,15 @@ namespace PlayCard.UI
             if (table == null) table = FindAnyObjectByType<TableController>(FindObjectsInactive.Include);
             if (table != null) table.OnBoardChanged += OnBoard;
 
+            // The bet commit is what the receipt is really about, so listen to it directly rather than waiting for the
+            // wallet to move. Null off-table (Home / Lobby HUDs), where there is nothing to predict.
+            if (betBuilder == null) betBuilder = FindAnyObjectByType<BetBuilder>(FindObjectsInactive.Include);
+            if (betBuilder != null)
+            {
+                betBuilder.OnDealCommitted += OnStakeCommitted;
+                betBuilder.OnBetRejected += OnStakeRejected;
+            }
+
             // Claim these labels so BalanceHud / BalanceBinder / SeatPlate leave them alone (see Governed).
             if (label != null) Governed.Add(label);
             if (floatingAmount != null) Governed.Add(floatingAmount);
@@ -229,15 +260,30 @@ namespace PlayCard.UI
             if (label != null) Governed.Remove(label);
             if (floatingAmount != null) Governed.Remove(floatingAmount);
             if (table != null) table.OnBoardChanged -= OnBoard;
+            if (betBuilder != null)
+            {
+                betBuilder.OnDealCommitted -= OnStakeCommitted;
+                betBuilder.OnBetRejected -= OnStakeRejected;
+            }
             if (WalletManager.Instance != null) WalletManager.Instance.OnBalancesChanged -= OnBalances;
         }
+
+        private void OnStakeCommitted(long amount) => AnnounceStakeLocal(amount);
+        private void OnStakeRejected(long amount) => ReleaseStakeLocal(amount);
 
         // RE-ARM the credit hold for EVERY round. RevealNow drops the hold at the payout beat and nothing put it back,
         // so only the FIRST round's win waited for the flying chips — every later win ticked up (and flashed) at the
         // settle push instead, which reads as "the win colour happened once and never again".
         private void OnBoard(BoardSnapshot board)
         {
-            if (board == null || !board.RoundInProgress) return;
+            if (board == null) return;
+
+            // The round dealt WITHOUT us (we joined mid-round, or our bet lost the race to the window closing): our
+            // stake was never taken, so put it straight back instead of showing a phantom debit until the timeout.
+            if (board.RoundInProgress && _stakePending > 0m && table != null && table.AmISpectatingRound)
+                ReleaseStakeLocal(_stakePending);
+
+            if (!board.RoundInProgress) return;
             if (_settleDirector == null) return;          // no director presenting ⇒ nothing to wait for
             _holdCredits = true;
             _creditActive = false;
@@ -314,7 +360,8 @@ namespace PlayCard.UI
         {
             if (b == null) return;
             var wm = WalletManager.Instance;
-            decimal next = wm != null ? wm.Chips : b.Chips;   // wm.Chips includes the optimistic prediction
+            decimal server = wm != null ? wm.Chips : b.Chips;
+            decimal next = ResolveStake(server, out bool reconciled);
 
             if (!_hasShown) { SnapTo(next); return; }
 
@@ -324,6 +371,17 @@ namespace PlayCard.UI
             if (_shown <= 0m) { SnapTo(next); return; }
 
             if (next == _target) return;
+
+            // Dropping a prediction is a CORRECTION, not a transaction: the money never actually left. Roll to the
+            // truth with no receipt and no green flash, or a refused bet would read as a win.
+            if (reconciled && next > _shown)
+            {
+                _target = next;
+                _creditActive = false;
+                _expectingBurst = false;
+                StartRoll(_target, flash: false);
+                return;
+            }
 
             _target = next;
             // A new value supersedes any in-flight slice walk — and drops a stale burst claim, so a burst torn down
@@ -337,6 +395,66 @@ namespace PlayCard.UI
 
             ShowFloating(_target - _shown);   // the deduct receipt (and off-table credits: claims, chests, IAP)
             StartRoll(_target);
+        }
+
+        // ---- stake prediction (display only) ----
+
+        /// <summary>
+        /// The player just committed a stake. Show it leaving NOW — the receipt and the count roll — instead of when
+        /// the server debits, which happens at DEAL: at a busy table that is only once every other seat has bet, so
+        /// the confirmation of your own tap was arriving seconds late and on someone else's schedule.
+        ///
+        /// Safe because the money is not ours to move: the wallet stays server-authoritative, and if the bet is
+        /// refused this reconciles upward on the next value (silently — see <see cref="OnBalances"/>). Driven by
+        /// <c>BetBuilder.OnDealCommitted</c>, the same event the felt's chip gather listens to.
+        /// </summary>
+        private void AnnounceStakeLocal(decimal amount)
+        {
+            if (!predictStakes || amount <= 0m || !_hasShown || _shown <= 0m) return;
+
+            var wm = WalletManager.Instance;
+            decimal server = wm != null ? wm.Chips : _target;
+            if (_stakePending <= 0m) _stakeBaseline = server;   // first stake of this window sets the mark to measure from
+            _stakePending += amount;
+            _stakeDeadline = Time.unscaledTime + Mathf.Max(1f, stakePredictionTimeout);
+
+            _target = server - _stakePending;
+            ShowFloating(-amount);
+            StartRoll(_target);
+        }
+
+        /// <summary>The server refused the bet (or dealt a round we're not in) — put the announced stake straight back
+        /// rather than waiting out the timeout. Silent: nothing left the wallet, so there is nothing to announce.</summary>
+        private void ReleaseStakeLocal(decimal amount)
+        {
+            if (_stakePending <= 0m) return;
+            _stakePending -= amount;
+            if (_stakePending < 0m) _stakePending = 0m;
+
+            var wm = WalletManager.Instance;
+            decimal server = wm != null ? wm.Chips : _target;
+            _target = server - _stakePending;
+            if (_shown != _target) StartRoll(_target, flash: false);   // a correction, not a win — no receipt, no flash
+        }
+
+        /// <summary>
+        /// Fold any announced stake into the server value. The prediction is dropped the moment the server REFLECTS
+        /// it (its value has fallen by at least the stake — the deal debited), CONTRADICTS it (the value rose above
+        /// the pre-bet mark, so a credit landed and the round is behind us), or the safety timeout expires. So the
+        /// label can never sit more than one round away from the wallet.
+        /// </summary>
+        private decimal ResolveStake(decimal server, out bool reconciled)
+        {
+            reconciled = false;
+            if (_stakePending <= 0m) return server;
+
+            if (server <= _stakeBaseline - _stakePending || server > _stakeBaseline || Time.unscaledTime >= _stakeDeadline)
+            {
+                reconciled = true;
+                _stakePending = 0m;
+                return server;
+            }
+            return server - _stakePending;
         }
 
         /// <summary>Paint a value with no animation (first paint, scene re-entry).</summary>

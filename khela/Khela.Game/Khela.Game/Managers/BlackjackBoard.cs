@@ -37,8 +37,13 @@ namespace Khela.Game.Managers
             table.BettingDurationSeconds,
             table.LastHandId, // id of the most recently settled hand — feeds GET /verify/{handId}
             table.LastResults, // per-seat outcome of the last settled round (drives the client result banner)
-            // Commitment only — the server seed stays secret until reveal/verify.
-            Fairness = new { table.ServerSeedHash, table.ClientSeed, table.RoundNonce },
+            // Commitment only — the server seed stays secret until reveal/verify. ShoeNonce, not RoundNonce, is what
+            // derives the shuffle: one shoe spans many rounds, so it advances per SHOE while RoundNonce counts rounds.
+            Fairness = new { table.ServerSeedHash, table.ClientSeed, table.RoundNonce, table.ShoeNonce },
+            // SHOE state, so the table can show the cut card. CutCardAt is how many cards are left when the cut is
+            // reached; CutCardReached true means THIS round finishes on the current shoe and the next one is dealt
+            // from a freshly shuffled shoe. Single-deck tables report CutCardAt 0 and never flag it.
+            Shoe = BuildShoe(table),
             Dealer = new
             {
                 Cards = table.Game.Dealer.Hand.Cards.Select(MaskCard),
@@ -47,6 +52,32 @@ namespace Khela.Game.Managers
             Players = table.Game.Players.Select(ToPlayerDto),
             Seats = table.Seats.Select(s => ToSeatDto(s, table))
         };
+
+        // SHOE state, so the table can show the cut card. CutCardAt is how many cards are LEFT when the cut is
+        // reached; CutCardReached true means THIS round finishes on the current shoe and the next one is dealt from
+        // a freshly shuffled shoe. A reshuffle-every-round table reports CutCardAt 0 and never flags it.
+        //
+        // Until a table has dealt its first round under the shoe there is no managed shoe yet, and reporting a live
+        // CardsRemaining against a ShoeSize of 0 would describe an impossible deck. Report nothing instead.
+        private static object BuildShoe(BlackjackTable table)
+        {
+            var cards = table.Game?.Deck?.Cards;
+            bool managed = table.ShoeSize > 0 && !string.IsNullOrEmpty(table.ShoeHash);
+            if (!managed)
+                return new { ShoeSize = 0, CardsRemaining = 0, CutCardAt = 0, CutCardReached = false, ShoeId = (string)null };
+
+            // Clamped because a shoe that had to extend itself mid-round can hold more than it was dealt with, and a
+            // client drawing a "cards left" gauge should never see a value outside the shoe.
+            int remaining = cards == null ? 0 : Math.Min(cards.Count, table.ShoeSize);
+            return new
+            {
+                table.ShoeSize,
+                CardsRemaining = remaining,
+                table.CutCardAt,
+                CutCardReached = table.CutCardAt > 0 && remaining <= table.CutCardAt,
+                ShoeId = table.ShoeHash
+            };
+        }
 
         // Face-down cards (the dealer hole card) are masked so a snapshot never leaks the down card.
         private static object MaskCard(Card c) => c.IsCardUp

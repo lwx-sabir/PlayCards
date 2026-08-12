@@ -4,39 +4,53 @@
 in particular the dual-currency guardrail (§2) and wallet integrity (§3). `dotnet build`
 must pass with no unexpected pending migration.*
 
-Status: **slice 1 of 7 built** (the reward seam, §2 — `RewardKind`/`RewardGrant`, the three granters,
-`RewardGrantService`, the XP cap bypass, and the `PlayerRewards` Kind/ItemId migration; 24 tests green).
-The pass itself (§3–§7) is not built yet.
+Status: **slices 1–2 of 7 built.** §2 reward seam (`RewardKind`/`RewardGrant`, three granters,
+`RewardGrantService`, the XP cap bypass, `PlayerRewards.Kind/ItemId` — migration applied) and §3
+catalog (`PassCatalog`: programs, monthly cycle resolution, catch-up rules, validate, totals).
+64 tests green, all pure. Next: §4/§5 tables + `PassService` + `PassController`.
 
 ---
 
 ## 1. What we're building
 
-One **season-long daily ladder with two tracks**:
+The **Monthly Pass**: a daily ladder with two tracks, running one calendar month, renewing
+automatically on the **1st at 00:00 UTC**.
 
 ```
-Day →      1      2      3      4      5   …   30
-FREE     [ ✓ ]  [ ✓ ]  [ ✓ ]  [   ]  [   ]     [★]     ← everyone
-GOLDEN   [ 🔒]  [ 🔒]  [ 🔒]  [   ]  [   ]     [★]     ← needs an active entitlement
+Day of month →    1      2      3      4      5   …   28
+FREE            [ ✓ ]  [ ✓ ]  [ ✓ ]  [   ]  [   ]    [★]     ← everyone, today's node only
+GOLDEN          [ 🔒]  [ 🔒]  [ 🔒]  [   ]  [   ]    [★]     ← monthly subscription; unlocks retroactively
 ```
 
-- A **season** is a period (default: one calendar month) with an ordered ladder of **nodes**.
-- Each node carries **two reward sets**: `Free` (always) and `Golden` (only with entitlement).
-- A player advances **one node per UTC day**, by claiming. `Node = (claims this season) + 1`.
-  Missing a day does not burn a node — it just means you may not reach the end of the ladder.
-  This is deliberately forgiving: it drives daily return without punishing a bad week.
-- **Buying Golden is retroactive.** Every golden reward for nodes already claimed is enqueued
-  into the existing reward inbox (`PlayerRewards`, `RewardSource.Pass`). That retro pile *is*
-  the conversion lever — the player sees exactly what they're owed before paying.
-- Golden is **per season** (`ExpiresAt` defaults to season end). The row already carries a
-  nullable `ExpiresAt`, so a rolling monthly subscription later is a value change, not a schema
-  change. `MARKETING_SPEC` A5 (R1 renewal defence) reads its signals off this system:
-  entitlement rows give renewal dates, claim rows give the "subscriber not claiming dailies"
-  non-renewal predictor.
+- **Node index = day of the cycle.** Day 7 of the month is node 7. You cannot outrun the
+  calendar, and the ladder is not a treadmill you fall off — it just tracks the date.
+- Each node carries **two reward sets**: `Free` (always) and `Golden` (subscribers only).
+- **A cycle is one calendar month**, generated automatically — no authoring per month. The same
+  authored ladder repeats every cycle until you edit it, with optional per-month overrides
+  (§3) for a themed December, Ramadan, etc.
+- **Golden is a monthly auto-renewing IAP subscription.** Subscribe on any day of the month;
+  the entitlement window comes from the store, so it runs (say) the 20th → the 20th, spanning
+  two cycles. The *cycle* renews on the 1st; the *subscription* renews on its own store date.
+  These are deliberately independent.
+- **Subscribing unlocks the days you missed.** Every node up to today's index gets its golden
+  payload enqueued into the reward inbox (`PlayerRewards`, `RewardSource.Pass`) the moment the
+  receipt validates. That retro pile *is* the conversion lever — the player sees what they're
+  owed before paying. **T&C:** current cycle only, must be collected before the cycle ends, and
+  it's void if the purchase is refunded (§5.5).
+- **Catch-up is a paid privilege by default** (`CatchUp = GoldenOnly`): free players get *today's*
+  node only, so missing a day really does cost the free reward — that's what makes daily return
+  worth something and what makes the subscription worth buying. One config knob flips it to
+  `None` (nobody backfills) or `All` (everyone backfills). §3.
+- `MARKETING_SPEC` A5 (R1 renewal defence) reads its signals off this system: entitlement rows
+  give renewal dates, claim rows give the "subscriber not claiming dailies" non-renewal predictor.
 
-**Non-goals for v1:** pass points from wagering (the axis is days, not points), streak
-multipliers, gifting a pass, multiple concurrent passes, weekly mini-passes. Every one of them
-is additive on the model below.
+**A Season Pass is a SEPARATE, LATER program** — not one month, its own ladder, its own product,
+probably its own progression axis (points from play rather than days). This spec builds the
+monthly pass but the model is keyed by **pass program** throughout (`PassKey` on every row), so
+adding a season pass later is a new program row, not a schema migration. Do not conflate the two.
+
+**Non-goals for v1:** pass points from wagering, streak multipliers, gifting a pass, running two
+programs at once, weekly mini-passes. Each is additive on the model below.
 
 ---
 
@@ -136,50 +150,91 @@ Same shape as `khela:missions` / `khela:chests`: admin-editable JSON in Redis, c
 when absent or unparseable, read per call so a dashboard save applies with no redeploy.
 
 ```csharp
+public enum PassCadence
+{
+    Monthly = 0,   // cycles generate themselves: 1st 00:00 UTC → 1st next month. CycleKey "yyyy-MM".
+    Fixed   = 1,   // one explicit window (StartUtc/EndUtc) — what a future Season Pass uses.
+}
+
+/// <summary>Who may claim a node whose day has already passed.</summary>
+public enum CatchUpPolicy
+{
+    None       = 0,   // today's node only, both tracks
+    GoldenOnly = 1,   // DEFAULT — free: today only; golden: every earlier node unlocks
+    All        = 2,   // both tracks backfill the whole cycle
+}
+
 public sealed class PassNode
 {
-    public int Index { get; set; }                 // 1-based day/step
+    public int Index { get; set; }                 // = day of the cycle (day 7 → node 7)
     public bool IsMilestone { get; set; }          // UI emphasis only
     public List<RewardGrant> Free { get; set; } = new();
     public List<RewardGrant> Golden { get; set; } = new();
 }
 
-public sealed class PassSeason
+/// <summary>A month-specific ladder that replaces the recurring one for exactly one cycle.</summary>
+public sealed class PassCycleOverride
 {
-    public string Key { get; set; }                // stable id, e.g. "2026-09" — claims reference this forever
+    public string CycleKey { get; set; }           // "2026-12"
     public string Title { get; set; }
-    public DateTime StartUtc { get; set; }
-    public DateTime EndUtc { get; set; }           // exclusive
+    public List<PassNode> Nodes { get; set; } = new();
+}
+
+/// <summary>A pass PROGRAM. "monthly" is the one this spec builds; a Season Pass is another row.</summary>
+public sealed class PassProgram
+{
+    public string Key { get; set; }                // stable id, e.g. "monthly" — every claim row references it
+    public string Title { get; set; }
+    public bool Enabled { get; set; } = true;
+    public PassCadence Cadence { get; set; } = PassCadence.Monthly;
+    public CatchUpPolicy CatchUp { get; set; } = CatchUpPolicy.GoldenOnly;
+
+    public DateTime? StartUtc { get; set; }        // Fixed cadence only
+    public DateTime? EndUtc { get; set; }          // Fixed cadence only, exclusive
+
     // Golden is sold for REAL MONEY only — never for an in-game currency. These are the store
-    // product ids; the displayed price comes from the platform store at runtime (localized),
-    // with GoldenPriceUsd as the offline/fallback label only.
+    // subscription product ids; the displayed price comes from the platform store at runtime
+    // (localized), with GoldenPriceUsd as the offline/fallback label only.
     public string GoldenProductIdApple { get; set; }   // e.g. "khela.pass.golden.monthly"
     public string GoldenProductIdGoogle { get; set; }
     public decimal GoldenPriceUsd { get; set; }        // display fallback, NOT a charge
-    public List<PassNode> Nodes { get; set; } = new();
+
+    public List<PassNode> Nodes { get; set; } = new();                     // the RECURRING ladder
+    public List<PassCycleOverride> CycleOverrides { get; set; } = new();   // per-month exceptions
 }
 
 public sealed class PassConfig
 {
     public bool Enabled { get; set; } = true;
-    public List<PassSeason> Seasons { get; set; } = new();
-    public PassSeason Current(DateTime nowUtc) =>
-        Seasons?.FirstOrDefault(s => nowUtc >= s.StartUtc && nowUtc < s.EndUtc);
+    public List<PassProgram> Programs { get; set; } = new();
 }
 ```
 
+**Cycle resolution** (`PassCatalog.CurrentCycle(program, nowUtc)`) returns
+`{ CycleKey, StartUtc, EndUtc, Nodes, Length }`:
+
+- `Monthly` → the calendar month containing `nowUtc`; key `"yyyy-MM"`; `Nodes` = the override for
+  that key if one exists, else the recurring ladder.
+- `Fixed` → the program's own window, key = the program key; null outside it.
+- **Effective length = `min(ladder nodes, days in the cycle)`.** A 31-node ladder in April simply
+  stops at 30; in February it stops at 28. Author the final milestone at **node 28 or lower** or
+  February players can never reach it — `Validate()` warns on a milestone above 28.
+
 `PassCatalog` mirrors `ChestCatalog`: `RedisKey = "khela:pass"`, `JsonOptions` (indented +
-`JsonStringEnumConverter`), `Defaults()`, `TryParse()`, `Validate()`.
+`JsonStringEnumConverter`), `Defaults()`, `ToJson()`, `TryParse()`, `Validate()`, `Totals()`.
 
-**`Validate()` rejects:** overlapping seasons; `EndUtc <= StartUtc`; duplicate/​non-contiguous
-node indexes; empty node payloads on *both* tracks; a currency line outside the allowlist
-(with the explicit "tradeable token" message); negative amounts; a `Chest` line whose
-`key:tier` isn't in the chest catalog; a season with a golden payload but no store product id.
+**`Validate()` rejects:** duplicate program keys; a key longer than the 32-char column;
+duplicate/​non-contiguous node indexes (the ladder must be `1..N`); a ladder longer than 31 for a
+monthly program; empty node payloads on *both* tracks; a currency line outside the allowlist
+(with the explicit "tradeable token" message); non-positive amounts; a `Chest` line whose
+`key:tier` isn't in the chest catalog; a reward kind this build can't pay; a program with a golden
+payload but no store product id; a `Fixed` program without a valid window; a `CycleOverride` whose
+key isn't a real cycle key or whose ladder breaks the same rules.
 
-**No current season, or `Enabled = false` → the pass is OFF** (endpoint returns
+**No enabled program, no current cycle, or `Enabled = false` → the pass is OFF** (endpoint returns
 `Active = false`, claim is rejected). Fail-closed.
 
-### 3.1 Starter ladder (30 nodes, tune in the dashboard)
+### 3.1 Starter ladder (28 required + 3 bonus nodes, tune in the dashboard)
 
 Anchored against what already exists: daily missions pay 500–4,000 chips/day, the common
 chest rolls 2k–8k chips + 5–20 Kash.
@@ -191,12 +246,16 @@ chest rolls 2k–8k chips + 5–20 Kash.
 | **10** ★ | 3,000 chips · 10 Kash · 150 XP | `CK_Chest:Uncommon` · 25 Kash · 300 XP |
 | 11–19 | 2,000 chips · 100 XP | 7,500 chips · 15 Kash · 200 XP |
 | **20** ★ | 5,000 chips · 20 Kash · 250 XP | `CK_Chest:Rare` · 50 Kash · 500 XP |
-| 21–29 | 2,500 chips · 125 XP | 10,000 chips · 20 Kash · 250 XP |
-| **30** ★ | 10,000 chips · 30 Kash · 500 XP | `CK_Chest:Rare` · 150 Kash · 1,000 XP |
+| 21–27 | 2,500 chips · 125 XP | 10,000 chips · 20 Kash · 250 XP |
+| **28** ★ | 10,000 chips · 30 Kash · 500 XP | `CK_Chest:Rare` · 150 Kash · 1,000 XP |
+| 29–31 | 2,500 chips · 125 XP | 10,000 chips · 20 Kash · 250 XP |
 
-Rough season totals: free ≈ 65k chips + 60 Kash; golden adds ≈ 200k chips + 500 Kash + 2 chests.
-Golden price: **real money, ~$4.99/month** (store product, §5.3). Sanity check the Kash ratio
-against the cosmetics price list before launch.
+The season-ending milestone sits at **node 28** so it is reachable in February; 29–31 are bonus
+days that simply don't exist in shorter months.
+
+Rough cycle totals: free ≈ 65k chips + 60 Kash; golden adds ≈ 200k chips + 500 Kash + 2 chests.
+Golden price: **real money, ~$4.99/month subscription** (store product, §5.3). Sanity check the
+Kash ratio against the cosmetics price list before launch.
 
 These numbers are only the seed `Defaults()` — the real ladder is authored in the admin panel
 (§6.1), which is where who-gets-what-and-how-much is decided.
@@ -225,39 +284,53 @@ truth, so there's no cache to drift.
 
 ```csharp
 [Table("PlayerPassClaims")]
-[Index(nameof(UserId), nameof(SeasonKey), nameof(Node), IsUnique = true)]        // one node, once
-[Index(nameof(UserId), nameof(SeasonKey), nameof(ClaimDateUtc), IsUnique = true)] // one claim per UTC day
+[Index(nameof(UserId), nameof(PassKey), nameof(CycleKey), nameof(Node), IsUnique = true)]   // one node, once
+[Index(nameof(UserId), nameof(PassKey), nameof(CycleKey))]                                  // the ladder read
 public class PlayerPassClaim
 {
     [Key] public Guid Id { get; set; } = Guid.NewGuid();
     [Required] public Guid UserId { get; set; }
-    [Required, MaxLength(32)] public string SeasonKey { get; set; }
-    [Required] public int Node { get; set; }
-    [Required] public DateTime ClaimDateUtc { get; set; }        // date only (UTC)
+    [Required, MaxLength(32)] public string PassKey { get; set; }    // program: "monthly" (a Season Pass is another key)
+    [Required, MaxLength(32)] public string CycleKey { get; set; }   // "2026-09"
+    [Required] public int Node { get; set; }                         // = day of the cycle
+    [Required] public DateTime ClaimedOnUtc { get; set; }            // the date the player actually tapped (audit; a
+                                                                     // catch-up claim has ClaimedOnUtc > node's own day)
     [Required] public bool FreeGranted { get; set; }
-    [Required] public bool GoldenGranted { get; set; }           // false if not entitled at claim time → retro-owed
+    [Required] public bool GoldenGranted { get; set; }               // false if not entitled at claim time → retro-owed
     [Required] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
     [Timestamp, Column(TypeName = "timestamp(6)")] public DateTime? RowVersion { get; set; }
 }
 
 [Table("PlayerPassEntitlements")]
-[Index(nameof(UserId), nameof(SeasonKey), IsUnique = true)]
+[Index(nameof(UserId), nameof(PassKey), nameof(PurchaseRef), IsUnique = true)]   // one row per store transaction
+[Index(nameof(UserId), nameof(PassKey))]
 public class PlayerPassEntitlement
 {
     [Key] public Guid Id { get; set; } = Guid.NewGuid();
     [Required] public Guid UserId { get; set; }
-    [Required, MaxLength(32)] public string SeasonKey { get; set; }
-    [Required, MaxLength(32)] public string Source { get; set; }   // "iap" | "store" | "admin" | "gift"
-    [MaxLength(96)] public string PurchaseRef { get; set; }        // wallet CorrelationId / IAP transaction id
+    [Required, MaxLength(32)] public string PassKey { get; set; }
+    [Required, MaxLength(32)] public string Source { get; set; }     // "iap" | "admin" | "gift"
+    [Required, MaxLength(96)] public string PurchaseRef { get; set; } // store transactionId (admin grants: "admin:{guid}")
+    [MaxLength(96)] public string OriginalTransactionId { get; set; } // the SUBSCRIPTION's id — renewals share it
+    [Required] public DateTime StartsAt { get; set; }
+    [Required] public DateTime ExpiresAt { get; set; }                // from the store's period end, NOT the cycle end
+    public bool AutoRenew { get; set; }
+    public DateTime? RevokedAt { get; set; }                          // refund / chargeback
     [Required] public DateTime GrantedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? ExpiresAt { get; set; }                       // null = season end; set for subscriptions
     [Timestamp, Column(TypeName = "timestamp(6)")] public DateTime? RowVersion { get; set; }
 }
 ```
 
-The two unique indexes make double-claiming **structurally impossible**: a same-day retry
-collides on `ClaimDateUtc`, a same-node race collides on `Node`.
+**Why entitlement is a window, not a per-cycle row.** Golden is a monthly *subscription* bought on
+any day, so its period (20th → 20th) crosses cycle boundaries. Each store transaction — the first
+purchase and every renewal — appends its own row sharing an `OriginalTransactionId`; a player is
+golden when **any** un-revoked row's `[StartsAt, ExpiresAt)` contains now. Append-only means the
+billing history is auditable and a renewal can never silently shorten an existing entitlement.
+
+The unique `(UserId, PassKey, CycleKey, Node)` index makes double-claiming a node **structurally
+impossible**, whichever day it was claimed on; `(UserId, PassKey, PurchaseRef)` makes a replayed
+receipt a no-op.
 
 ---
 
@@ -266,77 +339,119 @@ collides on `ClaimDateUtc`, a same-node race collides on `Node`.
 ```csharp
 public interface IPassService
 {
-    Task<PassStateDto> GetStateAsync(Guid userId);
-    Task<PassClaimResultDto> ClaimAsync(Guid userId);
-    /// <summary>THE entitlement seam. Grants the entitlement + retro-enqueues owed golden rewards.
-    /// Idempotent on (userId, seasonKey). Callers: IAP receipt validation (source "iap") and the
+    Task<PassStateDto> GetStateAsync(Guid userId, string passKey = "monthly");
+    /// <summary>Claim ONE node. Omit the node for "today"; pass an earlier one to catch up
+    /// (allowed only where the program's CatchUpPolicy permits it).</summary>
+    Task<PassClaimResultDto> ClaimAsync(Guid userId, string passKey = "monthly", int? node = null);
+    /// <summary>Claim every node the player is currently allowed to claim, oldest first.</summary>
+    Task<PassClaimResultDto> ClaimAllAsync(Guid userId, string passKey = "monthly");
+    /// <summary>THE entitlement seam. Records the subscription window + retro-enqueues owed golden
+    /// rewards. Idempotent on purchaseRef. Callers: IAP receipt validation (source "iap") and the
     /// admin panel (source "admin"). There is NO in-game-currency purchase path.</summary>
-    Task<PassPurchaseResultDto> GrantGoldenAsync(Guid userId, string seasonKey, string source, string purchaseRef);
+    Task<PassPurchaseResultDto> GrantGoldenAsync(Guid userId, string passKey, string source, string purchaseRef,
+        DateTime startsAt, DateTime expiresAt, string originalTransactionId = null, bool autoRenew = false);
+    /// <summary>Refund / chargeback / admin revoke — closes the window. Collected rewards stay collected.</summary>
+    Task RevokeGoldenAsync(Guid userId, string passKey, string purchaseRef, string reason);
 }
 ```
 
-### 5.1 Claim (money-safe order — reserve, grant, complete)
+### 5.1 What a player may claim right now
 
-1. Resolve `season = cfg.Current(utcNow)`; off/absent → `Fail("No active pass.")`.
-2. `today = utcNow.Date`. Insert `PlayerPassClaim { Node = existingClaims + 1, ClaimDateUtc = today }`
-   with `FreeGranted = false`. **A unique-index violation here means already claimed today** →
-   reload the row and continue (idempotent replay), don't fail.
-3. Node beyond the ladder → delete nothing, return `Fail("Season complete.")` *before* step 2.
-4. Grant `node.Free` via `IRewardGrantService`, idemKey `pass:{season}:{user:N}:{node}:free`.
+```
+dayIndex   = (utcNow.Date - cycle.StartUtc.Date).Days + 1     // 1..daysInCycle
+maxNode    = min(dayIndex, cycle.Length)                      // never ahead of the calendar
+claimable  = nodes 1..maxNode not already claimed, filtered by CatchUpPolicy:
+               None       → node == maxNode only
+               GoldenOnly → node == maxNode, or (isGolden and node < maxNode)   ← default
+               All        → every unclaimed node ≤ maxNode
+```
+
+Unclaimed nodes die with the cycle — there is no cross-cycle carry-over, and nothing is owed once
+the month rolls over. That is the "T&C" behind catch-up, and the client must show the countdown.
+
+### 5.2 Claim (money-safe order — reserve, grant, complete)
+
+1. Resolve program + `cycle = PassCatalog.CurrentCycle(program, utcNow)`; off/absent →
+   `Fail("No active pass.")`.
+2. Pick the node: the requested one, else the highest claimable. Not claimable → `Fail` with the
+   reason (already claimed / not yet / catch-up needs Golden / cycle complete). No row is written.
+3. Insert `PlayerPassClaim { PassKey, CycleKey, Node, ClaimedOnUtc = utcNow.Date }` with both
+   granted flags false. **A unique-index violation means a concurrent claim won** → reload that
+   row and continue (idempotent replay) rather than failing.
+4. Grant `node.Free` via `IRewardGrantService`, idemKey `pass:{passKey}:{cycleKey}:{user:N}:{node}:free`.
    Set `FreeGranted = true`.
-5. If entitled (§5.2): grant `node.Golden`, idemKey `…:{node}:golden`, set `GoldenGranted = true`.
+5. If entitled (§5.3): grant `node.Golden`, idemKey `…:{node}:golden`, set `GoldenGranted = true`.
 6. `CompletedAt = utcNow`, save.
 
-If the process dies between 2 and 6 the row stays incomplete; the **next** claim call (same day)
-hits the unique index, reloads the row, and re-runs the ungranted parts — each granter is
-idempotent, so nothing is lost and nothing pays twice. Same pattern as `RewardService`.
+If the process dies between 3 and 6 the row stays incomplete; the next claim call finds it and
+re-runs the ungranted parts — each granter is idempotent, so nothing is lost and nothing pays
+twice. Same pattern as `RewardService`.
 
-### 5.2 Entitlement check
+### 5.3 Entitlement check
 
-`IsGolden(userId, season)` = an entitlement row for (user, seasonKey) with
-`ExpiresAt == null || ExpiresAt > utcNow`. Server-side only. The client's `IsGolden` flag is
-display; it never gates a grant.
+`IsGoldenAsync(userId, passKey, atUtc)` = **any** entitlement row for (user, passKey) with
+`RevokedAt == null && StartsAt <= atUtc && ExpiresAt > atUtc`. Server-side only; the client's
+`IsGolden` flag is display and never gates a grant.
 
-### 5.3 Purchase (real money) + retro-grant
+Note the consequence of the subscription window: a player whose subscription lapses mid-cycle
+keeps the golden rewards they already collected but stops earning new ones from that day — the
+node's golden payload simply isn't granted, and `GoldenGranted` stays false. If they resubscribe
+inside the same cycle, the retro pass (§5.4) picks those nodes back up.
 
-**Golden is sold for real money only.** The client buys the store product, the server validates
-the receipt, and validation calls `GrantGoldenAsync`. No chips/Kash/Gems path exists — an
-in-game-currency purchase is not a thing the API can express.
+### 5.4 Subscription (real money) + the missed-days unlock
+
+**Golden is sold for real money only, as an auto-renewing monthly subscription.** The client buys
+the store product, the server validates the receipt, and validation calls `GrantGoldenAsync`. No
+chips/Kash/Gems path exists — an in-game-currency purchase is not a thing the API can express.
 
 ```
-client → platform store purchase → POST /api/pass/purchase { platform, productId, receipt }
-      → IIapService.ValidateAsync(...)                     ← Phase-0 IAP work, shared with chip packs
-      → PassService.GrantGoldenAsync(user, season, "iap", transactionId)
+client → store subscription purchase → POST /api/pass/purchase { platform, productId, receipt }
+      → IIapService.ValidateAsync(...)          ← Phase-0 IAP work, shared with the chip packs
+      → PassService.GrantGoldenAsync(user, "monthly", "iap", transactionId,
+                                     startsAt, expiresAt, originalTransactionId, autoRenew)
 ```
 
-Rules for the IAP hop (these belong to the IAP spec but the pass depends on them):
-`transactionId` is the idempotency key end-to-end — a replayed receipt re-grants nothing;
-validation is **server-side against Apple/Google**, never a client claim; an unvalidated or
-mismatched product id grants nothing. A refund/chargeback webhook revokes the entitlement row
-(`ExpiresAt = now`); already-collected rewards are NOT clawed back — the ledger stays append-only.
+Rules for the IAP hop (they belong to the IAP spec, but the pass depends on them):
+`transactionId` is the idempotency key end-to-end — a replayed receipt grants nothing new;
+validation is **server-side against Apple/Google**, never a client claim; a mismatched product id
+grants nothing. **Renewals** arrive as new transactions sharing the `OriginalTransactionId` and
+simply append the next window — the store's renewal date is the source of truth, never our clock.
+A **refund/chargeback/expiry** webhook calls `RevokeGoldenAsync`, which sets `RevokedAt`;
+already-collected rewards are NOT clawed back (the ledger stays append-only), but any golden node
+not yet *collected* from the inbox is expired at the same time — that is the "T&C apply".
 
-**Dependency:** the paid track cannot go live before IAP receipt validation ships. Until then
-the free track runs standalone and the admin grant (§6.2) covers QA/comps — the ladder, the
-retro machinery and the entitlement table are all exercised by that path, so nothing about
-Golden is untested when IAP lands.
+**Dependency:** the paid track cannot go live before IAP receipt validation ships. Until then the
+free track runs standalone and the admin grant (§6.2) covers QA/comps — the ladder, the retro
+machinery and the entitlement rows are all exercised by that path, so nothing about Golden is
+untested when IAP lands.
 
 `GrantGoldenAsync`:
-1. Upsert the entitlement row (unique (user, season) → a concurrent retry is a no-op).
-2. For every existing claim with `GoldenGranted = false`: **enqueue** each golden line into the
-   inbox via `IRewardService.GrantAsync(..., RewardSource.Pass, idemKey "pass-retro:{season}:{user:N}:{node}:{i}")`,
-   then set `GoldenGranted = true`.
-   Enqueued, **not** auto-credited — chips arrive only when the player taps collect
-   (the existing inbox rule), which also gives the purchase a satisfying payoff moment.
-3. Future claims grant golden inline (§5.1 step 5).
+1. Insert the entitlement row (unique on `PurchaseRef` → a replay is a no-op).
+2. **Unlock the missed days.** For every node `1..maxNode` of the CURRENT cycle:
+   - already claimed with `GoldenGranted = false` → enqueue its golden lines into the inbox and
+     set the flag;
+   - never claimed at all → claim it now (a `PlayerPassClaim` with `FreeGranted` per policy and
+     the golden payload enqueued), because the whole point of subscribing mid-month is getting the
+     days you missed.
+   Idempotency key `pass-retro:{passKey}:{cycleKey}:{user:N}:{node}:{i}`, so re-running the unlock
+   (renewal, retry, resubscribe) can never pay a node twice.
+3. Enqueued, **not** auto-credited — chips arrive only when the player taps collect (the existing
+   inbox rule), which also gives the purchase a payoff moment worth animating.
+4. Future claims grant golden inline (§5.2 step 5).
 
-### 5.4 Reads
+Scope of the unlock is the **current cycle only** — a subscription bought in October never pays
+out September's ladder, no matter when the subscription started.
 
-`GetStateAsync` returns the whole ladder + per-node claim state in one call (30 nodes is small):
+### 5.5 Reads
+
+`GetStateAsync` returns the whole ladder + per-node claim state in one call (≤31 nodes is small):
 
 ```
-Active, SeasonKey, Title, StartUtc, EndUtc, NextResetUtc (tomorrow 00:00 UTC),
-IsGolden, GoldenProductId (per platform) + GoldenPriceUsd fallback, CurrentNode, ClaimableToday,
-RetroOwedNodes (count — the buy-CTA number),
+Active, PassKey, CycleKey, Title, CycleStartUtc, CycleEndUtc, NextNodeUtc (tomorrow 00:00 UTC),
+DayIndex, MaxNode, CatchUp (policy), 
+IsGolden, GoldenUntilUtc, AutoRenew, GoldenProductId (per platform) + GoldenPriceUsd fallback,
+ClaimableNodes[] (what the player may tap right now),
+LockedByGoldenNodes (count — the buy-CTA number: "subscribe to unlock N missed days"),
 Nodes[] { Index, IsMilestone, Free[], Golden[], Claimed, GoldenClaimed }
 ```
 
@@ -349,8 +464,9 @@ kind generically — unknown kind → generic icon + label, never a crash.
 
 | Method | Route | Notes |
 |---|---|---|
-| GET | `/api/pass` | full state (§5.4) |
-| POST | `/api/pass/claim` | claim today's node; returns granted lines + new balances |
+| GET | `/api/pass` | full state (§5.5); `?passKey=` defaults to `monthly` |
+| POST | `/api/pass/claim` | `{ node? }` — omit for today, pass an earlier node to catch up |
+| POST | `/api/pass/claim-all` | claim everything currently claimable, oldest first |
 | POST | `/api/pass/purchase` | `{ platform, productId, receipt }` → validate → `GrantGoldenAsync("iap")` |
 
 ## 6.1 Admin panel — `/Pass` (Khela.Web, full CRUD page)
@@ -359,12 +475,18 @@ Not a JSON textarea. This page is where the whole economy of the pass is decided
 the same treatment as the Chests editor but bigger. Cookie-Identity admin gate as elsewhere;
 saves go through `PassCatalog.Validate` and write the `khela:pass` overlay atomically.
 
-**Seasons list** — table of every season (Key, Title, window, node count, Live/Upcoming/Ended,
-golden product id). Actions: **Create**, **Clone** (copy a whole ladder into next month's dates
-— the normal way to author a season), **Edit**, **Delete** (blocked once any claim row exists
-for that key; offer "end early" instead — history must stay readable), **Enable/Disable**.
+**Programs list** — every pass program (Key, Title, cadence, catch-up policy, node count,
+Enabled, store product ids). `monthly` ships built in; **Create** is how a Season Pass gets added
+later. **Delete** is blocked once any claim row references the key (disable it instead — history
+must stay readable).
 
-**Season editor** — window + title + store product ids + display price, then the **node grid**:
+**Program editor** — title + cadence + catch-up policy + store product ids + display price, then
+the **node grid** (the recurring ladder, plus a per-month **cycle override** tab for a themed
+December). The header shows which cycle is live right now and how many days it has.
+
+| Node | ★ | Free rewards | Golden rewards |
+|---|---|---|---|
+| 1 | ☐ | `Chips 1000` `XP 50` `+` | `Chips 3000` `Kash 5` `XP 100` `+` |
 
 | Node | ★ | Free rewards | Golden rewards |
 |---|---|---|---|
@@ -388,22 +510,26 @@ for that key; offer "end early" instead — history must stay readable), **Enabl
 
 | Method | Route | Notes |
 |---|---|---|
-| POST | `/Players/{id}/grant-pass` | `GrantGoldenAsync(source: "admin")` — comp / support / QA |
-| POST | `/Players/{id}/revoke-pass` | sets `ExpiresAt = now`; collected rewards are not clawed back |
+| POST | `/Players/{id}/grant-pass` | `GrantGoldenAsync(source: "admin")` with an explicit window — comp / support / QA |
+| POST | `/Players/{id}/revoke-pass` | `RevokeGoldenAsync` — collected rewards are not clawed back |
 
-The player detail page also shows current season node, claim history, and golden state.
+The player detail page also shows the current cycle's claim history, golden state and renewal date.
 
 ---
 
 ## 7. Client (Unity, `PlayCard.Pass`) — after the server is green
 
 - `PassScreen`: horizontal ladder, two rows (Free above, Golden below, locked rows dimmed with
-  the price CTA), milestone nodes visually larger, "Day N of 30 · resets in HH:MM".
+  the subscribe CTA), milestone nodes visually larger, "Day N of 30 · next day in HH:MM ·
+  cycle ends in D days".
+- **The missed-days CTA is the screen's whole job**: earlier nodes the player can't claim show a
+  golden lock and the count feeds "Subscribe to unlock N missed days". Don't bury it.
 - Reward chips render from `RewardGrant` via a `RewardIconResolver` (kind + id → sprite + label),
   so a new kind is an art entry, not a code change.
 - Claim → play the grant animation off the **server's returned applied amounts**, never local
-  config values.
-- Entry points: Home badge when `ClaimableToday`, and the reward-inbox badge for retro grants.
+  config values. Catch-up claims animate oldest-first via `claim-all`.
+- Entry points: Home badge when anything is claimable, and the reward-inbox badge for the retro
+  pile after subscribing.
 
 ---
 
@@ -412,7 +538,7 @@ The player detail page also shows current season node, claim history, and golden
 | # | Slice | Ships |
 |---|---|---|
 | 1 ✅ | Reward seam | `RewardKind`/`RewardGrant`, 3 granters, `RewardGrantService`, `GrantXpAsync(bypassDailyCap)`, `AddRewardKindToPlayerRewards` |
-| 2 | Catalog | `PassCatalog` + `Defaults()` + `Validate()` + unit tests (no DB, no HTTP) |
+| 2 ✅ | Catalog | `PassCatalog` + `Defaults()` + `Validate()` + unit tests (no DB, no HTTP) |
 | 3 | Core | `AddPassTables`, `PassService` (state + claim), `PassController` GET/claim |
 | 4 | Entitlement | `GrantGoldenAsync` + retro-enqueue + admin grant/revoke (exercisable without IAP) |
 | 5 | Admin | `/Pass` full CRUD page (§6.1) + `ConfigBackupService` (§3.2) |
@@ -425,13 +551,18 @@ Phase-0 IAP work — everything before it ships and is playable on the free trac
 
 ## 9. Tests (xUnit, alongside `ChestCatalogTests`)
 
-- `Validate` rejects: `Tokens` line, undefined currency int, overlapping seasons, duplicate node
-  index, negative amount, unknown chest key, golden payload with no store product id.
+- `Validate` rejects: `Tokens` line, undefined currency int, duplicate program key, duplicate or
+  non-contiguous node index, ladder > 31 for a monthly program, non-positive amount, unknown chest
+  key, unpayable kind, golden payload with no store product id, bad cycle-override key.
 - `CurrencyGranter` drops a non-allowlisted line even when `Validate` was bypassed (fail-closed).
-- Node math: claims=0 → node 1; claims=29 → node 30; claims=30 → season complete.
-- Retro set: 12 claims with `GoldenGranted=false` → exactly 12 enqueues, and a second
-  `GrantGoldenAsync` enqueues 0.
-- Replay: two `ClaimAsync` calls on the same UTC day → one node, one payout.
+- Cycle math: Sept 15 → cycle "2026-09", day 15, maxNode 15; Feb 28 → maxNode 28 even with a
+  31-node ladder; April 30 → 30; a milestone above 28 is flagged.
+- Catch-up policy: free player on day 20 may claim only node 20; a golden player may claim 1..20;
+  `None` allows only node 20 for everyone; `All` allows 1..20 for everyone.
+- Retro/unlock: subscribing on day 20 unlocks exactly 20 nodes' golden payloads (claimed ones
+  enqueued, unclaimed ones claimed), and a second `GrantGoldenAsync` (renewal/replay) enqueues 0.
+- Replay: two concurrent `ClaimAsync` calls for the same node → one row, one payout.
+- Cycle rollover: nothing from the previous cycle is claimable on the 1st.
 - XP: a pass grant lands in full with the daily cap already exhausted; a *round* accrual with
   the same profile is still clamped (the bypass is opt-in and doesn't leak).
 - Backup: unchanged config → no second file; changed config → new file; neither ever deletes.
@@ -441,4 +572,6 @@ Phase-0 IAP work — everything before it ships and is playable on the free trac
 1. `dotnet build` passes; migrations added deliberately; snapshot in sync.
 2. No NON-NEGOTIABLE weakened — `Tokens` unreachable on every path, wagerability untouched.
 3. Every grant idempotent on a stable key; the client is told the *applied* amounts.
-4. Pass off (no season / `Enabled=false` / bad config) pays nothing, breaks nothing.
+4. Pass off (no program / no cycle / `Enabled=false` / bad config) pays nothing, breaks nothing.
+5. The monthly cycle rolls over on the 1st with no admin action, and the subscription window is
+   whatever the store says — never our own clock.

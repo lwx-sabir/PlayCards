@@ -36,6 +36,16 @@ namespace Khela.Game.Managers
                         try { await _tables.TickTableAsync(id); }
                         catch (Exception ex) { _logger.LogWarning(ex, "Round-driver tick failed for table {TableId}", id); }
                     }
+
+                    // Keep each stake tier stocked even when nobody is loading the lobby: tables fill up as people
+                    // play, and a tier that has run out of joinable tables must not wait for the next browse to
+                    // open more.
+                    //
+                    // Throttled, not run every tick: the balancer has to look at every table in the lobby, and the
+                    // tiers keep three spare joinable tables, so there is nothing urgent about it. Ticking the
+                    // TABLES is what has to stay on schedule — turn timers and settlement live there.
+                    try { await _tables.BalanceLobbyIfDueAsync(); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Lobby balance pass failed"); }
                 }
                 catch (Exception ex)
                 {

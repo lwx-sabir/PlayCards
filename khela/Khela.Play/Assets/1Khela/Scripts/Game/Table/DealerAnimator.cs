@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Animancer;
+using PlayCard.Audio;      // TableAudio — the dealer fires the shoe sound; the SoundEvent itself lives there
 using PlayCard.Game.Cards;
 using PlayCard.Game.Dtos;
 using UnityEngine;
@@ -222,6 +223,32 @@ namespace PlayCard.Game.Table
         public bool Busy => _pumping;
 
         /// <summary>
+        /// Hand the dealer's body over to the round-end director: stop dealing immediately and leave her CLEAN.
+        ///
+        /// Waiting on <see cref="Busy"/> is not enough on its own. The director drives the same Animancer
+        /// (<see cref="PlayPeek"/>, <see cref="PlayBodyClip"/>), so any throw still in flight when it starts gets cut
+        /// mid-clip — and a cut throw never reaches its Throw event, which is the ONE place that hides the in-hand prop
+        /// and releases the parked card. The prop then stays visibly stuck in her hand while the felt already shows the
+        /// real card. A dealer BLACKJACK hits this every time: the round settles the instant her second card is dealt,
+        /// so the settle push lands while she is still throwing to herself.
+        ///
+        /// Flushes the cut throw's card rather than dropping it (the director's SnapParkedCards puts down anything
+        /// still queued), then returns to idle. Idempotent — a no-op once the pump has drained normally.
+        /// </summary>
+        public void AbortThrows()
+        {
+            if (_pump != null) { StopCoroutine(_pump); _pump = null; }   // stops the nested ThrowOne with it
+            _pumping = false;
+            _throwQueue.Clear();
+
+            ReleaseCurrent();          // BEFORE the resets below — it early-outs on _released / seat < 0
+            _currentThrowSeat = -1;
+            _released = true;
+
+            PlayIdle();                // hides every in-hand prop, then returns her to idle
+        }
+
+        /// <summary>
         /// Throw the dealer's own draws (seat 0) ONE AT A TIME for the round-end reveal. Each throw releases exactly one
         /// card the view parked via <see cref="BlackjackTableView.LayOutDealerFinal"/>, reusing the SAME throw path (and
         /// release timeout) as the opening deal, then returns to idle. Yields until every draw is thrown; no-op for 0.
@@ -261,12 +288,23 @@ namespace PlayCard.Game.Table
         /// One seat at a time, event-coupled — the SAME model as the deal throws.
         /// </summary>
         public IEnumerator CollectFromSeat(int seat, System.Action onGrab)
-            => PlaySeatChip(SeatClipFrom(seatCollects, seat), onGrab, showChips: false);
+        {
+            _chipIsPay = false;   // so ReleaseChip's sound knows which gesture this is
+            return PlaySeatChip(SeatClipFrom(seatCollects, seat), onGrab, showChips: false);
+        }
 
         /// <summary>Play WINNER seat N's PAY gesture; its ReleaseChip event fires <paramref name="onPush"/> (winnings fly
         /// from the dealer to that seat). Same one-at-a-time, event-coupled model as <see cref="CollectFromSeat"/>.</summary>
         public IEnumerator PayToSeat(int seat, System.Action onPush)
-            => PlaySeatChip(SeatClipFrom(seatPays, seat), onPush, showChips: true);
+        {
+            _chipIsPay = true;
+            return PlaySeatChip(SeatClipFrom(seatPays, seat), onPush, showChips: true);
+        }
+
+        // Which chip gesture is running. Collect and pay share ONE clip event (ReleaseChip), so the sound needs telling
+        // them apart — and an explicit flag rather than reading the cosmetic showChips argument, which is about the
+        // in-hand prop and could reasonably change without anyone thinking about audio.
+        private bool _chipIsPay;
 
         /// <summary>Return the dealer to idle (the director calls this after the collect / pay loops drain).</summary>
         public void ReturnToIdle() => PlayIdle();
@@ -293,7 +331,11 @@ namespace PlayCard.Game.Table
         public void PeekHoleCard()
         {
             var hole = tableView != null ? tableView.DealerHoleCard() : null;
-            if (hole != null) CardFlip.On(hole.gameObject).PlayPeek(cardJuice);
+            if (hole == null) return;
+            CardFlip.On(hole.gameObject).PlayPeek(cardJuice);
+            // Sound rides the same frame as the tilt, so it can never drift from the animation.
+            if (_audio == null) _audio = FindAnyObjectByType<TableAudio>(FindObjectsInactive.Include);
+            if (_audio != null) _audio.PlayDealerPeek();
         }
 
         /// <summary>The chips-in-hand point (her hand) the round-end director flies real collect/pay chips FROM/TO, when
@@ -356,6 +398,11 @@ namespace PlayCard.Game.Table
             if (dealHandChips != null) dealHandChips.SetActive(false);   // she let the chips go → hide the in-hand prop
             if (_chipReleased) return;
             _chipReleased = true;
+
+            // On the release frame, so the chips are heard leaving her hands exactly as they visually do.
+            if (_audio == null) _audio = FindAnyObjectByType<TableAudio>(FindObjectsInactive.Include);
+            if (_audio != null) { if (_chipIsPay) _audio.PlayChipsPay(); else _audio.PlayChipsCollect(); }
+
             var cb = _chipRelease; _chipRelease = null;
             cb?.Invoke();
         }
@@ -388,6 +435,7 @@ namespace PlayCard.Game.Table
         {
             _currentThrowSeat = seat;
             _released = false;
+            _pickAnnounced = false;   // re-arm the shoe sound for THIS card
 
             var clip = ClipFor(seat);
             if (animancer == null || clip == null || clip.Clip == null)
@@ -414,7 +462,10 @@ namespace PlayCard.Game.Table
             // this one has actually thrown, so cards can't stampede out ahead of the animation.
             float t = 0f;
             while (!_released && t < releaseTimeout) { t += Time.unscaledDeltaTime; yield return null; }
-            if (!_released) ReleaseCurrent();
+            // Safety net must do BOTH halves of the release, exactly like the clip event: a clip whose Throw event
+            // never fires already showed the prop at its pass frame, so releasing the card without HideProp leaves a
+            // card visibly stuck in her hand for the rest of the pump.
+            if (!_released) { HideProp(); ReleaseCurrent(); }
         }
 
         private void PlayIdle()
@@ -452,9 +503,27 @@ namespace PlayCard.Game.Table
         //   pickup  → ShowLeftCard      (card appears in the LEFT hand)
         //   pass    → HideLeftCard + ShowInHandCard   (left hands off; card appears in the RIGHT hand)
         //   throw   → HideInHandCard    (right lets go; the real card flies to the seat)
-        public void ShowLeftCard()   { if (inHandCardLeft != null) inHandCardLeft.SetActive(true); }
+        public void ShowLeftCard()   { AnnouncePick(); if (inHandCardLeft != null) inHandCardLeft.SetActive(true); }
         public void HideLeftCard()   { if (inHandCardLeft != null) inHandCardLeft.SetActive(false); }
-        public void ShowInHandCard() { var h = RightHolder(); if (h != null) h.SetActive(true); }
+        public void ShowInHandCard() { AnnouncePick(); var h = RightHolder(); if (h != null) h.SetActive(true); }
+
+        /// <summary>
+        /// Card-out-of-the-shoe sound, fired from whichever event marks the card first appearing in her hands.
+        ///
+        /// Both entry points call this because the deal beat is authored two ways: a clip with a PICK event uses
+        /// ShowLeftCard, a simpler one goes straight to ShowInHandCard. Guarded to ONE per throw so a clip binding
+        /// both doesn't play it twice — <see cref="ThrowOne"/> re-arms it for the next card.
+        /// </summary>
+        private void AnnouncePick()
+        {
+            if (_pickAnnounced) return;
+            _pickAnnounced = true;
+            if (_audio == null) _audio = FindAnyObjectByType<TableAudio>(FindObjectsInactive.Include);
+            if (_audio != null) _audio.PlayCardPickFromShoe();
+        }
+
+        private TableAudio _audio;
+        private bool _pickAnnounced;
 
         /// <summary>
         /// The throw's RELEASE moment (bound to each throw clip's Throw event): hides the cosmetic in-hand prop AND

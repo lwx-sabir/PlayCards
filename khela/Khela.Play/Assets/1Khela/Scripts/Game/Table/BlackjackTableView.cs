@@ -16,6 +16,14 @@ namespace PlayCard.Game.Table
     /// Cards lay out as a FAN (<see cref="CardLocalTRS"/>): each card steps over by Card Gap, tilts by Rotation
     /// Per Card around the anchor's up axis, and lifts to stack on top. <see cref="TableController"/> calls
     /// <see cref="Render"/> on every board (push or inline action) — the view does NOT subscribe to the hub itself.
+    ///
+    /// A SPLIT seat gets a second layout stage. Two (or more) hands each growing to 4–5 cards will not fit in one
+    /// seat's width — the outer seats' far hand walks off the felt, and neighbouring seats' hands and badges collide.
+    /// So a hand that has FINISHED playing is TUCKED (see the Tuck settings): shrunk, its gap tightened, optionally
+    /// nudged aside, leaving the seat's width to the hand still being played. The tuck lives in
+    /// <see cref="CardLocalTRS"/>, so the value and result badges — which read the same geometry — follow it for free,
+    /// and the bet stacks (which read <see cref="HandCenterLocal"/>) deliberately do NOT move: the wager stays where it
+    /// was placed and where the round-end director pays it.
     /// </summary>
     public sealed class BlackjackTableView : MonoBehaviour
     {
@@ -57,6 +65,40 @@ namespace PlayCard.Game.Table
         [SerializeField] private Vector2 splitCardGap = new Vector2(0.18f, 0f);
         [Tooltip("How much smaller split cards are drawn — 0.1 = 10% smaller. Tweak on only.")]
         [Range(0f, 0.5f)] [SerializeField] private float splitShrink = 0.1f;
+
+        [Header("Played split hand — TUCK AWAY (a finished hand shrinks so the live one has room)")]
+        [Tooltip("When a SPLIT hand has finished playing (stood / busted / doubled / split aces), tuck it away: its " +
+                 "cards shrink, their gap tightens and the whole hand shifts by Tuck Nudge — so the hand still being " +
+                 "played keeps the seat's width to itself. Without it the right seat's right-hand cards run off the " +
+                 "table past 2 cards, and two seats' hands (and their badges) collide. No effect on a single hand.")]
+        [SerializeField] private bool tuckPlayedHands = true;
+        [Tooltip("How much smaller a FINISHED split hand is drawn — 0.3 = 30% smaller. Multiplies with Split Shrink.")]
+        [Range(0f, 0.8f)] [SerializeField] private float tuckShrink = 0.3f;
+        [Tooltip("Card gap of a finished hand, as a FRACTION of the gap it would otherwise use — 0.55 = 45% tighter. " +
+                 "A fraction, not an absolute, so per-seat gap overrides still apply.")]
+        [Range(0.1f, 1f)] [SerializeField] private float tuckGapScale = 0.55f;
+        [Tooltip("Per-card LIFT on a finished hand, as a FRACTION of Card Lift. Card Lift is an ABSOLUTE distance and " +
+                 "does not shrink with the cards, so across a 5-card hand it stacks up to a visible staircase — this " +
+                 "flattens it. ⚠ DO NOT USE 0. Lift is the only thing separating overlapping cards in depth; at 0 they " +
+                 "are coplanar and the GPU z-fights, which is the striped, shredded-looking overlap. 0.15 is ~0.6mm a " +
+                 "card — flat to the eye, and far more separation than the depth buffer needs.")]
+        [Range(0.02f, 1f)] [SerializeField] private float tuckLiftScale = 0.15f;
+        [Tooltip("How far a finished hand slides back TOWARD the seat centre, closing the gap between the two hands — " +
+                 "0 = stays where it was dealt, 1 = sits right on the seat anchor. Split Hand Step has to be wide " +
+                 "enough for two FULL-SIZE hands, so once one of them shrinks that gap is far too big; this takes it " +
+                 "back. Only the TUCKED hand moves — the one still being played never shifts under the player.")]
+        [Range(0f, 1f)] [SerializeField] private float tuckPullIn = 0.35f;
+        [Tooltip("Extra anchor-local shift for a finished hand, applied after Tuck Pull In (same axes as Split Hand " +
+                 "Step: X sideways, Z depth, leave Y at 0). For asymmetric fine-tuning the pull-in can't express.")]
+        [SerializeField] private Vector3 tuckNudge = Vector3.zero;
+        [Tooltip("Seconds for a hand to glide + shrink into its tucked pose. Separate from Recenter Seconds — that is " +
+                 "tuned for the small shuffle when a card is added, and this is a much bigger move.")]
+        [SerializeField] private float tuckSeconds = 0.28f;
+        [Tooltip("Pause after a hand's LAST CARD LANDS before it tucks away, so the player reads the card that ended " +
+                 "the hand and its badge before it shrinks. The server marks a hand finished the instant it resolves — " +
+                 "a bust is 'done' while the busting card is still in the air — so without this the hand is yanked " +
+                 "away before you have seen what happened.")]
+        [SerializeField] private float tuckDelaySeconds = 0.6f;
 
         [System.Serializable]
         public struct SeatFan
@@ -109,6 +151,8 @@ namespace PlayCard.Game.Table
         private readonly HashSet<int> _desired = new HashSet<int>();
         private readonly List<int> _stale = new List<int>();
         private readonly HashSet<int> _pendingDeal = new HashSet<int>();    // new cards parked at the shoe, awaiting their deal (timer or throw)
+        private readonly HashSet<int> _landed = new HashSet<int>();         // cards that have COMPLETED their deal-in — a later re-layout glide must not un-land them
+        private readonly HashSet<int> _tucked = new HashSet<int>();         // (seat,hand) of finished split hands, drawn compacted; refreshed only when Render re-lays the felt
         private readonly List<NewCard> _newThisPass = new List<NewCard>();  // new cards seen this Render, to schedule in deal order
         private readonly Dictionary<int, CardView> _desiredData = new Dictionary<int, CardView>();  // key -> data this pass, for split re-key
         private readonly List<int> _movableKeys = new List<int>();          // rendered cards a split may migrate (scratch)
@@ -131,6 +175,9 @@ namespace PlayCard.Game.Table
         {
             _pool = new CardPool(cardPrefab, transform);
             if (cardPrefab != null) _cardBaseScale = cardPrefab.transform.localScale;
+            // Enter Play Mode without a domain reload and this field would still hold whatever the anchor gizmo last
+            // previewed, permanently tucking a hand in a live round. It is edit-time tooling only — start it off.
+            _previewTuckMask = -1;
         }
 
         /// <summary>
@@ -147,18 +194,160 @@ namespace PlayCard.Game.Table
         {
             ResolveFan(seat, out Vector2 gap, out float anglePer, out float lift, out bool mirror);
 
+            bool split = handCount > 1;
+
             // Split-hand tweak: only when the toggle is on AND the seat is actually split — use the alternate gap
             // and shrink the cards (scale is a uniform multiplier the caller applies to the card's base scale).
-            bool tweak = tweakSplitCards && handCount > 1;
+            bool tweak = tweakSplitCards && split;
             if (tweak) gap = splitCardGap;
             scale = tweak ? Mathf.Max(0.01f, 1f - splitShrink) : 1f;
+
+            // TUCK: a split hand that has FINISHED playing gets out of the way of the one still being played. It is the
+            // only reason a seat ever runs out of room — a hand grows to 3, 4, 5 cards while its neighbour is doing the
+            // same, and on the outer seats the far hand walks off the felt entirely. Shrinking + tightening the gap of
+            // whatever is already resolved keeps every remaining hand readable no matter how many times the seat splits.
+            if (split && IsTucked(seat, handIndex))
+            {
+                scale *= Mathf.Max(0.05f, 1f - tuckShrink);
+                gap *= Mathf.Clamp01(tuckGapScale);
+                lift *= Mathf.Clamp01(tuckLiftScale);
+            }
+            Vector3 centre = HandCenterDrawn(seat, handIndex, handCount);
 
             float k = cardIndex - (cardCount - 1) * 0.5f;       // centred index: −left … 0 middle … +right
             float s = (mirror ? -1f : 1f) * k;                  // signed index — `mirror` flips which side the fan opens to
             rot = Quaternion.Euler(0f, s * anglePer, 0f);       // tilt follows the open side
             // LIFT is ALWAYS by deal order (cardIndex), so the newest/last card is always on top — mirror never changes that.
             Vector3 offset = new Vector3(s * gap.x, lift * cardIndex, s * gap.y);
-            pos = HandCenterLocal(handIndex, handCount) + offset;
+            pos = centre + offset;
+        }
+
+        // (seat, hand) identity for the tuck set — the dealer is seat 0 and never splits, so it never appears here.
+        private static int HandKey(int seat, int handIndex) => seat * 100 + handIndex;
+
+        /// <summary>Is this hand drawn TUCKED (finished, compacted)? Honours the editor preview override.</summary>
+        private bool IsTucked(int seat, int handIndex)
+        {
+            if (!tuckPlayedHands) return false;
+            if (_previewTuckMask >= 0) return (_previewTuckMask & (1 << handIndex)) != 0;   // editor tooling — see SetPreviewTuck
+            return _tucked.Contains(HandKey(seat, handIndex));
+        }
+
+        /// <summary>
+        /// Is this hand drawn TUCKED? For the badge drivers, which place themselves against the hand and need their own
+        /// tucked-hand placement. A single hand is never tucked, so the card count is part of the question.
+        /// </summary>
+        public bool IsHandTucked(int seat, int handIndex, int handCount) => handCount > 1 && IsTucked(seat, handIndex);
+
+        // EDITOR ONLY (CardAnchorGizmo): -1 = no override, else a BITMASK of hand indices drawn as finished, so the
+        // tuck can be tuned without dealing a real split. A mask, not a single index, because both hands of a played-out
+        // split are tucked at once and that is the layout worth eyeballing.
+        private int _previewTuckMask = -1;
+
+        /// <summary>
+        /// Editor preview hook: draw the hands in <paramref name="handMask"/> (bit 0 = hand 0, bit 1 = hand 1, …) as if
+        /// they had finished playing. Pass -1 for no override. No-op in Play mode — the live table is board-driven and
+        /// must never take its layout from a scene-authoring toggle.
+        /// </summary>
+        public void SetPreviewTuck(int handMask)
+        {
+            if (Application.isPlaying) return;
+            _previewTuckMask = handMask;
+        }
+
+        /// <summary>
+        /// Recompute which split hands are drawn tucked. Called from <see cref="Render"/> ONLY, and after its
+        /// round-end-hold guard: the tuck changes where cards sit, and the value / result badges read the same geometry
+        /// every LateUpdate, so changing it at a moment the cards are NOT re-laid would leave every badge floating away
+        /// from its hand. Tying it to the render keeps the two in lockstep.
+        /// </summary>
+        private void RefreshTucked(BoardSnapshot board)
+        {
+            _tucked.Clear();
+            BuildTuckSet(board, _tucked);
+        }
+
+        /// <summary>
+        /// Which split hands have earned the tuck. <c>Done</c> alone is NOT enough: the server marks a hand finished
+        /// the instant it resolves, which for a bust or a 21 is while the card that ended it is still parked at the
+        /// shoe or mid-flight. Tucking then shrank the hand away before the player had seen the card or its badge. So a
+        /// hand also has to have its LAST CARD LANDED, and then sit for <see cref="tuckDelaySeconds"/>.
+        /// </summary>
+        private void BuildTuckSet(BoardSnapshot board, HashSet<int> into)
+        {
+            if (!tuckPlayedHands || board?.Seats == null) return;
+
+            foreach (var seat in board.Seats)
+            {
+                var hands = seat?.Player?.Hands;
+                if (hands == null || hands.Count < 2) continue;   // only a SPLIT ever crowds a seat
+                for (int h = 0; h < hands.Count; h++)
+                {
+                    var hand = hands[h];
+                    if (hand == null || !hand.Done) continue;
+
+                    int n = hand.Cards != null ? hand.Cards.Count : 0;
+                    if (n == 0 || !CardSettled(seat.SeatNumber, h, n - 1)) continue;   // final card still in the air
+
+                    int key = HandKey(seat.SeatNumber, h);
+                    if (!_tuckReadyAt.TryGetValue(key, out float readyAt))
+                    {
+                        readyAt = Time.unscaledTime + Mathf.Max(0f, tuckDelaySeconds);
+                        _tuckReadyAt[key] = readyAt;
+                    }
+                    if (Time.unscaledTime >= readyAt) into.Add(key);
+                }
+            }
+        }
+
+        // When each finished hand's last card landed (+ the delay). Cleared at the start of every round.
+        private readonly Dictionary<int, float> _tuckReadyAt = new Dictionary<int, float>();
+        private readonly HashSet<int> _tuckScratch = new HashSet<int>();
+        private BoardSnapshot _lastBoard;
+
+        /// <summary>
+        /// The tuck now depends on things that change BETWEEN board pushes — a card landing, and a timer — so it can no
+        /// longer be computed only when the server speaks. Re-check it per frame and, when it changes, re-run the
+        /// layout: that is what actually glides the cards into (or out of) the tucked pose, and it keeps the badges,
+        /// which read the same geometry, moving with them rather than floating off.
+        /// </summary>
+        private void RetuckIfChanged()
+        {
+            if (_lastBoard == null || _roundEndHeld) return;
+            _tuckScratch.Clear();
+            BuildTuckSet(_lastBoard, _tuckScratch);
+            if (_tuckScratch.SetEquals(_tucked)) return;
+            Render(_lastBoard);   // idempotent — the whole view is built to absorb a repeated push
+        }
+
+        /// <summary>
+        /// The card's LIVE anchor-local pose WHILE THE LAYOUT IS MOVING IT — where it is right now, mid-glide, rather
+        /// than the pose it is heading for. Labels pinned to a card use this so they travel WITH it through a fan
+        /// re-centre or a tuck instead of jumping to the destination and waiting for the card to catch up.
+        ///
+        /// Returns FALSE unless a <see cref="CardMover"/> is actually running, and that restriction is the point. The
+        /// card transform is not owned by the layout alone — <c>CardFlip</c> writes to it too, for the dealer's peek
+        /// tilt and the hole-card reveal (turn, lift, scale pop, overshoot). Reading it unconditionally made every
+        /// value and result badge ride along with that juice, tilting and lifting with the card it labels. Those
+        /// animations run with the mover idle, so gating on the mover cleanly separates "the layout moved the card"
+        /// (badge should follow) from "the card is being animated in place" (badge must not).
+        ///
+        /// <paramref name="scale"/> is the uniform multiplier on the card prefab's own scale, so an offset authored
+        /// against a full-size card can be scaled by it exactly as <see cref="CardLocalTRS"/> reports.
+        /// </summary>
+        public bool TryCardPose(int seat, int handIndex, int cardIndex, out Vector3 pos, out Quaternion rot, out float scale)
+        {
+            pos = Vector3.zero; rot = Quaternion.identity; scale = 1f;
+            int key = SlotKey(seat, handIndex, cardIndex);
+            if (_pendingDeal.Contains(key)) return false;                                      // parked at the shoe — not on the felt
+            if (!_rendered.TryGetValue(key, out var slot) || slot.Card == null) return false;
+            if (slot.Mover == null || !slot.Mover.Animating) return false;                      // at rest (or being juiced) — use the authored layout pose
+
+            var tr = slot.Card.transform;
+            pos = tr.localPosition;
+            rot = tr.localRotation;
+            scale = _cardBaseScale.x > 0.0001f ? tr.localScale.x / _cardBaseScale.x : 1f;
+            return true;
         }
 
         /// <summary>
@@ -169,6 +358,25 @@ namespace PlayCard.Game.Table
         /// </summary>
         public Vector3 HandCenterLocal(int handIndex, int handCount)
             => splitHandStep * (handIndex - (handCount - 1) * 0.5f);
+
+        /// <summary>
+        /// The hand's centre AS DRAWN — <see cref="HandCenterLocal"/> plus the tuck, if this hand is tucked.
+        ///
+        /// Split Hand Step has to hold two FULL-SIZE hands apart, so the moment one shrinks that spacing reads as a
+        /// hole in the middle of the seat; the tucked hand slides back toward the anchor by <c>tuckPullIn</c> (scaling
+        /// its own centred offset, so it closes symmetrically for any number of hands) and then by <c>tuckNudge</c>.
+        ///
+        /// This is what a per-HAND label anchors to — stable however many cards the hand holds, unlike the last card,
+        /// which walks sideways as the fan grows. The BET STACKS deliberately read <see cref="HandCenterLocal"/>
+        /// instead: the wager stays where it was placed and where the round-end director collects and pays it.
+        /// </summary>
+        public Vector3 HandCenterDrawn(int seat, int handIndex, int handCount)
+        {
+            Vector3 centre = HandCenterLocal(handIndex, handCount);
+            if (handCount > 1 && IsTucked(seat, handIndex))
+                centre = centre * (1f - Mathf.Clamp01(tuckPullIn)) + tuckNudge;
+            return centre;
+        }
 
         /// <summary>The world anchor for a seat (1-based) or the dealer (0). Null if not authored.</summary>
         public Transform SeatAnchor(int seat) => seat <= 0 ? dealerAnchor : AnchorForSeat(seat);
@@ -184,8 +392,46 @@ namespace PlayCard.Game.Table
             int key = SlotKey(seat, handIndex, cardIndex);
             if (_pendingDeal.Contains(key)) return false;                                     // still parked (awaiting throw/stagger)
             if (!_rendered.TryGetValue(key, out var slot) || slot.Card == null) return false; // not created yet
+            // Once a card has touched down it STAYS landed. It moves again plenty of times after the deal — the fan
+            // re-centres on every hit, and a finished split hand tucks away — and treating those as "not dealt yet"
+            // made every badge on the hand blink out for the duration of the glide and pop back in.
+            if (_landed.Contains(key)) return true;
             return slot.Mover == null || !slot.Mover.Animating;                               // landed (not gliding in)
         }
+
+        /// <summary>
+        /// A card has just TOUCHED DOWN on the felt after flying in — seat (0 = dealer) and the world point it landed
+        /// at. The moment for a card sound, and the only one the view didn't already expose: the dealer's throw has a
+        /// clip event, but the landing happens on the mover's own schedule with nothing to hang off.
+        ///
+        /// Fires ONCE per card per round, and only for a card that actually FLEW. It stays silent for a re-layout (the
+        /// fan re-centring on a hit, a hand tucking) and for a SNAP — a mid-round join reveals every already-dealt card
+        /// in one frame, which would otherwise fire eight sounds at once for cards dealt before you sat down.
+        /// </summary>
+        public event System.Action<int, Vector3> CardLanded;
+
+        // A card is LANDED the first time it is on the felt and not moving. Swept per frame (a handful of cards) rather
+        // than hooked off the mover, so it is true regardless of which path put the card there — thrown by the dealer,
+        // self-dealt, snapped on a mid-round join, or laid out by the round-end director.
+        private void MarkLanded()
+        {
+            foreach (var kv in _rendered)
+            {
+                int key = kv.Key;
+                if (_pendingDeal.Contains(key)) continue;
+
+                var mover = kv.Value.Mover;
+                if (mover != null && mover.Animating) { _flying.Add(key); continue; }   // in transit — remember that it flew
+
+                bool flew = _flying.Remove(key);
+                if (!_landed.Add(key)) continue;   // already down; this was a re-layout settling, not a landing
+
+                if (flew && CardLanded != null && kv.Value.Card != null)
+                    CardLanded.Invoke(key / 10000, kv.Value.Card.transform.position);   // SlotKey packs seat * 10000
+            }
+        }
+
+        private readonly HashSet<int> _flying = new HashSet<int>();   // keys seen mid-move, so a snap can be told from a real deal-in
 
         /// <summary>
         /// True while ANY card is still coming in — parked at the shoe/hand awaiting its throw, or gliding to its spot.
@@ -280,7 +526,13 @@ namespace PlayCard.Game.Table
             if (board == null || cardPrefab == null || _pool == null) return;
             if (_roundEndHeld) return;   // the round-end director owns the felt — ignore board pushes until it releases the hold
 
+            // A NEW round wipes the per-hand tuck timers, so last round's hands can't tuck instantly this round.
+            if (board.RoundInProgress && !_prevRenderInRound) _tuckReadyAt.Clear();
+            _prevRenderInRound = board.RoundInProgress;
+            _lastBoard = board;          // so the per-frame tuck re-check has a board to lay out from
+
             ReclaimMovedCards(board);    // SPLIT: migrate the moved card to its new slot BEFORE positional layout
+            RefreshTucked(board);        // finished split hands compact — must change only where the felt is re-laid
 
             _desired.Clear();
 
@@ -301,7 +553,12 @@ namespace PlayCard.Game.Table
                         if (anchor == null) continue;   // server seat beyond our authored anchors (e.g. 4–5) — skip
 
                         var hands = seat.Player.Hands;
-                        for (int h = 0; h < hands.Count; h++)
+                        // Highest hand index FIRST. On a split that hand sits on the player's right, and the server
+                        // both deals and plays it first (BlackjackTableManager.GetOrderedHands) — new cards enter the
+                        // seat's deal queue in this order, so walking up from 0 would fly the left hand's card first
+                        // and read as the dealer serving against the table's right→left direction. Where each card
+                        // LANDS comes from its hand index, not from this order, so only the sequence changes.
+                        for (int h = hands.Count - 1; h >= 0; h--)
                             LayOutHand(hands[h].Cards, anchor, seat.SeatNumber, h, hands.Count);
                     }
                 }
@@ -324,8 +581,13 @@ namespace PlayCard.Game.Table
             else { _collectPending = false; _collectReadyAt = -1f; }
         }
 
+        private bool _prevRenderInRound;
+
         private void Update()
         {
+            MarkLanded();
+            RetuckIfChanged();
+
             // Complete a deferred round-end sweep once the last card has LANDED, then hold roundEndHold so the final
             // hand (e.g. a bust) is readable. Render is board-driven, but a bust/final card lands BETWEEN pushes —
             // without this the felt would clear the instant the server resolves.
@@ -394,6 +656,9 @@ namespace PlayCard.Game.Table
                     if (!_rendered.TryGetValue(srcKey, out var slot) || !SameCard(slot.Data, d.Value)) continue;
                     _rendered.Remove(srcKey);
                     _rendered[destKey] = slot;    // move the REAL card; LayOutHand will glide it to the new fan spot
+                    // The card itself is already on the felt, so carry its landed flag across with it — otherwise the
+                    // split's moved card counts as undealt and the new hand's badges wait on a deal that never happens.
+                    if (_landed.Remove(srcKey)) _landed.Add(destKey);
                     _movableKeys.RemoveAt(m);
                     break;
                 }
@@ -540,6 +805,23 @@ namespace PlayCard.Game.Table
             _releaseQueues.Clear();
         }
 
+        /// <summary>
+        /// The felt is being SWEPT — every remaining card is leaving for the discard, as one gesture. Fires once per
+        /// sweep (not per card) with the discard tray's world position. Both sweep paths funnel through
+        /// <see cref="CollectStale"/>, so this covers the director's <see cref="SweepNow"/> and the no-director
+        /// deferred sweep alike.
+        /// </summary>
+        public event System.Action<Vector3> CardsSwept;
+
+        // At least one card in the sweep was actually on screen. A parked, never-revealed card is reclaimed silently.
+        private static bool AnyVisible(Dictionary<int, List<CardVisual>> groups)
+        {
+            foreach (var g in groups.Values)
+                for (int i = 0; i < g.Count; i++)
+                    if (g[i] != null && g[i].gameObject.activeSelf) return true;
+            return false;
+        }
+
         // Cards left the board: group by seat so a hand's cards leave TOGETHER, and stagger the seats (dealer last).
         private void CollectStale()
         {
@@ -550,12 +832,21 @@ namespace PlayCard.Game.Table
                 var card = _rendered[key].Card;
                 _rendered.Remove(key);
                 _pendingDeal.Remove(key);
+                _landed.Remove(key);   // the slot is free again — a later round reusing this SlotKey must re-earn "landed"
+                _flying.Remove(key);
                 int seat = key / 10000;   // SlotKey packs seat*10000 + hand*100 + cardIndex
                 if (!groups.TryGetValue(seat, out var list)) { list = new List<CardVisual>(); groups[seat] = list; }
                 list.Add(card);
             }
 
             PurgeReleaseQueues();   // drop collected cards from the release FIFOs so a reused SlotKey can't fly a pooled card
+
+            // ONE announcement for the whole sweep, not one per card. Every card leaving is a single gesture — the
+            // seats go one after another on collectStagger and the sound covers the lot. Only fires if a card was
+            // actually VISIBLE: entering a table whose last round is still lingering releases hidden, never-dealt
+            // cards, and a sweep sound for a felt the player never saw is a sound from nowhere.
+            if (CardsSwept != null && AnyVisible(groups))
+                CardsSwept.Invoke(discardTarget != null ? discardTarget.position : transform.position);
 
             if (discardTarget == null || collectSeconds <= 0f)
             {
@@ -608,8 +899,11 @@ namespace PlayCard.Game.Table
                     else
                     {
                         // Adding a card re-centres the fan → glide existing cards to the new pose (idempotent, so an
-                        // identical push doesn't restart it; an in-flight deal-in keeps its own target).
-                        EnsureMover(slot.Card).Target(pos, rot, targetScale, recenterSeconds);
+                        // identical push doesn't restart it; an in-flight deal-in keeps its own target). A hand being
+                        // TUCKED travels much further than a re-centre — shrinking and sliding in toward the seat — so
+                        // it gets its own, longer duration.
+                        float glide = (handCount > 1 && IsTucked(seat, handIndex)) ? tuckSeconds : recenterSeconds;
+                        EnsureMover(slot.Card).Target(pos, rot, targetScale, glide);
                         if (!SameCard(slot.Data, data)) { slot.Card.SetCard(data); slot.Data = data; _rendered[key] = slot; }
                     }
                 }
@@ -620,6 +914,7 @@ namespace PlayCard.Game.Table
                     card.SetCard(data);
                     var mover = EnsureMover(card);
                     _rendered[key] = new Slot { Card = card, Data = data, Mover = mover };   // cache the mover (no per-frame GetComponent)
+                    _landed.Remove(key);   // a genuinely NEW card at this slot has not landed, whatever used to live here
 
                     if (snapNew)
                     {

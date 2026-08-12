@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net.Http;              // HttpMethod — used only as the internal method selector (no HttpClient)
 using System.Text;
@@ -205,10 +206,31 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)
             => SendAsync<PublicProfileData>(HttpMethod.Get, $"/api/profile/{userId}");
 
-        /// <summary>The blackjack table browser, optionally filtered by mode.</summary>
-        public Task<ApiResult<List<BlackjackTableSummary>>> GetLobbyAsync(BlackjackMode? mode = null)
-            => SendAsync<List<BlackjackTableSummary>>(HttpMethod.Get,
-                mode.HasValue ? $"/api/lobby/blackjack?mode={(int)mode.Value}" : "/api/lobby/blackjack");
+        /// <summary>
+        /// The blackjack table browser, optionally filtered by mode and by STAKE TIER.
+        ///
+        /// A tier now holds many tables rather than one, so passing <paramref name="minBet"/>/<paramref name="maxBet"/>
+        /// is what keeps the carousel to a single stake bracket. Within a tier the server returns them fullest-first
+        /// with completely empty tables last, so browsing lands the player among people and the final card is always
+        /// a free table.
+        /// </summary>
+        public Task<ApiResult<List<BlackjackTableSummary>>> GetLobbyAsync(
+            BlackjackMode? mode = null, decimal? minBet = null, decimal? maxBet = null)
+        {
+            var q = new List<string>(3);
+            if (mode.HasValue) q.Add($"mode={(int)mode.Value}");
+            if (minBet.HasValue) q.Add($"minBet={minBet.Value.ToString(CultureInfo.InvariantCulture)}");
+            if (maxBet.HasValue) q.Add($"maxBet={maxBet.Value.ToString(CultureInfo.InvariantCulture)}");
+            var url = q.Count == 0 ? "/api/lobby/blackjack" : $"/api/lobby/blackjack?{string.Join("&", q)}";
+            return SendAsync<List<BlackjackTableSummary>>(HttpMethod.Get, url);
+        }
+
+        /// <summary>
+        /// The stake tiers the lobby offers, in order. The bet-size filter is built from THIS rather than from
+        /// brackets hardcoded in the client, so adding or retuning a tier server-side needs no client build.
+        /// </summary>
+        public Task<ApiResult<List<BetTierData>>> GetTiersAsync()
+            => SendAsync<List<BetTierData>>(HttpMethod.Get, "/api/lobby/blackjack/tiers");
 
         // ---------- Table lifecycle ----------
 
@@ -344,7 +366,23 @@ namespace PlayCard.Game.Net
                 // know will 401 and recovering afterwards. No network cost when the token is healthy. Skipped on the
                 // replay so a genuinely rejected token can't loop.
                 if (!isRetry && AccountManager.Instance != null)
-                    await AccountManager.Instance.EnsureValidTokenAsync();
+                {
+                    // BOUND THIS. It runs before the request is sent, so the Best HTTP timeout set above does NOT
+                    // cover it — and the refresh is single-flight, so one stalled attempt is awaited by EVERY caller
+                    // at once. That is the "table is alive but nothing deals" failure: SignalR keeps pushing the
+                    // board, while deal / repeat / the idle-warning bet / the hand log all sit here and never send
+                    // (which is also why those timeouts left no trace in the server log — nothing was sent).
+                    // On timeout, go with the token we have: if it really is stale the 401 path below refreshes and
+                    // replays, so the worst case is one wasted round trip instead of a dead REST channel.
+                    var gate = AccountManager.Instance.EnsureValidTokenAsync();
+                    var budget = Task.Delay(TimeSpan.FromSeconds(Mathf.Max(1, AppConfig.Instance.RequestTimeoutSeconds)));
+                    if (await Task.WhenAny(gate, budget) == budget)
+                    {
+                        Debug.LogWarning("[BlackjackRestClient] token gate timed out — sending with the current token.");
+                        // Observe a later fault so it can't surface as an unobserved task exception.
+                        _ = gate.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                    }
+                }
 
                 var token = AccountManager.Instance != null ? AccountManager.Instance.JwtToken : null;
                 if (!string.IsNullOrEmpty(token))
@@ -377,7 +415,13 @@ namespace PlayCard.Game.Net
                 // Do NOT assume non-2xx throws — Best HTTP returns 4xx/5xx as a normal response. Treat any non-2xx as
                 // failure so a rejected save (e.g. the entitlement gate's 400) can't be reported to callers as success.
                 if (resp.StatusCode < 200 || resp.StatusCode >= 300)
-                    return new Raw(false, resp.StatusCode, resp.DataAsText, ExtractMessage(resp.DataAsText) ?? $"HTTP {resp.StatusCode}");
+                    // Name the ENDPOINT in the error. Callers surface this string bare ("action failed: A round is
+                    // already in progress"), and several endpoints can return the same server message — so without
+                    // the path there is no way to tell from a device log WHICH request was rejected, which is exactly
+                    // the guessing this note exists to prevent.
+                    return new Raw(false, resp.StatusCode,
+                        resp.DataAsText,
+                        $"{ToBest(method)} {path} → {ExtractMessage(resp.DataAsText) ?? $"HTTP {resp.StatusCode}"}");
                 return new Raw(true, resp.StatusCode, resp.DataAsText, null);
             }
             catch (AsyncHTTPException hex)
@@ -438,6 +482,14 @@ namespace PlayCard.Game.Net
     public sealed class GiftClaimResult
     {
         public int Claimed { get; set; }
+    }
+
+    /// <summary>One stake bracket the lobby offers — mirrors <c>/api/lobby/blackjack/tiers</c>.</summary>
+    public sealed class BetTierData
+    {
+        public string Key { get; set; }        // e.g. "1000-10000"
+        public decimal MinBet { get; set; }
+        public decimal MaxBet { get; set; }
     }
 
     /// <summary>Client mirror of the <c>/Blackjack/create</c> response.</summary>

@@ -151,7 +151,11 @@ namespace PlayCard.UI
             bool windowOpen = board != null && !board.RoundInProgress
                               && board.BettingExpiresAt.HasValue
                               && table != null && table.MySeat > 0
-                              && !table.AmIIdleKickWarned;   // idle-kick warning takes over the same clock while it's up
+                              && !table.AmIIdleKickWarned    // idle-kick warning takes over the same clock while it's up
+                              // Once THIS player has committed (Deal / Repeat) they are done — the shared window is
+                              // still running for the other seats, but showing them a countdown they can no longer
+                              // act on is what makes the table feel hung.
+                              && !table.BettingCommitted;
 
             if (!windowOpen)
             {

@@ -8,7 +8,13 @@ namespace PlayCard.App
     /// Scene-side UI for the global <see cref="DevLogRecorder"/>. Put this on an object in whatever scene holds your
     /// debug panel and assign the Send/Clear buttons (+ optional status label). It wires them to the running recorder
     /// (<see cref="DevLogRecorder.Instance"/>) — the recorder itself starts automatically at boot and is not in any
-    /// scene. Safe in Release builds: the recorder doesn't exist there, so this hides/disables its controls.
+    /// scene.
+    ///
+    /// There is deliberately NO on/off switch here. This binder lives in Home, which loads long after boot, so a
+    /// flag on it could only ever start recording too late to catch the startup logs that actually matter on a
+    /// device. The switch is <c>Record Logs In Release Builds</c> on the AppConfig asset in Resources, which the
+    /// recorder reads before the first scene. This component only drives the buttons — and when the recorder isn't
+    /// running (Release with the flag off) it hides/disables them.
     /// </summary>
     public sealed class DevLogBinder : MonoBehaviour
     {

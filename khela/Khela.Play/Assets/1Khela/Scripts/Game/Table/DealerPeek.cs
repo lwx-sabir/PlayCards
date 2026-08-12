@@ -23,6 +23,11 @@ namespace PlayCard.Game.Table
         [SerializeField] private DealerAnimator dealer;
         [SerializeField] private BlackjackTableView view;
 
+        [Tooltip("Longest the peek will wait for the opening deal to finish landing before playing anyway. Must " +
+                 "comfortably exceed a full multi-seat deal, or she peeks while someone is still being dealt to — " +
+                 "a live turn releases the hold on its own, so this only needs to be a backstop.")]
+        [SerializeField] private float settleWaitSeconds = 6f;
+
         private bool _peeked;                 // once per round — survives the settle so the director can see it
         private bool _prevInRound;
         private bool _running;
@@ -52,6 +57,18 @@ namespace PlayCard.Game.Table
         // DecisionReady flips between board pushes (the deal lands mid-animation), so also poll — the guards make it cheap.
         private void Update() => TryPeek(table != null ? table.Board : null);
 
+        /// <summary>
+        /// WHEN THE DEALER PEEKS — the whole rule, in two lines. Everything below implements exactly this, and any
+        /// change here should be checked against it rather than against the mechanism that happens to enforce it:
+        ///
+        ///   TEN up-card  → peek once EVERY player's second card is down, the dealer's included.
+        ///   ACE up-card  → peek once EVERY player has finished their insurance decision.
+        ///
+        /// She peeks after the deal, never during it, and never before players have decided something she is about
+        /// to resolve. This has been broken twice by conditions that were true "most of the time" — a card that has
+        /// not been dealt cannot be looked at, so the guards test for the card itself, not for the absence of
+        /// movement.
+        /// </summary>
         private void TryPeek(BoardSnapshot board)
         {
             if (board == null) return;
@@ -87,14 +104,22 @@ namespace PlayCard.Game.Table
             _running = true;
             if (view != null) view.BeginPeek();   // take the gate up front, before the deal has settled
 
-            // Let the opening deal finish landing first, so the peek visibly FOLLOWS the deal. The dealer is dealt LAST,
-            // so her cards settling means the whole deal is down. Raw settled check (not DecisionReady — we've already
-            // taken the peek hold, which forces it false here); an 8s timeout guards a deal that never reports settled
-            // (e.g. a mid-round resync), and stays well under the server's turn ceiling so it can't cause an auto-stand.
+            // Wait for the ENTIRE opening deal to land before she checks her hole card — that is the real-table
+            // order, and it is what a player expects to see.
+            //
+            // AnyCardAnimating covers every seat; the old check was SeatSettled(0), the DEALER's seat alone. She is
+            // dealt last, so her cards landing was assumed to mean the deal was over — but the seats are dealt in
+            // parallel with a stagger, so hers can settle while a later player is still waiting on their second
+            // card. That is precisely the "she peeked while seat 2 had one card" case: the condition was answering
+            // a narrower question than the one being asked.
             if (view != null)
             {
                 float t = 0f;
-                while (t < 8f && !view.SeatSettled(0))
+                // Two conditions, and the second is the one that actually guarantees correctness: she must HAVE a
+                // hole card, on the felt, before she can look at it. AnyCardAnimating alone is not enough — this
+                // method also runs every frame from Update(), so any momentary gap where nothing happens to be in
+                // flight let the peek through mid-deal, before her second card had been thrown.
+                while (t < settleWaitSeconds && (view.AnyCardAnimating() || !HoleCardIsDown()))
                 {
                     // The round SETTLED while we were still waiting for the deal to land — a natural blackjack does
                     // exactly this, settling a tick after the deal. The RoundEndDirector now owns the dealer rig, so
@@ -113,10 +138,40 @@ namespace PlayCard.Game.Table
                 }
             }
 
+            if (!HoleCardIsDown())
+            {
+                // Timed out still without a hole card to look at. Playing the clip now would lift a card that is
+                // not there and, until CardFlip started guarding it, threw out of the animation event. Hand the
+                // peek back so the round-end director can play it at the reveal instead.
+                Debug.LogWarning("[DealerPeek] skipped: no hole card on the felt after " +
+                                 $"{settleWaitSeconds:0.#}s (dealer cards: {DealerCardCount()}).");
+                if (view != null) view.EndPeek();
+                _peeked = false;
+                _running = false;
+                yield break;
+            }
+
             yield return dealer.PlayPeek();
             if (view != null) view.EndPeek();
             _running = false;
         }
+
+        /// <summary>Her hole card has been dealt and is actually sitting on the felt — not still parked at the shoe.</summary>
+        private bool HoleCardIsDown()
+            => DealerCardCount() >= 2 && (view == null || view.SeatSettled(0));
+
+        private int DealerCardCount()
+        {
+            var cards = table != null && table.Board != null && table.Board.Dealer != null
+                ? table.Board.Dealer.Cards : null;
+            return cards != null ? cards.Count : 0;
+        }
+
+        // NOTE: an earlier attempt released the hold as soon as the board said the turn was mine. That is wrong at
+        // the OPENING deal: with a ten up-card there is no insurance window, so the server hands out the turn in the
+        // same board that reveals the up-card — the release fired on the first frame and she peeked before a single
+        // card had been thrown. The post-insurance hang it was meant to fix is already handled by waiting on
+        // AnyCardAnimating(), which is false by then because the deal landed long ago.
 
         /// <summary>
         /// ROUND-END entry point. On a dealer BLACKJACK the server settles instantly, so the mid-round trigger never got

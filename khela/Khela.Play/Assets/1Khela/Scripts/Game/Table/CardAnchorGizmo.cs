@@ -26,6 +26,21 @@ namespace PlayCard.Game.Table
         [Tooltip("How many HANDS to preview (1 = normal, 2 = a split) so you can tune Split Hand Step / the gap.")]
         [Range(1, 2)] [SerializeField] private int previewHands = 1;
 
+        /// <summary>Which preview hands are drawn FINISHED. The values ARE the hand bitmask the view takes.</summary>
+        public enum TuckPreview
+        {
+            None = 0,
+            RightHandOnly = 1 << 1,   // hand 1 — sits on the player's right and is played FIRST, so it tucks first
+            LeftHandOnly = 1 << 0,    // hand 0 — played second
+            BothHands = (1 << 0) | (1 << 1),
+        }
+
+        [Tooltip("Draw hands as FINISHED (tucked: shrunk, tighter gap, pulled in) so the Tuck settings and the tucked " +
+                 "label offsets can be authored without dealing a real split. The right hand is played first, so it " +
+                 "tucks first; BOTH is what you see once the seat has played out — the state the badges have to be " +
+                 "readable in. Needs Preview Hands = 2.")]
+        [SerializeField] private TuckPreview previewTuck = TuckPreview.None;
+
         [Tooltip("Auto-rebuild the preview every N seconds in the editor, so ANY change (card prefab art, skin, " +
                  "labels) shows up without hitting Refresh. 0 = off (manual Refresh / live tweaks only).")]
         [SerializeField] private float autoRefreshSeconds = 2f;
@@ -33,7 +48,7 @@ namespace PlayCard.Game.Table
         private const string CardName = "__cardpreview";
         private const string BadgeName = "__badgepreview";
 
-        private struct BadgeRef { public Transform T; public Component SrcComp; public IAnchorLabel Src; public int Hand; }
+        private struct BadgeRef { public Transform T; public Component SrcComp; public IAnchorLabel Src; public int Hand; public Vector3 BaseScale; }
 
         private readonly List<Transform> _cards = new List<Transform>();
         private readonly List<BadgeRef> _badges = new List<BadgeRef>();
@@ -142,7 +157,16 @@ namespace PlayCard.Game.Table
                     var go = Instantiate(src.LabelPrefab, transform);
                     go.name = BadgeName;
                     go.hideFlags = HideFlags.HideAndDontSave;
-                    _badges.Add(new BadgeRef { T = go.transform, SrcComp = src as Component, Src = src, Hand = h });
+                    // Capture the PREFAB's scale, not the instance's: Layout rewrites the instance every tick, so
+                    // reading it back would compound the shrink a little further on each pass.
+                    _badges.Add(new BadgeRef
+                    {
+                        T = go.transform,
+                        SrcComp = src as Component,
+                        Src = src,
+                        Hand = h,
+                        BaseScale = src.LabelPrefab.transform.localScale,
+                    });
                 }
             }
 
@@ -162,6 +186,18 @@ namespace PlayCard.Game.Table
         {
             var view = View;
             if (view == null) return;
+
+            // Tell the view which hand to draw as finished for THIS preview — every geometry call inside then reports
+            // the tucked layout, so the Scene view shows exactly what a played-out split looks like. The `finally`
+            // matters: LayoutCore bails early on a destroyed preview, and leaving the override on would tuck the next
+            // anchor's gizmo too.
+            view.SetPreviewTuck(previewHands > 1 ? (int)previewTuck : -1);
+            try { LayoutCore(view); }
+            finally { view.SetPreviewTuck(-1); }
+        }
+
+        private void LayoutCore(BlackjackTableView view)
+        {
             int perHand = Mathf.Max(1, previewCount);
             Vector3 baseScale = view.PreviewPrefab != null ? view.PreviewPrefab.transform.localScale : Vector3.one;
 
@@ -183,23 +219,33 @@ namespace PlayCard.Game.Table
                 var br = _badges[b];
                 if (br.T == null || br.SrcComp == null) { _dirty = true; return; }   // badge or its source went away
 
+                // Badges preview at their AUTHORED size, exactly like the runtime — only the placement changes. The
+                // offset comes from the label's OWN OffsetFor, so a tucked hand previews with its tucked offset and
+                // what you author here is literally what the table draws.
+                view.CardLocalTRS(seatNumber, br.Hand, previewHands, last, perHand, out var pos, out var rot, out var scale);
+                bool tucked = view.IsHandTucked(seatNumber, br.Hand, previewHands);
+                Vector3 offset = br.Src.OffsetFor(tucked, scale);
+
                 Vector3 wp;
                 Quaternion wr;
-                if (br.Src.AnchorAtHandCenter)
+                if (br.Src.AnchorsAtHandCenter(tucked))
                 {
                     // Per-hand banner: hand centre, hand-aligned (independent of card count) — matches runtime.
-                    wp = transform.TransformPoint(view.HandCenterLocal(br.Hand, previewHands)) + (transform.rotation * br.Src.CornerOffset);
+                    // HandCenterDrawn, not HandCenterLocal: the tucked hand has been pulled in toward the seat, and
+                    // anchoring to where it WOULD have sat left the preview banner behind the cards it belongs to.
+                    wp = transform.TransformPoint(view.HandCenterDrawn(seatNumber, br.Hand, previewHands))
+                         + (transform.rotation * offset);
                     wr = transform.rotation;
                 }
                 else
                 {
                     // Per-card label: the hand's last card, tilted with it.
-                    view.CardLocalTRS(seatNumber, br.Hand, previewHands, last, perHand, out var pos, out var rot, out var scale);
                     Quaternion cardWorldRot = transform.rotation * rot;
-                    wp = transform.TransformPoint(pos) + cardWorldRot * (br.Src.CornerOffset * (br.Src.ScaleOffsetWithCard ? scale : 1f));
+                    wp = transform.TransformPoint(pos) + cardWorldRot * offset;
                     wr = cardWorldRot;
                 }
-                br.T.SetPositionAndRotation(wp, wr * Quaternion.Euler(br.Src.LabelFlatEuler));
+                br.T.SetPositionAndRotation(wp, wr * Quaternion.Euler(br.Src.FlatEulerFor(tucked)));
+                br.T.localScale = br.BaseScale;
             }
         }
 

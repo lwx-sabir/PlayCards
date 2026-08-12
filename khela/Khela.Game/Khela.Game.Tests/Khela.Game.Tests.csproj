@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Khela.Game runs on STJ 9.0 (transitively, via EF Core 9.0.8). Without this the test host only has the net8.0
+         framework's 8.0 copy and any test touching config JSON (Pass/Mission/Chest TryParse) dies with a
+         FileNotFoundException for System.Text.Json 9.0.0. -->
+    <PackageReference Include="System.Text.Json" Version="9.0.8" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />

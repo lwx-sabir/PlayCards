@@ -35,10 +35,19 @@ namespace PlayCard.Game.Betting
         /// <summary>Re-drop the last bet's chips onto the local spot, then deal.</summary>
         public void Repeat()
         {
-            if (_running != null || _dealing || !CanRepeat) return;   // already re-betting/dealing → ignore the double-tap
-            if (table != null && table.Board != null && table.Board.RoundInProgress) return;   // a round is already live
+            // Silent bails again — and these two guards are STICKY: _running and _dealing are cleared by a later
+            // step, so if that step is ever missed they stay set and Repeat is dead for the rest of the session.
+            // That is precisely the "worked for ten hands then never again" shape, so name which one is holding.
+            if (_running != null) { Debug.LogWarning("[BetRepeater] REPEAT ignored: a previous repeat coroutine is still marked running."); return; }
+            if (_dealing) { Debug.LogWarning("[BetRepeater] REPEAT ignored: _dealing is still set from an earlier deal that never confirmed."); return; }
+            if (!CanRepeat) { Debug.LogWarning("[BetRepeater] REPEAT ignored: no remembered bet to repeat (LastPlaced empty)."); return; }
+            if (table != null && table.Board != null && table.Board.RoundInProgress)
+            {
+                Debug.LogWarning("[BetRepeater] REPEAT ignored: board says a round is in progress (stale board if the felt looks idle).");
+                return;
+            }
             var spot = LocalSpot();
-            if (spot == null) return;
+            if (spot == null) { Debug.LogWarning("[BetRepeater] REPEAT ignored: no local BetSpot resolved for my seat."); return; }
             _running = StartCoroutine(DropThenDeal(spot, new List<long>(builder.LastPlaced)));   // re-drop the last bet
         }
 
@@ -47,12 +56,21 @@ namespace PlayCard.Game.Betting
         /// behaves exactly like Repeat: chips fall on the felt and the round starts NOW, not when the timer expires.</summary>
         public void BetMinimumAndDeal()
         {
-            if (_running != null || _dealing || builder == null) return;
-            if (table == null || table.Board == null || table.Board.RoundInProgress) return;
+            // Same sticky guards as Repeat — this is the idle-kick popup's BET button, so a silent bail here gets
+            // the player evicted from the table while they are pressing the thing meant to save them.
+            if (_running != null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: a previous repeat coroutine is still marked running."); return; }
+            if (_dealing) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: _dealing is still set from an earlier deal that never confirmed."); return; }
+            if (builder == null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: no BetBuilder."); return; }
+            if (table == null || table.Board == null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: no board yet."); return; }
+            if (table.Board.RoundInProgress) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: board says a round is in progress."); return; }
             var spot = LocalSpot();
-            if (spot == null) return;
+            if (spot == null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: no local BetSpot resolved for my seat."); return; }
             var values = chipSet != null ? chipSet.Values(table.Board.MinBet, table.Board.MaxBet) : null;
-            if (values == null || values.Count == 0) return;
+            if (values == null || values.Count == 0)
+            {
+                Debug.LogWarning($"[BetRepeater] BET-MIN ignored: chip ladder empty for MinBet={table.Board.MinBet} MaxBet={table.Board.MaxBet}.");
+                return;
+            }
             // values[0] == minBet × 1 == the table minimum, so one lowest-rank chip is exactly the min bet.
             _running = StartCoroutine(DropThenDeal(spot, new List<long> { values[0] }));
         }

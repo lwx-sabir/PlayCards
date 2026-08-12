@@ -28,6 +28,16 @@ namespace PlayCard.App
         private static void InitBestNetworking()
         {
             Best.HTTP.Shared.HTTPManager.Setup();
+
+            // Raise the per-host connection cap from Best's default of 6.
+            //
+            // Everything in this game talks to ONE host, so that 6 is the app's entire concurrent REST budget. A table
+            // burst blows straight through it: joining fires five or six /wallet/balances at once (every HUD refreshes
+            // on enable), and each action adds another on top of the action itself. Requests over the cap QUEUE, and a
+            // queued request still counts against the 20s client timeout — so it surfaces as "Connection Timed Out!"
+            // on a phone whose network is fine and against a server answering every request in under 100ms.
+            // "*" is the wildcard host entry, so this covers the API and the hub without naming either.
+            Best.HTTP.Shared.HTTPManager.PerHostSettings.Get("*").HostVariantSettings.MaxConnectionPerVariant = 16;
             Best.HTTP.Shared.HTTPManager.Logger.Level = Best.HTTP.Shared.Logger.Loglevels.Warning;
             // Filter out the one benign Best.SignalR teardown NRE so it doesn't spam the console or get recorded as a
             // non-fatal by crash reporting. Everything else (incl. real SignalR errors) still logs. See BestNetLogFilter.
@@ -45,32 +55,46 @@ namespace PlayCard.App
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void DisableRenderingDebugger()
         {
+#if !DEVELOPMENT_BUILD && !UNITY_EDITOR
+            // Release ONLY: block players from summoning the URP Rendering Debugger by accident.
+            // Keep it available in Development builds + the editor so we can profile on-device
+            // (3-finger tap → Display Stats shows CPU main / render thread / GPU frame times).
             UnityEngine.Rendering.DebugManager.instance.enableRuntimeUI = false;
+#endif
         }
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
         /// <summary>
-        /// Dev/QA ONLY: spawn Codestage's Advanced FPS Counter once as a keepAlive singleton, so FPS + device
-        /// info show across every scene (Boot → Home → Table → Worlds). The whole method is compiled OUT of
-        /// release builds by the guard, so players never see it — a release APK carries no overlay.
+        /// Spawn Codestage's Advanced FPS Counter once as a keepAlive singleton so the overlay is available in
+        /// EVERY build — <b>including release</b> — for on-device profiling. A release/IL2CPP APK performs very
+        /// differently from a Development build (managed-code stripping, il2cpp optimizations, no dev logging),
+        /// so we must be able to read real fps + memory on the actual shipping binary, not just a dev build.
         ///
-        /// Device-info readout mirrors the RAM/VRAM/core values <c>PostFxTierController.DetectTier()</c> reads,
-        /// so on real hardware you can confirm the auto-tier thresholds land where intended; the FPS readout is
-        /// how you profile the Forward+ / cascade mobile cost and verify the per-scene SceneFrameRate caps.
+        /// It boots VISIBLE in every build — editor, Development, AND release — because the whole point is to read
+        /// fps on the real shipping binary. We do NOT hide it behind AFPS's "circle gesture": that gesture is a
+        /// ONE-finger drag that has to draw TWO full circles before releasing (see <c>CircleGestureMade</c>) —
+        /// undiscoverable and unreliable on-device, so it's useless as the only way to summon the overlay.
         ///
-        /// Toggle: backquote on desktop (the AFPS asmdef auto-defines AFPS_INPUT_SYSTEM for the Input System
-        /// package, so its new-Input path is live), or a two-finger circle gesture on device.
+        /// This is fine for the current PRE-LAUNCH profiling phase (no store build yet). BEFORE the first real
+        /// store build, hide it from players via the SHIP SWITCH marked below (flip to <c>OperationMode.Disabled</c>,
+        /// or delete this whole method). deviceInfoCounter stays off (mostly static clutter).
         /// </summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void SpawnDevFpsOverlay()
+        private static void SpawnFpsOverlay()
         {
             var afps = CodeStage.AdvancedFPSCounter.AFPSCounter.AddToScene(true); // keepAlive → persists across scene loads
-            afps.fpsCounter.Enabled = true;
-            afps.deviceInfoCounter.Enabled = true;   // CPU/GPU/RAM/VRAM/DPI — cross-check the auto-tier thresholds
-            afps.memoryCounter.Enabled = false;      // off by default (noisy); flip on when hunting GC allocations
-            afps.circleGesture = true;               // two-finger circle toggles the overlay on device
+            afps.fpsCounter.Enabled = true;          // FPS + frame ms (CPU frame time) + avg + min/max
+            afps.memoryCounter.Enabled = true;       // Mono/heap/total reserved + GFX (GPU) memory
+            afps.deviceInfoCounter.Enabled = false;  // device info OFF — mostly static clutter; flip true when tuning the auto-tier GPU table
+
+            // Readability on device: bigger, and inset from the edge so the notch doesn't clip it.
+            afps.ScaleFactor = 2f;                       // was ~tiny at 1× on a phone — double the whole overlay
+            afps.PaddingOffset = new Vector2(15f, 45f);  // ×2 scale ≈ 30px left inset + 90px top inset (clears notch)
+            afps.BackgroundPadding = 6;                  // a touch more background behind the text
+
+            // ===== SHIP SWITCH ===== visible while profiling (all builds incl. release). Before the first store
+            // build, change Normal → Disabled here so real players never see an fps counter.
+            afps.OperationMode = CodeStage.AdvancedFPSCounter.OperationMode.Normal;
         }
-#endif
 
         // Start (not Awake): guarantees AccountManager.Awake has already run and set up Instance + auth.
         private void Start()

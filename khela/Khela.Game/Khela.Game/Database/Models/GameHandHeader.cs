@@ -61,6 +61,14 @@ namespace Khela.Game.Database.Models
         [MaxLength(256)]
         public string DeckHash { get; set; }
 
+        /// <summary>
+        /// How many cards had already been dealt from the shoe when THIS hand began. With a multi-deck shoe one
+        /// shuffle spans many hands, so the seed alone no longer identifies a hand's cards — replaying it means
+        /// rebuilding the shoe from <see cref="ShuffleSeed"/> and skipping this many cards. Always 0 for a
+        /// single-deck game, where every hand gets its own shuffle.
+        /// </summary>
+        public int ShoeCardsDealt { get; set; }
+
         [MaxLength(256)]
         public string PrevHandHash { get; set; }
 

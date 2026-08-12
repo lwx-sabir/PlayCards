@@ -73,6 +73,11 @@ namespace PlayCard.App
             GameSession.TableId = tableId;
             GameSession.SeatNumber = seatNumber;   // lets the Table scene resolve the local seat before the board
             KhelaAnalytics.LogScreen(Table);
+
+            // Time the whole Lobby → playable-table transition. LoadScene is SYNCHRONOUS, so the gap between this
+            // mark and the next one is the scene load itself with nothing else in it.
+            JoinTrace.Begin($"open table {tableId}");
+            JoinTrace.Mark("scene load requested");
             SceneManager.LoadScene(Table);
         }
     }

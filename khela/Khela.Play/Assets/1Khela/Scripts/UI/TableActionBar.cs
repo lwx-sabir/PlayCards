@@ -128,7 +128,10 @@ namespace PlayCard.UI
             bool myTurn = table.IsMyTurn;
             var hand = MyCurrentHand();
 
-            bool canBet = !inRound && !settling && seated;   // between rounds AND the previous round-end fully done
+            // BettingOpenForMe, not !inRound: the betting window is SHARED, so RoundInProgress stays false until the
+            // last seat bets — DEAL/REPEAT/CLEAR stayed live for a player who had already committed, and pressing them
+            // again is exactly the double-deal the server then rejects.
+            bool canBet = table.BettingOpenForMe && !settling && seated;   // and the previous round-end fully done
             // DEAL is live only when seated, between rounds, and the dropped chips meet the table minimum.
             Set(dealButton, canBet && betBuilder != null && betBuilder.MeetsMinimum);
             // REPEAT is live between rounds once there's a remembered bet; CLEAR whenever there are chips down.
@@ -162,6 +165,7 @@ namespace PlayCard.UI
 
         private bool _lastAnimating;
         private bool _lastSettling;
+        private bool _lastCommitted;   // betting commit flips on the button press, between board pushes
 
         private void Update()
         {
@@ -177,12 +181,17 @@ namespace PlayCard.UI
             // settle — otherwise Refresh (board-driven) would leave Hit/Stand a beat behind the dealt cards. The round-end
             // ceremony ALSO ends between pushes (the director drops its hold, no board fires), so watch RoundEndSettling
             // too — else the bet bar would stay dark until the next server push.
+            // Committing a bet is a LOCAL flip on the button press — no board arrives to trigger Refresh, and during a
+            // shared betting window the next push can be seconds away, so without this the bar stays live long after
+            // the player has bet.
             bool localUnsettled = view != null && !view.DecisionReady(table.MySeat);
             bool settling = view != null && view.RoundEndSettling;
-            if (localUnsettled != _lastAnimating || settling != _lastSettling)
+            bool committed = table.BettingCommitted;
+            if (localUnsettled != _lastAnimating || settling != _lastSettling || committed != _lastCommitted)
             {
                 _lastAnimating = localUnsettled;
                 _lastSettling = settling;
+                _lastCommitted = committed;
                 Refresh(table.Board);
             }
         }

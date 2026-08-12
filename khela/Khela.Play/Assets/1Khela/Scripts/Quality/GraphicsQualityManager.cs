@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.SceneManagement;
+using PlayCard.App;   // SceneFrameRate — for the "no scene override → tier default fps" fallback
 
 namespace PlayCard.Quality
 {
@@ -34,8 +35,19 @@ namespace PlayCard.Quality
         /// <summary>Raised whenever the tier changes (also on the startup apply). Args: the new tier.</summary>
         public static event Action<Tier> OnTierChanged;
 
-        /// <summary>FPS ceiling for a tier: Low/Mid cap at 30, High/Ultra at 60.</summary>
-        public static int FpsCeiling(Tier tier) => (tier == Tier.High || tier == Tier.Ultra) ? 60 : 30;
+        /// <summary>
+        /// DEFAULT target FPS for a tier — applied only to scenes that carry NO <see cref="SceneFrameRate"/>.
+        /// A scene with a SceneFrameRate overrides this entirely (its value wins). Tunable — e.g. bump Ultra
+        /// to 90/120 for high-refresh flagships.
+        /// </summary>
+        public static int DefaultFps(Tier tier) => tier switch
+        {
+            Tier.Low   => 30,
+            Tier.Mid   => 30,
+            Tier.High  => 60,
+            Tier.Ultra => 60,
+            _          => 60,
+        };
 
         /// <summary>
         /// Runs once before the first scene of EVERY play session (editor or build) — this is what makes the
@@ -70,6 +82,14 @@ namespace PlayCard.Quality
             Debug.Log($"[GfxQuality] scene '{scene.name}': tier {Current}, pipeline " +
                       $"{(urp != null ? urp.name : "<none>")}, renderScale {(urp != null ? urp.renderScale : -1f)}, " +
                       $"MSAA {(urp != null ? urp.msaaSampleCount : -1)}");
+
+            // FPS fallback: a SceneFrameRate in the scene runs in OnEnable (BEFORE this event) and its value
+            // wins. Only when the scene carries NO SceneFrameRate do we apply the tier's default fps.
+            if (UnityEngine.Object.FindObjectsByType<SceneFrameRate>(FindObjectsSortMode.None).Length == 0)
+            {
+                Application.targetFrameRate = DefaultFps(Current);
+                Debug.Log($"[GfxQuality] '{scene.name}' has no SceneFrameRate → tier default {DefaultFps(Current)} fps.");
+            }
         }
 
         private static int LevelIndex(Tier tier) => Array.FindIndex(QualitySettings.names,
@@ -103,8 +123,8 @@ namespace PlayCard.Quality
             }
 
             QualitySettings.SetQualityLevel(idx, true);   // true = apply now → swaps the level's URP asset
-            QualitySettings.vSyncCount = 0;               // so the FPS cap is honoured
-            Application.targetFrameRate = FpsCeiling(tier);
+            // The tier controls VISUAL quality only. It deliberately does NOT touch targetFrameRate/vSync —
+            // fps is owned by SceneFrameRate (per scene) + MobileBootstrap (boot default), independent of tier.
 
             if (persist)
             {
@@ -116,8 +136,7 @@ namespace PlayCard.Quality
             OnTierChanged?.Invoke(tier);
 
             var urp = GraphicsSettings.currentRenderPipeline;
-            Debug.Log($"[GfxQuality] {tier} (level {idx}); pipeline = {(urp != null ? urp.name : "<none>")}, " +
-                      $"fps cap {FpsCeiling(tier)}");
+            Debug.Log($"[GfxQuality] {tier} (level {idx}); pipeline = {(urp != null ? urp.name : "<none>")}");
         }
 
         /// <summary>

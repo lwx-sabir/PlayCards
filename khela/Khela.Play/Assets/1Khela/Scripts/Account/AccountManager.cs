@@ -131,6 +131,10 @@ namespace PlayCard.Account
             }
 
             IsReady = true;
+            // Re-arm the reboot guard. It is a latch, and nothing else clears it — so after ONE abandoned session the
+            // "restart from Boot" recovery silently no-ops for the rest of the process, leaving a dead token with no
+            // way back. We have a live session here, so the previous reboot is done with.
+            _rebooting = false;
             OnReady?.Invoke();
         }
 
@@ -410,6 +414,11 @@ namespace PlayCard.Account
             {
                 var json = JsonSerializer.Serialize(payload, JsonOpts);
                 var req = new HTTPRequest(new Uri(url), HTTPMethods.Post);
+                // MUST have a timeout. This is the transport for the token REFRESH, and every game request awaits
+                // EnsureValidTokenAsync before it sends — so a refresh with no deadline stalls the whole REST channel
+                // (deal, repeat, hand log) while SignalR carries on updating the board. Same budget as
+                // BlackjackRestClient.SendRawAsync so auth can never outlast an ordinary request.
+                req.TimeoutSettings.Timeout = TimeSpan.FromSeconds(Mathf.Max(1, AppConfig.Instance.RequestTimeoutSeconds));
                 req.SetHeader("Content-Type", "application/json; charset=utf-8");
                 if (!string.IsNullOrEmpty(bearerToken))
                     req.SetHeader("Authorization", $"Bearer {bearerToken}");

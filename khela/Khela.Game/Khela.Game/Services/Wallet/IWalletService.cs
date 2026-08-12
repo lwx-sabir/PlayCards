@@ -20,6 +20,14 @@ namespace Khela.Game.Services.Wallet
         Task<decimal> GetBalanceAsync(string userId, CurrencyType currency);
 
         /// <summary>
+        /// Every currency balance for a user in ONE query. The balance HUD is on every screen and the client asks
+        /// for it constantly — reading five currencies as five separate round trips costs five times the latency
+        /// for the same rows, which is felt directly as UI lag when the database is not on the same machine.
+        /// Currencies with no wallet row are simply absent; treat missing as zero.
+        /// </summary>
+        Task<IReadOnlyDictionary<CurrencyType, decimal>> GetBalancesAsync(string userId);
+
+        /// <summary>
         /// Adds funds to a wallet. <paramref name="correlationId"/> makes the call idempotent:
         /// repeating it with the same id returns the original transaction without crediting twice.
         /// </summary>
