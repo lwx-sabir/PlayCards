@@ -49,6 +49,24 @@ namespace PlayCard.Game.Betting
         /// </summary>
         public event Action<long> OnBetRejected;
 
+        /// <summary>
+        /// Raise a commit/reject event without letting a listener break the deal.
+        ///
+        /// These are consumed by PRESENTATION — the chip gather, the balance receipt, sound. The deal is the money
+        /// path. A cosmetic listener throwing (a coroutine started on a disabled object is the classic one) must never
+        /// abort the bet or leave the controls locked, so each is isolated and the failure is logged rather than
+        /// propagated. Listeners are invoked individually so one bad one doesn't rob the rest.
+        /// </summary>
+        private static void Announce(Action<long> evt, long amount)
+        {
+            if (evt == null) return;
+            foreach (var d in evt.GetInvocationList())
+            {
+                try { ((Action<long>)d)(amount); }
+                catch (Exception ex) { Debug.LogError($"[BetBuilder] listener {d.Method.DeclaringType?.Name}.{d.Method.Name} threw: {ex}"); }
+            }
+        }
+
         private void Notify()
         {
             if (totalLabel != null) totalLabel.text = Total.ToString(totalFormat);
@@ -144,18 +162,20 @@ namespace PlayCard.Game.Betting
         {
             _dealing = true;
 
-            // Lock the bet controls on the PRESS. This used to happen inside table.Deal(), one or two round trips
-            // later — so through the whole bet request DEAL and REPEAT stayed lit while `_dealing` silently swallowed
-            // every further tap. On a phone that reads as "the button did nothing", you tap again, and nothing keeps
-            // happening. Greying them immediately IS the missing feedback.
-            if (table != null) table.CommitBetting();
-
             try
             {
+                // INSIDE the try. This sits between `_dealing = true` and the finally that clears it, so if it ever
+                // throws the flag latches and DEAL is dead for the rest of the session — the same wedge BetRepeater
+                // had. Anything after the flag is set belongs under the finally, without exception.
+                //
+                // Locking the bet controls on the PRESS is the point: it used to happen inside table.Deal(), a round
+                // trip later, so DEAL and REPEAT stayed lit while `_dealing` silently swallowed every further tap.
+                if (table != null) table.CommitBetting();
+
                 var amount = Total;
                 _lastPlaced.Clear();
                 _lastPlaced.AddRange(_placed);   // remember the chips so Repeat can re-drop the same bet
-                OnDealCommitted?.Invoke((long)amount);   // let the felt gather the dropped chips BEFORE Clear() wipes them
+                Announce(OnDealCommitted, (long)amount);   // let the felt gather the dropped chips BEFORE Clear() wipes them
                 Clear();
                 // A bet that never landed must NOT fall through to a deal: the server would hold it (this seat hasn't
                 // actively bet), so the chips sit on the felt, no round starts, and the controls stay greyed — the
@@ -166,7 +186,7 @@ namespace PlayCard.Game.Betting
                     // Roll back everything the optimistic commit above already showed — the gathered chips, the amount
                     // badge and the balance receipt. Waiting for the next board push is not enough: the seat is skipped
                     // while its gather animation is still running, so the phantom stake can outlive several snapshots.
-                    OnBetRejected?.Invoke((long)amount);
+                    Announce(OnBetRejected, (long)amount);
                     table.ReleaseBetting();
                     return;
                 }

@@ -1,4 +1,4 @@
-fileFormatVersion: 2
+﻿fileFormatVersion: 2
 guid: 95e720e2d30c6a84ebc65e102675513a
 AssetOrigin:
   serializedVersion: 1
@@ -18,7 +18,7 @@ AudioImporter:
     compressionFormat: 1
     quality: 1
     conversionMode: 0
-    preloadAudioData: 0
+    preloadAudioData: 1
   platformSettingOverrides:
     Android:
       serializedVersion: 2
@@ -28,7 +28,7 @@ AudioImporter:
       compressionFormat: 2
       quality: 1
       conversionMode: 0
-      preloadAudioData: 0
+      preloadAudioData: 1
   forceToMono: 1
   normalize: 1
   loadInBackground: 0

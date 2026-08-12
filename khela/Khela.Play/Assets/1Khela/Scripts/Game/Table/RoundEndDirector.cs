@@ -94,6 +94,8 @@ namespace PlayCard.Game.Table
         private Coroutine _seq, _watchdog, _flip;
         private float _watchdogDeadline;   // per-BEAT deadline (kicked each beat), so a slow-but-progressing sequence isn't force-finished
         private bool _flipDone, _payShown, _finaleDone;
+        private bool _winFlyShown;      // the local win burst has fired this round
+        private bool _winFlyByLanding;  // a pay-landing owns the burst — RevealPayout's fallback must stand down
         private BoardSnapshot _pendingSettle;   // a settle that landed while we were mid-sequence — run it after
         private readonly List<GameObject> _ownedChips = new List<GameObject>();   // director-owned flying chips
 
@@ -201,7 +203,9 @@ namespace PlayCard.Game.Table
         {
             _running = true;
             _board = board;
-            _flipDone = _payShown = _finaleDone = false;
+            _flipDone = _payShown = _finaleDone = _winFlyShown = _winFlyByLanding = false;
+            _payPending.Clear();     // recounted at the PAY beat; cleared here so a force-finished round can't leak one
+            _pushClearsPending = 0;  // ditto — a leaked count would hang the next round's sweep
 
             // FREEZE (synchronous, no yield before these):
             if (view != null)
@@ -285,6 +289,16 @@ namespace PlayCard.Game.Table
             // the badge it is supposed to accompany.
             ShowWinFx();
 
+            // A PUSH is settled by this badge and nothing else: no chips are collected and none are paid, so without
+            // its own clear the returned wager just sits there until the sweep. Give the player time to read the
+            // badge, then peel the chips back one by one. Fired here (not awaited) so it overlaps collect and pay —
+            // pushes are independent of both.
+            foreach (int pushSeat in PushedSeats())
+            {
+                _pushClearsPending++;
+                StartCoroutine(ReturnPushAfter(pushSeat, pushReturnDelaySeconds));
+            }
+
             Kick();
             if (holdSeconds > 0f) yield return new WaitForSecondsRealtime(holdSeconds);
 
@@ -293,6 +307,10 @@ namespace PlayCard.Game.Table
             // Same one-at-a-time, event-coupled model as the deal throws.
             foreach (var h in LoserHands())
             {
+                // A BUST was already taken mid-round by BustHandCleaner — chips gone, cards swept. Replaying the
+                // scoop here would be a gesture over an empty spot.
+                if (view != null && view.IsHandCleared(h.Seat, h.HandIndex)) continue;
+
                 Kick();
                 var hand = h;   // capture per iteration — the closure must not see the loop's last value
                 if (dealer != null) yield return dealer.CollectFromSeat(hand.Seat, () => CollectHand(hand));
@@ -303,7 +321,19 @@ namespace PlayCard.Game.Table
 
             // 5) PAY — ONE winning HAND at a time: the dealer plays that seat's pay gesture and its event flies the
             // winnings out to that HAND's chip spot (a split's two hands are paid separately, like two single hands).
-            foreach (var h in WinnerHands())
+            // Count each seat's winning hands up front. A split pays two, one after another, and a seat may only be
+            // cleared once the LAST of its hands has landed — clearing after the first strands the second hand's
+            // wager and payout on the felt. Per seat, not just mine, so every paid player's chips leave on their own
+            // landing instead of waiting for the sweep. Materialised because it is walked twice.
+            var winners = new List<HandRef>(WinnerHands());
+            _payPending.Clear();
+            for (int i = 0; i < winners.Count; i++)
+            {
+                int s = winners[i].Seat;
+                _payPending[s] = _payPending.TryGetValue(s, out var n) ? n + 1 : 1;
+            }
+
+            foreach (var h in winners)
             {
                 Kick();
                 var hand = h;
@@ -316,6 +346,13 @@ namespace PlayCard.Game.Table
             // The winnings have landed → NOW reveal the credited balances (seat plates + win juice). Held until
             // here so nothing shows the payout before the dealer paid — the whole point of the sequence.
             RevealPayout();
+
+            // A PUSH is settled by its badge alone — no chips are collected and none are paid — so with a lone pushing
+            // player COLLECT and PAY are both empty and the sequence would race from the badge straight to the sweep,
+            // closing the round while the returned wager was still sitting on the felt waiting out its read time.
+            // Hold until every pushed seat's chips are ON THEIR WAY OUT. Kick() each frame so a legitimate wait can
+            // never look like a stall to the watchdog.
+            while (_pushClearsPending > 0) { Kick(); yield return null; }
 
             // 6) SWEEP
             Kick();
@@ -442,6 +479,45 @@ namespace PlayCard.Game.Table
         private IEnumerable<HandRef> LoserHands() => SettledHands(winners: false);
         private IEnumerable<HandRef> WinnerHands() => SettledHands(winners: true);
 
+        /// <summary>
+        /// Seats whose wager is still on the felt because they PUSHED — delta exactly zero, so neither the collect nor
+        /// the pay beat touches them. Without their own clear they sit untouched until the sweep, which is why a push
+        /// used to look like the table had forgotten them.
+        /// </summary>
+        private IEnumerable<int> PushedSeats()
+        {
+            if (_board?.LastResults == null) yield break;
+            foreach (var r in _board.LastResults)
+            {
+                if (r == null) continue;
+                bool pushed;
+                var hands = r.Hands;
+                if (hands != null && hands.Count > 0)
+                {
+                    pushed = false;
+                    foreach (var h in hands) if (h != null && (long)h.Delta == 0) { pushed = true; break; }
+                }
+                else pushed = (long)r.Delta == 0;
+
+                if (pushed) yield return r.SeatNumber;
+            }
+        }
+
+        // Hand a pushed seat its bet back, once the player has had time to read the PUSH badge.
+        private IEnumerator ReturnPushAfter(int seat, float delay)
+        {
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            if (betStacks != null) betStacks.PlayPeelAway(seat);
+
+            // Released as the peel STARTS, not when it ends: the round may end once the chips are visibly on their way
+            // out, so the cards sweep alongside them rather than after. Holding for the full peel would stall the
+            // table for no gain.
+            _pushClearsPending--;
+        }
+
+        // Pushed seats whose wager has not yet begun returning. The sweep waits on this — see the SWEEP beat.
+        private int _pushClearsPending;
+
         // The dealer-hand hub chips gather TO / pay FROM. Preference: an explicit anchor → her chips-in-hand prop point
         // (so real chips leave/enter exactly where the prop showed them) → the view's deal source (her hand) as a last
         // resort. So collect/pay fly from HER HAND with zero extra wiring.
@@ -475,35 +551,120 @@ namespace PlayCard.Game.Table
             // Build the winnings UNDER the seat anchor (the same unit-scale parent the VISIBLE bet chips use) but START
             // them at the dealer's hand, then fly them to this HAND's spot. Parenting straight to the hub inherited its
             // scale — and when the hub is a card model (tiny scale) the chips were built invisibly small.
-            Vector3 worldTarget = betStacks.HandChipPoint(h.Seat, h.HandIndex, h.HandCount);
+            // BESIDE the wager, not on top of it — HandPayoutPoint, not HandChipPoint. A dealer pays alongside your
+            // bet so you can see what you won; landing the winnings on the bet stack hides the amount.
+            // Built at the size THIS hand is drawn at. A tucked (finished split) hand's chips are shrunk, so a payout
+            // built at full felt size landed beside it visibly larger — two different sets of chips at one spot.
             Vector3 startLocal = target.InverseTransformPoint(hub.position);
-            var chips = betStacks.BuildLooseStack(target, startLocal, amount);
-            for (int i = 0; i < chips.Count; i++)
-                FlyChip(chips[i], worldTarget, chipFlightSeconds);
+            var chips = betStacks.BuildLooseStack(
+                target, startLocal, amount,
+                betStacks.ChipScaleFor(h.Seat, h.HandIndex, h.HandCount),
+                betStacks.StackStepFor(h.Seat, h.HandIndex, h.HandCount));
 
-            // The chips ARRIVING is a separate beat from her pushing them — the push is heard at the release frame,
-            // this is the winnings hitting the felt in front of the player. Every chip in a hand flies for the same
-            // duration, so they land together: ONE sound per hand, not one per chip.
-            if (tableAudio != null && chips.Count > 0)
-                StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget));
+            // EACH chip gets its OWN slot in the destination stack. Flying them all to one point landed them exactly
+            // on top of each other: the payout read as a single chip no matter how much was won, and the coincident
+            // faces z-fought so the printed value looked broken — right up until the peel separated them again.
+            for (int i = 0; i < chips.Count; i++)
+                FlyChip(chips[i], betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount, i),
+                        chipFlightSeconds, keepOnArrival: true);
+
+            Vector3 worldTarget = betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount);
+
+            // Hand the landed winnings to BetStacks so they PERSIST as a second stack and later shrink away together
+            // with the wager. They used to be destroyed 0.05s after landing, so the payout flashed and vanished.
+            betStacks.HoldPayoutChips(h.Seat, chips);
+
+            // EVERY paid seat gets a landing beat — that is what clears its chips. What differs is only the trimmings:
+            // the sound and the win burst are local-seat-only (see PayLandAfter).
+            if (chips.Count > 0)
+            {
+                // Claim the burst for the landing path. RevealPayout runs on the main sequence as soon as the pay loop
+                // drains, which is EARLIER than the landing beat (that still owes a read hold) — so its fallback fired
+                // the burst first every time and the stacks only started peeling afterwards.
+                if (IsMySeat(h.Seat)) _winFlyByLanding = true;
+                StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget, h.Seat));
+            }
         }
 
-        private IEnumerator PayLandAfter(float delay, Vector3 worldTarget)
+        private bool IsMySeat(int seat) => table != null && table.MySeat > 0 && seat == table.MySeat;
+
+        /// <summary>
+        /// The beat YOUR paid chips touch down: the landing sound, and the win burst that carries them on to the
+        /// balance. Only ever scheduled for the local seat (see the call site).
+        ///
+        /// The burst used to live in <see cref="RevealPayout"/>, which runs only after the WHOLE pay loop has drained.
+        /// With one winner that reads as synced; with three it fires seconds after your own chips landed, while the
+        /// dealer is still paying somebody else. It belongs on your chips arriving, which is what it depicts.
+        /// </summary>
+        private IEnumerator PayLandAfter(float delay, Vector3 worldTarget, int seat)
         {
             if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
-            if (tableAudio != null) tableAudio.PlayChipsPayLand(worldTarget);
+
+            bool mine = IsMySeat(seat);
+            // Local seat only: a payout landing across the table is somebody else's news, and the pay loop is already
+            // the busiest moment of the round.
+            if (mine && tableAudio != null) tableAudio.PlayChipsPayLand(worldTarget);
+
+            // Every one of THIS SEAT's hands must be paid and landed before its chips are cleared. On a split the
+            // second hand is still in the dealer's hands when the first lands, so acting here would leave that hand's
+            // wager and winnings on the felt with nothing left to remove them until the sweep.
+            int left = _payPending.TryGetValue(seat, out var n) ? n - 1 : 0;
+            _payPending[seat] = left;
+            if (left > 0) yield break;
+
+            // Let the payout be READ where it landed, beside the wager.
+            if (payoutReadSeconds > 0f) yield return new WaitForSecondsRealtime(payoutReadSeconds);
+
+            // Clear the seat in ONE gesture: every hand's wager AND every hand's winnings shrink together, on that
+            // seat's own landing rather than at the sweep. The director owns this rather than WinChipFly, so it also
+            // happens when the seat's NET is not a win — a split that wins one hand and loses the other nets a push,
+            // and the old burst-driven path skipped it entirely, leaving chips on the felt.
+            if (betStacks != null) betStacks.PlayPeelAway(seat);
+            if (!mine) yield break;   // remote seats want the clear and nothing else
+
+            // The burst fires WITH the peel, not after it. Waiting out the full peel first (~0.6s with a few chips)
+            // read as two disconnected events — the stack vanished, then unrelated chips flew to the balance. Firing
+            // together, the chips lifting off the felt and the chips arriving at the balance are one motion.
+
+            // The burst is a WIN celebration and stays gated on one — WinChipFly checks the seat's outcome itself.
+            if (!_winFlyShown && winChipFly != null)
+            {
+                _winFlyShown = true;
+                winChipFly.PlayForLocalWin(_board);
+            }
         }
+
+        [Tooltip("Pause after YOUR winnings land, before the felt is cleared — the beat where you read what you won " +
+                 "beside your wager. On a split this starts after the LAST of your hands has been paid.")]
+        [SerializeField] private float payoutReadSeconds = 0.6f;
+
+        [Tooltip("Pause after the result badges appear before a PUSHED seat's wager is peeled back, chip by chip. " +
+                 "Measured from the badge REVEAL, so allow for its unroll (~0.5s on HandBlackjackLabels) — 2.5 here " +
+                 "is about two seconds of the badge fully readable.")]
+        [SerializeField] private float pushReturnDelaySeconds = 2.5f;
+
+        // Winning hands still to land, PER SEAT. A seat's chips clear when its own count reaches zero.
+        private readonly Dictionary<int, int> _payPending = new Dictionary<int, int>();
 
         // Fly one chip to a world target via CardMover (local-space ease), then destroy it. Tracked so a mid-flight
         // teardown (ForceFinish) can reclaim it.
-        private void FlyChip(GameObject chip, Vector3 worldTarget, float seconds)
+        /// <summary>
+        /// Fly one chip to a world target via CardMover. Tracked so a mid-flight teardown (ForceFinish) can reclaim it.
+        ///
+        /// <paramref name="keepOnArrival"/> = the chip SURVIVES the landing and someone else owns it from there — that
+        /// is the payout, which has to stay on the felt beside the wager until both shrink away together. Collected
+        /// (losing) chips keep the old behaviour and are destroyed once they reach the dealer.
+        /// </summary>
+        private void FlyChip(GameObject chip, Vector3 worldTarget, float seconds, bool keepOnArrival = false)
         {
             if (chip == null) return;
-            _ownedChips.Add(chip);
             var tr = chip.transform;
             var mover = chip.GetComponent<CardMover>() ?? chip.AddComponent<CardMover>();
             Vector3 local = tr.parent != null ? tr.parent.InverseTransformPoint(worldTarget) : worldTarget;
             mover.Target(local, tr.localRotation, tr.localScale, seconds);
+
+            if (keepOnArrival) return;   // ownership passes to BetStacks; it destroys them at float-away or sweep
+            _ownedChips.Add(chip);
             StartCoroutine(DestroyAfter(chip, seconds + 0.05f));
         }
 
@@ -539,7 +700,15 @@ namespace PlayCard.Game.Table
             if (seatPlates != null)
                 foreach (var sp in seatPlates) if (sp != null) sp.RevealNow(_board);
             if (handLabels != null) handLabels.RevealNow(_board);   // idempotent safety net; primary reveal is the HOLD beat
-            if (winChipFly != null) winChipFly.PlayForLocalWin(_board);
+            // FALLBACK only, and it must NOT pre-empt the landing path — that path still owes a read hold, so firing
+            // here would always beat it and the stacks would peel after the burst instead of into it. Skipped
+            // entirely once a landing has claimed the burst; still covers the paths that produce no landing at all:
+            // an unauthored seat chip anchor, a force-finish, or a payout with no chips built.
+            if (winChipFly != null && !_winFlyShown && !_winFlyByLanding)
+            {
+                _winFlyShown = true;
+                winChipFly.PlayForLocalWin(_board);
+            }
             // Flush the chip count LAST: on a win WinChipFly is about to feed it chip by chip (that walk gets there on
             // its own), and on a push/loss — or with no WinChipFly wired — this is what stops the number lagging.
             if (countJuice != null) countJuice.RevealNow();

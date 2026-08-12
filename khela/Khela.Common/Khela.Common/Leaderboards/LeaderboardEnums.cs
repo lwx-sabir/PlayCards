@@ -12,7 +12,8 @@ namespace Khela.Common.Leaderboards
         Poker     = 2,  // collapses Holdem/Omaha into one ranking bucket
         TeenPatti = 3,
         Roulette  = 4,
-        ThreeCardPoker = 5  // house-banked 3-card vs-dealer (Ante/Play + Pair Plus/6-Card/Prime)
+        ThreeCardPoker = 5,  // house-banked 3-card vs-dealer (Ante/Play + Pair Plus/6-Card/Prime)
+        VideoPoker = 6  // single-player draw poker vs a fixed paytable (Jacks-or-Better / Deuces Wild)
     }
 
     /// <summary>What a board ranks by. Not every metric is valid for every game (gated by config).</summary>

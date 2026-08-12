@@ -25,7 +25,7 @@ MonoBehaviour:
       priority: 0.5
       distanceEnabled: 1
       distanceScale: 100
-      preventEndClicks: 1
+      preventEndClicks: 0
       loopEnabled: 0
       followPosition: 0
       stopIfTransformIsNull: 0
@@ -205,7 +205,7 @@ MonoBehaviour:
       spatialBlendExpand: 0
       spatialBlend: 1
       spatialBlendDistanceRolloff: -4
-      spatialBlendDistance3DIncrease: 0.5
+      spatialBlendDistance3DIncrease: 1
       spatialBlendDistanceCurve:
         serializedVersion: 2
         m_Curve:
@@ -258,8 +258,8 @@ MonoBehaviour:
         m_PostInfinity: 2
         m_RotationOrder: 4
       spatialSpreadExpand: 0
-      spatialSpreadDegrees: 180
-      spatialSpreadRatio: 0.5
+      spatialSpreadDegrees: 0
+      spatialSpreadRatio: 0
       spatialSpreadDistanceRolloff: -4
       spatialSpreadDistanceCurve:
         serializedVersion: 2
@@ -656,6 +656,10 @@ MonoBehaviour:
     - {fileID: 8300000, guid: 070a67a17383a894589c881870917894, type: 3}
     - {fileID: 8300000, guid: 4145e7154b597044d94e087182f09ff2, type: 3}
     - {fileID: 8300000, guid: 2cc6c2e8ecb7c8b4c8f2041d39f8ce41, type: 3}
+    - {fileID: 8300000, guid: c32546bd616e21f42b955dae68bb66e6, type: 3}
+    - {fileID: 8300000, guid: 8be4374e54fa3e348b27ace8e9e90966, type: 3}
+    - {fileID: 8300000, guid: 8dc07517a88e3e448b2746fbc696bcfa, type: 3}
+    - {fileID: 8300000, guid: 79f5bebcdb0d1c44789073ee2632a638, type: 3}
     notes: Notes
   assetGuid: 852694032e9a31043b0378f9b58c2921
   assetGuidHash: 2652302569791081049

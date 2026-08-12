@@ -112,6 +112,14 @@ namespace Khela.Game.Database.Models
         public Khela.Common.Leaderboards.GameType? LastPlayedGameType { get; set; }
         public DateTime? LastPlayedAt { get; set; }
 
+        /// <summary>
+        /// The player's IANA timezone ("Asia/Dhaka"), reported by the client at login and validated server-side.
+        /// Null ⇒ UTC. Daily systems (the pass) roll over at the player's LOCAL midnight rather than UTC's, so a
+        /// player's day doesn't end at breakfast. See Services/Pass/PassClock.cs.
+        /// </summary>
+        [MaxLength(64)]
+        public string TimeZoneId { get; set; }
+
         // ---- Timestamps ----
         [Required] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         [Required] public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

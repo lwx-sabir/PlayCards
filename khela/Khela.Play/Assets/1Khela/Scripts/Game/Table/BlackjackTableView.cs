@@ -225,6 +225,35 @@ namespace PlayCard.Game.Table
         // (seat, hand) identity for the tuck set — the dealer is seat 0 and never splits, so it never appears here.
         private static int HandKey(int seat, int handIndex) => seat * 100 + handIndex;
 
+        /// <summary>
+        /// Take a hand's cards off the felt NOW, mid-round — a busted hand the dealer has already collected. They are
+        /// dropped from the desired set and swept to the discard by the normal stale path, and stay gone for the rest
+        /// of the round even though the server keeps listing them.
+        ///
+        /// Cleared automatically when the next round starts, so nothing has to remember to undo it.
+        /// </summary>
+        public void ClearHand(int seat, int handIndex)
+        {
+            if (!_clearedHands.Add(HandKey(seat, handIndex))) return;   // already gone
+            if (_lastBoard != null) Render(_lastBoard);                 // re-render → its cards go stale → they sweep
+        }
+
+        /// <summary>True once <see cref="ClearHand"/> has taken this hand off the felt this round.</summary>
+        public bool IsHandCleared(int seat, int handIndex) => _clearedHands.Contains(HandKey(seat, handIndex));
+
+        /// <summary>
+        /// This hand is about to be taken off the felt (a bust the dealer is collecting), so it must NOT tuck.
+        ///
+        /// The tuck exists to free room for a hand that is still being played; a hand that is leaving in a moment
+        /// doesn't need room, and shrinking it first meant a busted split hand played two contradictory gestures —
+        /// tuck away, then get collected and swept. Un-tucks it again if it already had.
+        /// </summary>
+        public void MarkHandClearing(int seat, int handIndex) => _clearingHands.Add(HandKey(seat, handIndex));
+
+        // Hands removed mid-round, and hands about to be. Keyed like the tuck set; emptied when a new round begins.
+        private readonly HashSet<int> _clearedHands = new HashSet<int>();
+        private readonly HashSet<int> _clearingHands = new HashSet<int>();
+
         /// <summary>Is this hand drawn TUCKED (finished, compacted)? Honours the editor preview override.</summary>
         private bool IsTucked(int seat, int handIndex)
         {
@@ -286,10 +315,14 @@ namespace PlayCard.Game.Table
                     var hand = hands[h];
                     if (hand == null || !hand.Done) continue;
 
+                    int key0 = HandKey(seat.SeatNumber, h);
+                    // Leaving the felt shortly — don't tuck it on the way out (see MarkHandClearing).
+                    if (_clearingHands.Contains(key0) || _clearedHands.Contains(key0)) continue;
+
                     int n = hand.Cards != null ? hand.Cards.Count : 0;
                     if (n == 0 || !CardSettled(seat.SeatNumber, h, n - 1)) continue;   // final card still in the air
 
-                    int key = HandKey(seat.SeatNumber, h);
+                    int key = key0;
                     if (!_tuckReadyAt.TryGetValue(key, out float readyAt))
                     {
                         readyAt = Time.unscaledTime + Mathf.Max(0f, tuckDelaySeconds);
@@ -476,6 +509,21 @@ namespace PlayCard.Game.Table
         /// </summary>
         public bool DecisionReady(int seat) => !_peekHeld && SeatSettled(seat) && SeatSettled(0);
 
+        /// <summary>
+        /// The gate for the DECISION PRESENTATION — the close camera framing and the action buttons. It is
+        /// <see cref="DecisionReady"/> plus "no card anywhere on the felt is still moving".
+        ///
+        /// <see cref="DecisionReady"/> deliberately ignores other seats so a remote player's think time can never eat
+        /// your turn clock. That is right for the CLOCK, but wrong for the PICTURE: your turn can begin while the
+        /// dealer is still throwing the previous player's hit, and the camera would rush in over a card in flight.
+        ///
+        /// Everything that presents the decision must use THIS, and nothing may use one of the two gates while its
+        /// neighbour uses the other — that is what made the camera arrive before the buttons lit. Bounded, not open
+        /// ended: parked cards are released by the deal pump's own timeout and movers are finite, so this always
+        /// clears on its own.
+        /// </summary>
+        public bool ActionReady(int seat) => DecisionReady(seat) && !AnyCardAnimating();
+
         /// <summary>True while the dealer's PEEK is playing — see <see cref="DecisionReady"/>.</summary>
         public bool PeekHeld => _peekHeld;
 
@@ -526,8 +574,14 @@ namespace PlayCard.Game.Table
             if (board == null || cardPrefab == null || _pool == null) return;
             if (_roundEndHeld) return;   // the round-end director owns the felt — ignore board pushes until it releases the hold
 
-            // A NEW round wipes the per-hand tuck timers, so last round's hands can't tuck instantly this round.
-            if (board.RoundInProgress && !_prevRenderInRound) _tuckReadyAt.Clear();
+            // A NEW round wipes the per-hand tuck timers, so last round's hands can't tuck instantly this round — and
+            // the mid-round clears, or a seat that busted last round would never show cards again.
+            if (board.RoundInProgress && !_prevRenderInRound)
+            {
+                _tuckReadyAt.Clear();
+                _clearedHands.Clear();
+                _clearingHands.Clear();
+            }
             _prevRenderInRound = board.RoundInProgress;
             _lastBoard = board;          // so the per-frame tuck re-check has a board to lay out from
 
@@ -559,7 +613,14 @@ namespace PlayCard.Game.Table
                         // and read as the dealer serving against the table's right→left direction. Where each card
                         // LANDS comes from its hand index, not from this order, so only the sequence changes.
                         for (int h = hands.Count - 1; h >= 0; h--)
+                        {
+                            // A hand CLEARED mid-round (a bust the dealer has already taken) is deliberately not
+                            // desired any more, so the stale-sweep below flies its cards to the discard. The SERVER
+                            // still lists them — it keeps every hand on the board until the round settles — so without
+                            // this the very next push would deal them straight back onto the felt.
+                            if (_clearedHands.Contains(HandKey(seat.SeatNumber, h))) continue;
                             LayOutHand(hands[h].Cards, anchor, seat.SeatNumber, h, hands.Count);
+                        }
                     }
                 }
             }
@@ -593,7 +654,16 @@ namespace PlayCard.Game.Table
             // without this the felt would clear the instant the server resolves.
             if (!_collectPending) { _collectReadyAt = -1f; return; }
             if (AnyCardAnimating()) { _collectReadyAt = -1f; return; }
-            if (_collectReadyAt < 0f) { _collectReadyAt = Time.unscaledTime + Mathf.Max(0f, roundEndHold); return; }
+            // roundEndHold exists so a bust/final card is readable before the felt clears at the END of a round. A
+            // MID-round clear (a busted hand the dealer has already taken) has had its own read beat already, and
+            // holding here would keep RoundEndSettling true — freezing the NEXT player's buttons and camera for no
+            // reason while they are trying to act.
+            bool midRound = _lastBoard != null && _lastBoard.RoundInProgress;
+            if (_collectReadyAt < 0f)
+            {
+                _collectReadyAt = Time.unscaledTime + (midRound ? 0f : Mathf.Max(0f, roundEndHold));
+                return;
+            }
             if (Time.unscaledTime < _collectReadyAt) return;
 
             _collectPending = false; _collectReadyAt = -1f;

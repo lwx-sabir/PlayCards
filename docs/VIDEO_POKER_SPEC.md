@@ -67,6 +67,16 @@ from the 3-card evaluator used by Teen Patti/3CP. Ace high or low for straights 
   **natural royal**. Wild variants add **five-of-a-kind** and **wild-royal** categories. Wilds
   change the **evaluator + paytable only**, never the loop.
 
+**Reuse note (implementation):** Khela already has a tested natural 5-card evaluator —
+`FiveCardEvaluator` (built for 3CP's 6-Card bonus): full ranking, **flush > straight**, royal
+detected. Video poker **COPIES it into its own folder** (plug-and-play — no cross-game reference)
+and extends it: (a) split **Royal Flush** into its own paytable category (the existing evaluator
+flags royal *on* straight-flush — 3CP never needed them separated), and (b) add **wild-card support
++ Wild Royal + Five-of-a-Kind** for the wild variants. **Wild evaluation is the single hardest piece
+of the whole game** — a wild must be scored as the MAX-value hand over all its substitutions (the
+naïve "treat the wild as the best single card" is wrong). Unit-test it against a computed wild-hand
+frequency table, not spot cases.
+
 ---
 
 ## 3. The royal-flush max-bet bonus (special-case this)
@@ -116,7 +126,9 @@ casinos shave to set RTP. **Never infer RTP from a game name** — the same name
 ## 5. Strategy & variance (two independent knobs)
 
 - **Optimal strategy is fully computable** (enumerate all deals × 32 holds × draw-EV → max-EV hold;
-  this also yields the exact RTP). It's **per-paytable** but deviations within a family are tiny.
+  this also yields the exact RTP — though the naïve enumeration is billions of draw-combinations, so
+  it's minutes–hours without combinatoric caching, *not* "seconds"). It's **per-paytable** but
+  deviations within a family are tiny.
   Surface it only as an optional player hint/trainer; the protocol is just the hold mask.
 - **Variance differs sharply by variant** (single-hand standard deviation): **Jacks or Better ≈
   4.42** (smooth, frequent small wins — gentle for new players/retention) vs **Double Double Bonus
@@ -131,8 +143,9 @@ casinos shave to set RTP. **Never infer RTP from a game name** — the same name
 ## 6. Win-rate dial for a non-cashable build
 Because chips never cash out, the real-casino constraint (RTP < 100%) **doesn't apply** — the
 paytable is a **pure, exactly-computable win-rate dial**. Any candidate paytable's RTP is the
-deterministic sum over all 2,598,960 deals of the max-EV hold (computable in seconds), so live-ops
-can **solve for the cells that hit a target burn rate** rather than guess. You can even ship
+deterministic sum over all 2,598,960 deals of the max-EV hold — a heavier offline calc than
+"seconds" for exact optimal play, but a **Monte-Carlo estimate is instant** and precise enough for a
+non-cashable build — so live-ops can **solve for the cells that hit a target burn rate** rather than guess. You can even ship
 **player-positive** tables verbatim for events (full-pay Deuces 100.76%, 10/7 Double Bonus 100.17%,
 best Joker Kings 100.65%) to *inject* chips during a promo, then dial back to a sub-100% default to
 drain them. All server-side config (rule #1) — never client-trusted.
@@ -180,29 +193,45 @@ leaderboards/profiles/missions/gifts/chat/presence; device-guest auth; server-au
 rendering. **No multiplayer table, no SignalR table broadcast for gameplay** — a REST round-trip per
 deal/draw suffices (push only for the *social* surfaces like a live tournament leaderboard).
 
+**Plug-and-play (its own layer):** video poker lives in its **own self-contained folder**
+(`CradGames/VideoPoker/` engine, `Khela.Game/Games/VideoPoker/` server module), with **no reference
+to any other game** — copy shared game logic (e.g. the 5-card evaluator) in, don't reference another
+game's copy. The **engine is pure** (deal/hold/draw/evaluate/paytable): zero wallet, zero server
+deps, unit-testable in isolation. The **wallet is a separate layer** the server module wires in — the
+only shared source of truth for money; the engine never touches it.
+
 **Genuinely new (small, self-contained):**
 1. A **hold/draw turn type** (deal → single hold message → draw) — simpler than blackjack's loop.
-2. A **5-card evaluator** with wild-card support (Deuces = 2s wild; Joker = 53-card deck).
+2. A **5-card evaluator** — **copy `FiveCardEvaluator` in and extend it**: a distinct Royal Flush
+   category + **wild-card support** (Deuces = 2s wild; Joker = 53-card deck) + Wild Royal +
+   Five-of-a-Kind. The wild logic is the real work (§2).
 3. **Per-paytable config** (JoB / Bonus / Double Bonus / DDB / Deuces / Joker), each a hand-rank →
    multiplier table + the non-linear royal row + kicker rules for bonus families.
 4. **Optional multi-hand fan-out** (§7).
-5. **(Optional, social) tournament container** (scoped free-credit wallet + timer + score → existing
+5. **Optional "double-up" gamble** — after a win, double-or-nothing on a high-card draw. A common VP
+   lever, **win-rate-neutral**, cheap; a natural variance/retention knob for a chip economy.
+6. **(Optional, social) tournament container** (scoped free-credit wallet + timer + score → existing
    leaderboard) and **community jackpot meter** (per-bet contribution → shared pool, max-bet royal).
 
-**Wallet:** debit `coins × bet-per-hand × N` on deal; credit summed paytable wins on settle,
-idempotent on `(roundId, handIndex)`. **Max-bet (5-coin) gating** for the royal bonus enforced
-server-side. Two-bucket wallet honored (no laundering); dual-currency guard — only Chips/Coins
-wagered, token never bettable/winnable; **zero new exposure** since there's no pot or peer transfer.
+**Wallet (the separate money layer — the engine never touches it):** the server module debits
+`coins × bet-per-hand × N` on deal; credits summed paytable wins on settle, idempotent on
+`(roundId, handIndex)`. **Max-bet (5-coin) gating** for the royal bonus enforced server-side.
+Two-bucket wallet honored (no laundering); dual-currency guard — only Chips/Coins wagered, token
+never bettable/winnable; **zero new exposure** since there's no pot or peer transfer.
+- **Two `GameType` enums:** add a `VideoPoker` value to **both** the hand-ledger `GameType` and
+  `Khela.Common.Leaderboards.GameType` — **map between them, never cast** (they diverge; this bit 3CP).
 
 ---
 
 ## 10. Build order
-1. **Single-hand Jacks or Better** — reuses everything; adds only the 5-card evaluator + one paytable
-   + the hold/draw turn. Ship this first.
+1. **Single-hand Jacks or Better** — the 5-card evaluator is mostly done (copy + extend
+   `FiveCardEvaluator`: a distinct Royal Flush row); add the JoB paytable + the hold/draw turn.
+   **Pure engine first (no wallet)**, then the server module. Ship this first.
 2. **More paytables** (Bonus / Double Bonus / DDB / Deuces / Joker) — config + evaluator wild support.
 3. **Multi-hand fan-out** (Triple/Ten/Hundred Play) — the bet-size + engagement lever.
 4. **Tournaments** — the social surface, reusing leaderboards.
 5. **Community progressive jackpot** — shared-goal hook.
+6. **(Optional) Double-up gamble** — variance/retention lever, win-rate-neutral (§9.5).
 
 Each step is additive and never touches the wallet's non-negotiable invariants.
 

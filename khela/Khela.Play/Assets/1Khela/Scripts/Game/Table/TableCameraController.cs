@@ -87,7 +87,10 @@ namespace PlayCard.Game.Table
         {
             var board = _board;
             int seat = table.MySeat;                 // 1-based, or -1 if not seated
-            bool dealt = view == null || view.DecisionReady(seat);   // MY cards + the DEALER's landed (= deal finished)
+            // ActionReady, not DecisionReady: the same gate the action buttons use, so the framing and the controls
+            // arrive on the SAME frame. DecisionReady alone ignores other seats, so the camera used to rush in while
+            // the dealer was still throwing the previous player's hit — in front of buttons that were correctly dark.
+            bool dealt = view == null || view.ActionReady(seat);
             // Close in (bet pose + bet fov) while BETTING, and on my TURN — but only ONCE the relevant cards have landed:
             // the deal is watched from the wide table pose; we zoom for the decision after MY cards settle; and on round
             // END we stay wide until the final/bust card lands + the felt clears, instead of snapping to bet mid-bust.

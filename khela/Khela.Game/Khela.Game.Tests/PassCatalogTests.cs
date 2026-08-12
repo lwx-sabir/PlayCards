@@ -9,14 +9,17 @@ using Xunit;
 namespace Khela.Game.Tests
 {
     /// <summary>
-    /// Locks the monthly pass catalog (docs/PASS_SPEC.md §3/§5.1) — the legal guardrail that no reward may ever be the
-    /// tradeable token (CLAUDE.md NON-NEGOTIABLE #2/#4), the cycle math the whole ladder hangs off (node index = day of
-    /// the month, trimmed to the month's real length), and the catch-up policy that decides what a subscription
-    /// actually BUYS. Pure — no DB, no Redis.
+    /// Locks the monthly pass catalog (docs/PASS_SPEC.md §3/§5) — the legal guardrail that no reward may ever be the
+    /// tradeable token (CLAUDE.md NON-NEGOTIABLE #2/#4), the cycle math the ladder hangs off (node index = day of the
+    /// PLAYER's local month, trimmed to that month's real length), and the catch-up rules that decide what a missed
+    /// day costs: free for subscribers, a couple of rewarded ads for everyone else. Pure — no DB, no Redis.
     /// </summary>
     public class PassCatalogTests
     {
-        private static DateTime Utc(int y, int m, int d) => new DateTime(y, m, d, 12, 0, 0, DateTimeKind.Utc);
+        private static readonly TimeZoneInfo Utc0 = TimeZoneInfo.Utc;
+
+        private static DateTime Utc(int y, int m, int d, int h = 12) => new DateTime(y, m, d, h, 0, 0, DateTimeKind.Utc);
+        private static DateTime Local(int y, int m, int d) => new DateTime(y, m, d, 0, 0, 0, DateTimeKind.Unspecified);
 
         private static PassNode Node(int index, RewardGrant[] free = null, RewardGrant[] golden = null, bool milestone = false)
             => new PassNode
@@ -32,7 +35,9 @@ namespace Khela.Game.Tests
             Key = "monthly",
             Title = "Monthly Pass",
             Cadence = PassCadence.Monthly,
-            CatchUp = CatchUpPolicy.GoldenOnly,
+            CatchUp = CatchUpPolicy.GoldenOrAds,
+            AdsPerCatchUp = 2,
+            MaxAdCatchUpsPerCycle = 5,
             GoldenProductIdApple = "khela.pass.golden.monthly",
             GoldenPriceUsd = 4.99m,
             Nodes = nodes.ToList(),
@@ -42,6 +47,9 @@ namespace Khela.Game.Tests
 
         private static PassProgram Ladder(int length)
             => Program(Enumerable.Range(1, length).Select(i => Node(i)).ToArray());
+
+        private static PassCycle Cycle(PassProgram p, int y, int m, int d, TimeZoneInfo tz = null)
+            => PassCatalog.CurrentCycle(p, Utc(y, m, d), tz ?? Utc0);
 
         // ---- the built-in program ----
 
@@ -54,16 +62,16 @@ namespace Khela.Game.Tests
             var program = cfg.Default();
             Assert.Equal(PassCatalog.MonthlyKey, program.Key);
             Assert.Equal(PassCadence.Monthly, program.Cadence);
-            Assert.Equal(CatchUpPolicy.GoldenOnly, program.CatchUp);   // catch-up is what the subscription buys
+            Assert.Equal(CatchUpPolicy.GoldenOrAds, program.CatchUp);   // free players buy a missed day back with ads
             Assert.True(program.SellsGolden);
         }
 
         [Fact]
         public void Defaults_ClosingMilestoneIsReachableInFebruary()
         {
-            var february = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(2027, 2, 15));
+            var february = Cycle(PassCatalog.MonthlyProgram(), 2027, 2, 15);
             Assert.Equal(28, february.Length);
-            Assert.True(february.Node(PassCatalog.GuaranteedDays).IsMilestone);   // the big node still exists in Feb
+            Assert.True(february.Node(PassCatalog.GuaranteedDays).IsMilestone);
         }
 
         [Fact]
@@ -104,11 +112,10 @@ namespace Khela.Game.Tests
         [InlineData(2026, 12, 31, "2026-12", 31)]
         public void CurrentCycle_IsTheCalendarMonth_AndTrimsTheLadderToIt(int y, int m, int d, string key, int days)
         {
-            var cycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(y, m, d));
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), y, m, d);
             Assert.Equal(key, cycle.CycleKey);
             Assert.Equal(days, cycle.Days);
             Assert.Equal(days, cycle.Length);                     // a 31-node ladder stops where the month does
-            Assert.Equal(new DateTime(y, m, 1, 0, 0, 0, DateTimeKind.Utc), cycle.StartUtc);
             Assert.Null(cycle.Node(days + 1));                    // nothing beyond the month is offered
         }
 
@@ -116,30 +123,30 @@ namespace Khela.Game.Tests
         public void CurrentCycle_RollsOverOnTheFirst()
         {
             var program = PassCatalog.MonthlyProgram();
-            var sept = PassCatalog.CurrentCycle(program, new DateTime(2026, 9, 30, 23, 59, 59, DateTimeKind.Utc));
-            var oct = PassCatalog.CurrentCycle(program, new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
+            var sept = PassCatalog.CurrentCycle(program, new DateTime(2026, 9, 30, 23, 59, 59, DateTimeKind.Utc), Utc0);
+            var oct = PassCatalog.CurrentCycle(program, new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc), Utc0);
             Assert.Equal("2026-09", sept.CycleKey);
             Assert.Equal("2026-10", oct.CycleKey);
             Assert.Equal(sept.EndUtc, oct.StartUtc);              // no gap, no overlap
         }
 
         [Theory]
-        [InlineData(1, 1)]
-        [InlineData(7, 7)]
-        [InlineData(30, 30)]
-        public void DayIndexAndMaxNode_TrackTheCalendar(int day, int expected)
+        [InlineData(1)]
+        [InlineData(7)]
+        [InlineData(30)]
+        public void DayIndexAndMaxNode_TrackTheCalendar(int day)
         {
-            var cycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(2026, 9, day));
-            Assert.Equal(expected, cycle.DayIndex(Utc(2026, 9, day)));
-            Assert.Equal(expected, cycle.MaxNode(Utc(2026, 9, day)));   // never ahead of the calendar
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), 2026, 9, day);
+            Assert.Equal(day, cycle.DayIndex(Local(2026, 9, day)));
+            Assert.Equal(day, cycle.MaxNode(Local(2026, 9, day)));   // never ahead of the calendar
         }
 
         [Fact]
         public void MaxNode_IsCappedByAShortLadder()
         {
-            var cycle = PassCatalog.CurrentCycle(Ladder(10), Utc(2026, 9, 25));
-            Assert.Equal(25, cycle.DayIndex(Utc(2026, 9, 25)));
-            Assert.Equal(10, cycle.MaxNode(Utc(2026, 9, 25)));    // a 10-node ladder finishes on day 10
+            var cycle = Cycle(Ladder(10), 2026, 9, 25);
+            Assert.Equal(25, cycle.DayIndex(Local(2026, 9, 25)));
+            Assert.Equal(10, cycle.MaxNode(Local(2026, 9, 25)));   // a 10-node ladder finishes on day 10
         }
 
         [Fact]
@@ -153,25 +160,23 @@ namespace Khela.Game.Tests
                 Nodes = Enumerable.Range(1, 5).Select(i => Node(i)).ToList(),
             });
 
-            var december = PassCatalog.CurrentCycle(program, Utc(2026, 12, 5));
-            var november = PassCatalog.CurrentCycle(program, Utc(2026, 11, 5));
-            Assert.Equal("Festive Pass", december.Title);
-            Assert.Equal(5, december.Length);
-            Assert.Equal(30, november.Length);                    // every other month keeps the recurring ladder
+            Assert.Equal("Festive Pass", Cycle(program, 2026, 12, 5).Title);
+            Assert.Equal(5, Cycle(program, 2026, 12, 5).Length);
+            Assert.Equal(30, Cycle(program, 2026, 11, 5).Length);   // every other month keeps the recurring ladder
         }
 
         [Fact]
         public void CurrentCycle_IsNullWhenTheProgramIsOffOrTheFixedWindowHasPassed()
         {
             var off = PassCatalog.MonthlyProgram(); off.Enabled = false;
-            Assert.Null(PassCatalog.CurrentCycle(off, Utc(2026, 9, 15)));
+            Assert.Null(Cycle(off, 2026, 9, 15));
 
             var season = Ladder(60);
             season.Key = "season1";
             season.Cadence = PassCadence.Fixed;
             season.StartUtc = Utc(2026, 9, 1); season.EndUtc = Utc(2026, 10, 31);
-            Assert.NotNull(PassCatalog.CurrentCycle(season, Utc(2026, 10, 1)));
-            Assert.Null(PassCatalog.CurrentCycle(season, Utc(2026, 11, 1)));   // outside the window ⇒ pass off
+            Assert.NotNull(Cycle(season, 2026, 10, 1));
+            Assert.Null(Cycle(season, 2026, 11, 1));               // outside the window ⇒ pass off
         }
 
         [Fact]
@@ -185,70 +190,166 @@ namespace Khela.Game.Tests
             var cfg = Cfg(PassCatalog.MonthlyProgram(), season);
             Assert.Null(PassCatalog.Validate(cfg, ChestCatalog.Defaults()));
 
-            var cycle = PassCatalog.CurrentCycle(season, Utc(2026, 9, 15));
-            Assert.Equal("season1", cycle.CycleKey);              // fixed programs key their cycle by program
+            var cycle = Cycle(season, 2026, 9, 15);
+            Assert.Equal("season1", cycle.CycleKey);               // fixed programs key their cycle by program
             Assert.Equal(60, cycle.Length);
             Assert.Equal(PassCatalog.MonthlyKey, cfg.Default().Key);   // the monthly pass is still the default
         }
 
-        // ---- catch-up: what the subscription buys ----
+        // ---- the player's own midnight, not UTC's ----
 
         [Fact]
-        public void GoldenOnly_FreePlayerGetsTodayOnly_GoldenPlayerBackfills()
+        public void TheHostCanResolveIanaTimezones()
         {
-            var cycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(2026, 9, 20));
-            var now = Utc(2026, 9, 20);
-            var claimed = new HashSet<int> { 1, 2, 3 };
-
-            var free = PassCatalog.ClaimableNodes(cycle, now, claimed, isGolden: false);
-            Assert.Equal(new[] { 20 }, free);                     // missed days are gone for a free player
-
-            var golden = PassCatalog.ClaimableNodes(cycle, now, claimed, isGolden: true);
-            Assert.Equal(Enumerable.Range(4, 17), golden);        // 4..20 — the missed days come back
+            // An ENVIRONMENT guard, not a unit test: if the runtime is published in globalization-invariant mode (or
+            // a container ships without tzdata), every player silently falls back to UTC and the daily pass rolls over
+            // at breakfast in Dhaka — the exact thing this design exists to prevent. Fail loudly here instead.
+            Assert.True(PassClock.IsKnown("Asia/Dhaka"), "No IANA tz data — check InvariantGlobalization / tzdata.");
+            Assert.Equal(TimeSpan.FromHours(6), PassClock.Resolve("Asia/Dhaka").BaseUtcOffset);
         }
 
         [Fact]
-        public void CatchUpNone_NobodyBackfills_AndAllLetsEveryoneBackfill()
+        public void TheDayFlipsAtThePlayersLocalMidnight_NotUtcs()
+        {
+            var dhaka = PassClock.Resolve("Asia/Dhaka");                 // UTC+6, no DST
+            var atUtc = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);   // 02:00 on the 16th in Dhaka
+            var dhakaCycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), atUtc, dhaka);
+            var utcCycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), atUtc, Utc0);
+
+            Assert.Equal(16, dhakaCycle.DayIndex(PassClock.LocalDate(atUtc, dhaka)));
+            Assert.Equal(15, utcCycle.DayIndex(PassClock.LocalDate(atUtc, Utc0)));
+        }
+
+        [Fact]
+        public void ANewCycleStartsAtLocalMidnight_SoDhakaIsNotStuckOnLastMonth()
+        {
+            var dhaka = PassClock.Resolve("Asia/Dhaka");
+            var atUtc = new DateTime(2026, 9, 30, 20, 0, 0, DateTimeKind.Utc);   // already 1 Oct 02:00 in Dhaka
+            Assert.Equal("2026-10", PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), atUtc, dhaka).CycleKey);
+            Assert.Equal("2026-09", PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), atUtc, Utc0).CycleKey);
+        }
+
+        [Theory]
+        [InlineData("Asia/Dhaka")]
+        [InlineData("America/Santiago")]   // midnight DST transitions
+        [InlineData("Asia/Tehran")]
+        [InlineData("Pacific/Kiritimati")] // UTC+14, the extreme
+        public void NextLocalMidnight_IsAlwaysARealInstantWithinADay(string tzId)
+        {
+            var tz = PassClock.Resolve(tzId);
+            var now = new DateTime(2026, 9, 5, 13, 27, 0, DateTimeKind.Utc);
+            for (int i = 0; i < 400; i++)   // walk a year of days, including every DST transition in that zone
+            {
+                var at = now.AddDays(i);
+                var next = PassClock.NextLocalMidnightUtc(at, tz);
+                Assert.True(next > at, $"{tzId}: next reset must be in the future");
+                Assert.True(next <= at.AddHours(25), $"{tzId}: next reset must be within a day");
+            }
+        }
+
+        [Fact]
+        public void AnUnknownOrHostileTimezoneFallsBackToUtc_NeverThrows()
+        {
+            Assert.Equal(TimeZoneInfo.Utc, PassClock.Resolve(null));
+            Assert.Equal(TimeZoneInfo.Utc, PassClock.Resolve(""));
+            Assert.Equal(TimeZoneInfo.Utc, PassClock.Resolve("Mars/Olympus_Mons"));
+            Assert.Equal(TimeZoneInfo.Utc, PassClock.Resolve("'; DROP TABLE PlayerPassClaims;--"));
+            Assert.False(PassClock.IsKnown("Mars/Olympus_Mons"));
+        }
+
+        // ---- catch-up: what a missed day costs ----
+
+        [Fact]
+        public void TodaysNodeIsAlwaysFree()
+        {
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), 2026, 9, 20);
+            var a = PassCatalog.Availability(cycle, Local(2026, 9, 20), new HashSet<int>(), isGolden: false);
+            Assert.Contains(20, a.Claimable);
+        }
+
+        [Fact]
+        public void GoldenOrAds_SubscriberBackfillsFree_EveryoneElsePaysInAds()
+        {
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), 2026, 9, 20);
+            var today = Local(2026, 9, 20);
+            var claimed = new HashSet<int> { 1, 2, 3 };
+
+            var golden = PassCatalog.Availability(cycle, today, claimed, isGolden: true);
+            Assert.Equal(Enumerable.Range(4, 17), golden.Claimable);   // 4..20, free
+            Assert.Empty(golden.AdUnlockable);
+
+            var free = PassCatalog.Availability(cycle, today, claimed, isGolden: false);
+            Assert.Equal(new[] { 20 }, free.Claimable);                // only today at no cost
+            Assert.Equal(2, free.AdsPerUnlock);
+            Assert.Equal(new[] { 4, 5, 6, 7, 8 }, free.AdUnlockable);  // capped at MaxAdCatchUpsPerCycle
+            Assert.Equal(Enumerable.Range(9, 11), free.GoldenLocked);  // 9..19 — the "unlock 11 missed days" CTA
+        }
+
+        [Fact]
+        public void AdCatchUpsAreCappedPerCycle_AndSpentOnesCountAgainstIt()
+        {
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), 2026, 9, 20);
+            var today = Local(2026, 9, 20);
+
+            var fresh = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 0);
+            Assert.Equal(5, fresh.AdUnlocksLeft);
+            Assert.Equal(5, fresh.AdUnlockable.Count);
+
+            var partly = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 4);
+            Assert.Equal(1, partly.AdUnlocksLeft);
+            Assert.Single(partly.AdUnlockable);
+
+            var spent = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 5);
+            Assert.Equal(0, spent.AdUnlocksLeft);
+            Assert.Empty(spent.AdUnlockable);
+            Assert.Equal(new[] { 20 }, spent.Claimable);               // today still free
+        }
+
+        [Fact]
+        public void AdCatchUpCanBeTurnedOffWithoutChangingThePolicy()
         {
             var program = PassCatalog.MonthlyProgram();
-            var now = Utc(2026, 9, 20);
+            program.MaxAdCatchUpsPerCycle = 0;
+            var a = PassCatalog.Availability(Cycle(program, 2026, 9, 20), Local(2026, 9, 20), new HashSet<int>(), isGolden: false);
+            Assert.Empty(a.AdUnlockable);
+            Assert.Equal(19, a.GoldenLocked.Count);                    // days 1..19 now need the subscription
+        }
+
+        [Fact]
+        public void CatchUpNone_NobodyBackfills_AndAllLetsEveryoneBackfillFree()
+        {
+            var program = PassCatalog.MonthlyProgram();
+            var today = Local(2026, 9, 20);
 
             program.CatchUp = CatchUpPolicy.None;
-            var none = PassCatalog.CurrentCycle(program, now);
-            Assert.Equal(new[] { 20 }, PassCatalog.ClaimableNodes(none, now, new HashSet<int>(), isGolden: true));
+            var none = PassCatalog.Availability(Cycle(program, 2026, 9, 20), today, new HashSet<int>(), isGolden: true);
+            Assert.Equal(new[] { 20 }, none.Claimable);
+            Assert.Empty(none.AdUnlockable);
 
             program.CatchUp = CatchUpPolicy.All;
-            var all = PassCatalog.CurrentCycle(program, now);
-            Assert.Equal(Enumerable.Range(1, 20), PassCatalog.ClaimableNodes(all, now, new HashSet<int>(), isGolden: false));
+            var all = PassCatalog.Availability(Cycle(program, 2026, 9, 20), today, new HashSet<int>(), isGolden: false);
+            Assert.Equal(Enumerable.Range(1, 20), all.Claimable);
         }
 
         [Fact]
         public void AlreadyClaimedNodesAreNeverOfferedAgain()
         {
-            var cycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(2026, 9, 5));
-            var now = Utc(2026, 9, 5);
-            Assert.Empty(PassCatalog.ClaimableNodes(cycle, now, new HashSet<int> { 5 }, isGolden: false));
-            Assert.Empty(PassCatalog.ClaimableNodes(cycle, now, new HashSet<int> { 1, 2, 3, 4, 5 }, isGolden: true));
-        }
+            var cycle = Cycle(PassCatalog.MonthlyProgram(), 2026, 9, 5);
+            var today = Local(2026, 9, 5);
+            Assert.Empty(PassCatalog.Availability(cycle, today, new HashSet<int> { 5 }, isGolden: false).Claimable);
 
-        [Fact]
-        public void LockedByGolden_IsTheSubscribeCtaNumber()
-        {
-            var cycle = PassCatalog.CurrentCycle(PassCatalog.MonthlyProgram(), Utc(2026, 9, 20));
-            var now = Utc(2026, 9, 20);
-            var claimed = new HashSet<int> { 1, 2, 3 };
-
-            Assert.Equal(16, PassCatalog.LockedByGolden(cycle, now, claimed, isGolden: false));  // days 4..19
-            Assert.Equal(0, PassCatalog.LockedByGolden(cycle, now, claimed, isGolden: true));    // already subscribed
+            var all = PassCatalog.Availability(cycle, today, new HashSet<int> { 1, 2, 3, 4, 5 }, isGolden: true);
+            Assert.Empty(all.Claimable);
+            Assert.Empty(all.AdUnlockable);
+            Assert.Empty(all.GoldenLocked);
         }
 
         [Fact]
         public void NothingFromLastCycleIsClaimableAfterRollover()
         {
-            var program = PassCatalog.MonthlyProgram();
-            var october = PassCatalog.CurrentCycle(program, Utc(2026, 10, 1));
-            // September's claims belong to another cycle key entirely, so October starts empty at node 1.
-            Assert.Equal(new[] { 1 }, PassCatalog.ClaimableNodes(october, Utc(2026, 10, 1), new HashSet<int>(), isGolden: true));
+            var october = Cycle(PassCatalog.MonthlyProgram(), 2026, 10, 1);
+            var a = PassCatalog.Availability(october, Local(2026, 10, 1), new HashSet<int>(), isGolden: true);
+            Assert.Equal(new[] { 1 }, a.Claimable);   // September's claims live under another cycle key entirely
         }
 
         // ---- the legal guardrail ----
@@ -320,6 +421,20 @@ namespace Khela.Game.Tests
         public void Validate_RefusesNonPositiveAmounts()
             => Assert.Contains("greater than 0",
                 PassCatalog.Validate(Cfg(Program(Node(1, free: new[] { RewardGrant.Currency("Chips", 0m) })))));
+
+        [Fact]
+        public void Validate_ChecksTheAdCatchUpSettings()
+        {
+            var p = Ladder(5);
+            p.AdsPerCatchUp = PassCatalog.MaxAdsPerCatchUp + 1;
+            Assert.Contains("ads per catch-up", PassCatalog.Validate(Cfg(p)));
+
+            p.AdsPerCatchUp = 0;                       // "free catch-up for everyone" is not what GoldenOrAds means
+            Assert.Contains("costs 0 ads", PassCatalog.Validate(Cfg(p)));
+
+            p.MaxAdCatchUpsPerCycle = 0;               // …unless ad catch-up is switched off outright
+            Assert.Null(PassCatalog.Validate(Cfg(p)));
+        }
 
         [Fact]
         public void Validate_RefusesAFixedProgramWithoutAValidWindow()
@@ -407,8 +522,9 @@ namespace Khela.Game.Tests
             Assert.NotNull(parsed);
             Assert.Null(PassCatalog.Validate(parsed, ChestCatalog.Defaults()));
             Assert.Equal(PassCatalog.DefaultLadderLength, parsed.Default().Nodes.Count);
+            Assert.Equal(2, parsed.Default().AdsPerCatchUp);
             Assert.Contains("\"Currency\"", json);        // enums as names, so the admin JSON stays readable
-            Assert.Contains("\"GoldenOnly\"", json);
+            Assert.Contains("\"GoldenOrAds\"", json);
 
             Assert.Null(PassCatalog.TryParse("{ not json"));
             Assert.Null(PassCatalog.TryParse(""));

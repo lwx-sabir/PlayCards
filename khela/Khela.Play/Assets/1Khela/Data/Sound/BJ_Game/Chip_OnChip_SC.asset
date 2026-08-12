@@ -24,8 +24,8 @@ MonoBehaviour:
       settingsExpandAdvanced: 1
       priority: 0.5
       distanceEnabled: 1
-      distanceScale: 4
-      preventEndClicks: 1
+      distanceScale: 50
+      preventEndClicks: 0
       loopEnabled: 0
       followPosition: 0
       stopIfTransformIsNull: 0
@@ -47,8 +47,8 @@ MonoBehaviour:
       hrtfPluginSpatialize: 0
       hrtfPluginSpatializePostEffects: 0
       volumeExpand: 1
-      volumeDecibel: 4
-      volumeRatio: 1.5848932
+      volumeDecibel: 0
+      volumeRatio: 1
       volumeRandomEnable: 0
       volumeRandomRangeDecibel: -3
       volumeDistanceRolloff: -2
@@ -205,7 +205,7 @@ MonoBehaviour:
       spatialBlendExpand: 1
       spatialBlend: 1
       spatialBlendDistanceRolloff: -4
-      spatialBlendDistance3DIncrease: 0.5
+      spatialBlendDistance3DIncrease: 1
       spatialBlendDistanceCurve:
         serializedVersion: 2
         m_Curve:
@@ -258,8 +258,8 @@ MonoBehaviour:
         m_PostInfinity: 2
         m_RotationOrder: 4
       spatialSpreadExpand: 0
-      spatialSpreadDegrees: 180
-      spatialSpreadRatio: 0.5
+      spatialSpreadDegrees: 0
+      spatialSpreadRatio: 0
       spatialSpreadDistanceRolloff: -4
       spatialSpreadDistanceCurve:
         serializedVersion: 2

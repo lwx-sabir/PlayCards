@@ -1,4 +1,4 @@
-%YAML 1.1
+﻿%YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
 --- !u!114 &11400000
 MonoBehaviour:
@@ -38,7 +38,7 @@ MonoBehaviour:
       bypassReverbZones: 0
       bypassVoiceEffects: 0
       bypassListenerEffects: 0
-      volumeUse: 0
+      volumeUse: 1
       pitchUse: 0
       delayUse: 0
       increase2DUse: 0
@@ -58,6 +58,6 @@ MonoBehaviour:
       bypassReverbZonesUse: 0
       bypassVoiceEffectsUse: 0
       bypassListenerEffectsUse: 0
-    soundMixParent: {fileID: 0}
+    soundMixParent: {fileID: 11400000, guid: f24e7294db4085d48b88888e5ad7d352, type: 2}
   assetGuid: 0442b0f15b7c31a4bbfe52e3811dcd86
   assetGuidHash: 6112422423627007571

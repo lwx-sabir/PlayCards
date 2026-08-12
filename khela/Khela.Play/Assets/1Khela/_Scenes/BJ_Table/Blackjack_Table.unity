@@ -5004,16 +5004,16 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 487804431}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0.0000010643689}
+  m_LocalPosition: {x: 0, y: 0, z: 0.00003746578}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2063285584}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0.5}
-  m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -0.00002670288, y: 0.00000071525574}
-  m_SizeDelta: {x: 120.75, y: 55.85}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 55.8}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &487804433
 MonoBehaviour:
@@ -5035,7 +5035,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 999k
+  m_text: +100k
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: c1482dbce654844b9ba1c753cbea5d80, type: 2}
   m_sharedMaterial: {fileID: 7374927986402738804, guid: c1482dbce654844b9ba1c753cbea5d80, type: 2}
@@ -5044,8 +5044,8 @@ MonoBehaviour:
   m_fontMaterials: []
   m_fontColor32:
     serializedVersion: 2
-    rgba: 4278218239
-  m_fontColor: {r: 1, g: 0.42745098, b: 0, a: 1}
+    rgba: 4281922369
+  m_fontColor: {r: 0.2549398, g: 0.9528302, b: 0.22022964, a: 1}
   m_enableVertexGradient: 0
   m_colorMode: 3
   m_fontColorGradient:
@@ -5062,11 +5062,11 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 48.85
+  m_fontSize: 56
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
-  m_fontSizeMin: 28
+  m_fontSizeMin: 56
   m_fontSizeMax: 56
   m_fontStyle: 0
   m_HorizontalAlignment: 2
@@ -6485,19 +6485,17 @@ MonoBehaviour:
   view: {fileID: 1133380959}
   dealer: {fileID: 0}
   betStacks: {fileID: 0}
-  betBuilder: {fileID: 0}
   cardPickFromShoe: {fileID: 11400000, guid: 723cc815324e9a148a675c597de0a6d7, type: 2}
   cardLand: {fileID: 11400000, guid: b4f20391dc75b694da0f402d2e9f3592, type: 2}
   dealerPeek: {fileID: 0}
   dealerReveal: {fileID: 11400000, guid: e0c966343c581ab40beca84455a4a802, type: 2}
   cardsSweep: {fileID: 11400000, guid: 8a84989b21bfe5d4ea9a37eae0601875, type: 2}
   shuffle: {fileID: 0}
-  chipsGather: {fileID: 0}
-  chipsCollect: {fileID: 0}
-  chipsPay: {fileID: 0}
-  chipsPayLand: {fileID: 0}
-  chipsAdded: {fileID: 0}
-  chipToBalance: {fileID: 0}
+  chipsGather: {fileID: 11400000, guid: dad2bf1c80e6aa748b61818f0bca5a39, type: 2}
+  chipsCollect: {fileID: 11400000, guid: d69d178163a12004b9ceb58b4daa45ba, type: 2}
+  chipsPayLand: {fileID: 11400000, guid: 231b7fa1437e5e3478235b2263bfefef, type: 2}
+  chipsAdded: {fileID: 11400000, guid: 575713e85eb835b4ba7dbc60f53f022a, type: 2}
+  chipToBalance: {fileID: 11400000, guid: 27e443db59e189b4aa49a82f097c5734, type: 2}
   spatialiseCards: 1
 --- !u!4 &673537765
 Transform:
@@ -8453,7 +8451,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c2705b32a11457b448f3025e4258dc83, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Betting.BetAmountLabel
-  label: {fileID: 0}
+  label: {fileID: 719712604}
   openSeconds: 0.28
   closeSeconds: 0.18
   overshoot: 1.6
@@ -9843,6 +9841,7 @@ GameObject:
   - component: {fileID: 1133380958}
   - component: {fileID: 1133380959}
   - component: {fileID: 1133380960}
+  - component: {fileID: 1133380961}
   m_Layer: 0
   m_Name: TableRoot
   m_TagString: Untagged
@@ -9932,6 +9931,26 @@ MonoBehaviour:
   - {fileID: 7987914288554332011}
   - {fileID: 5559598759595124979}
   - {fileID: 4203762262716379678}
+--- !u!114 &1133380961
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1133380957}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8c640d561b4969d42b7fefdf65ecbb98, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Table.BustHandCleaner
+  table: {fileID: 1694734351}
+  view: {fileID: 1133380959}
+  betStacks: {fileID: 1332564719}
+  dealer: {fileID: 1648010365557757605}
+  readSeconds: 1.4
+  chipFlightSeconds: 0.45
+  cardSweepDelay: 0.15
+  playDealerGesture: 1
 --- !u!1001 &1135949453
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -10247,6 +10266,8 @@ MonoBehaviour:
   payGap: 0.15
   settleTimeout: 3
   maxHoldSeconds: 12
+  payoutReadSeconds: 0.6
+  pushReturnDelaySeconds: 2.5
   references:
     version: 2
     RefIds:
@@ -12074,6 +12095,7 @@ MonoBehaviour:
   - {fileID: 7175515236081150604}
   dropInterval: 0.1
   settleBeforeDeal: 0.25
+  dealGuardMaxSeconds: 25
 --- !u!114 &1332564719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -12108,7 +12130,10 @@ MonoBehaviour:
   tuckChipShrink: 0.2
   tuckChipNudge: {x: 0, y: 0, z: 0.05}
   tuckFollowSeconds: 0.28
-  floatAwayShrinkSeconds: 0.2
+  payoutOffset: {x: 0.09, y: 0, z: 0}
+  peelRiseSeconds: 0.35
+  peelStagger: 0.07
+  peelRise: 0.05
 --- !u!114 &1332564720
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -12908,7 +12933,7 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1389060523}
   m_LocalRotation: {x: 0.6739027, y: -0, z: -0, w: 0.73882014}
-  m_LocalPosition: {x: 0, y: 0, z: -12.66}
+  m_LocalPosition: {x: 0, y: 0, z: -11.8}
   m_LocalScale: {x: 0.07, y: 0.07, z: 0.07}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -12917,8 +12942,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 84.738, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -57.43, y: -23.6}
-  m_SizeDelta: {x: 123.027, y: 65.163}
+  m_AnchoredPosition: {x: -57.3, y: -23.5}
+  m_SizeDelta: {x: 284.44, y: 109.709}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1389060525
 MonoBehaviour:
@@ -18643,6 +18668,8 @@ GameObject:
   - component: {fileID: 2063285584}
   - component: {fileID: 2063285586}
   - component: {fileID: 2063285585}
+  - component: {fileID: 2063285588}
+  - component: {fileID: 2063285587}
   m_Layer: 5
   m_Name: Background
   m_TagString: Untagged
@@ -18658,7 +18685,7 @@ RectTransform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2063285583}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -18667,8 +18694,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 12.73, y: -1.58}
-  m_SizeDelta: {x: 196.29, y: 138.66}
+  m_AnchoredPosition: {x: -0.0000038146973, y: -23}
+  m_SizeDelta: {x: 0, y: 156}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2063285585
 MonoBehaviour:
@@ -18683,7 +18710,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_Color: {r: 0.2907617, g: 1, b: 0, a: 1}
   m_RaycastTarget: 1
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
@@ -18708,6 +18735,46 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2063285583}
   m_CullTransparentMesh: 0
+--- !u!114 &2063285587
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2063285583}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30649d3a9faa99c48a7b1166b86bf2a0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.HorizontalLayoutGroup
+  m_Padding:
+    m_Left: 50
+    m_Right: 55
+    m_Top: 0
+    m_Bottom: 8
+  m_ChildAlignment: 4
+  m_Spacing: 0
+  m_ChildForceExpandWidth: 0
+  m_ChildForceExpandHeight: 0
+  m_ChildControlWidth: 1
+  m_ChildControlHeight: 0
+  m_ChildScaleWidth: 0
+  m_ChildScaleHeight: 0
+  m_ReverseArrangement: 0
+--- !u!114 &2063285588
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2063285583}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3245ec927659c4140ac4f8d17403cc18, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.ContentSizeFitter
+  m_HorizontalFit: 2
+  m_VerticalFit: 0
 --- !u!1 &2066230028
 GameObject:
   m_ObjectHideFlags: 0
@@ -37743,7 +37810,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c2705b32a11457b448f3025e4258dc83, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Game.Betting.BetAmountLabel
-  label: {fileID: 0}
+  label: {fileID: 1653920900}
   openSeconds: 0.28
   closeSeconds: 0.18
   overshoot: 1.6

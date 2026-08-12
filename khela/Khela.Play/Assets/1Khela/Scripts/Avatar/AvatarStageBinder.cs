@@ -31,6 +31,7 @@ namespace PlayCard.Avatar
 
         private GameObject _instance;
         private string _shownSignature;
+        private string _inFlightSignature;   // what a merge currently in progress is building
         private int _seq;   // stale-continuation guard: only the newest Rebind may finish
 
         private async void OnEnable()
@@ -41,7 +42,11 @@ namespace PlayCard.Avatar
             Rebind();
         }
 
-        private void OnDisable() => AvatarService.Instance.MineChanged -= Rebind;
+        private void OnDisable()
+        {
+            AvatarService.Instance.MineChanged -= Rebind;
+            _seq++;   // abandon any merge still running — its continuation must not touch a torn-down stage
+        }
 
         private async void Rebind()
         {
@@ -49,7 +54,10 @@ namespace PlayCard.Avatar
             if (mine == null || string.IsNullOrEmpty(mine.BaseId)) { ShowPlaceholder(); return; }
 
             string signature = Signature(mine);
-            if (_instance != null && _shownSignature == signature) return;   // already showing exactly this avatar
+            // Already showing it, OR already building it. The in-flight test matters because a merge takes many frames
+            // and _instance is deliberately not published until it completes — without it, a second event for the same
+            // avatar would kick off a duplicate merge.
+            if ((_instance != null && _shownSignature == signature) || _inFlightSignature == signature) return;
 
             bool customized = HasCustomization(mine) && actorPrefab != null;
             var prefab = customized ? actorPrefab : FindDisplayPrefab(mine.BaseId);
@@ -61,28 +69,52 @@ namespace PlayCard.Avatar
             }
 
             int seq = ++_seq;
-            if (_instance != null) Destroy(_instance);
+            _inFlightSignature = signature;
+
+            // The PREVIOUS avatar stays on the stage until this one is ready, and — critically — is NOT destroyed yet.
+            // Destroying it here is what caused "OutfitSystem has been destroyed but you are still trying to access
+            // it": the merge is async and runs across many frames, so a second Rebind (at boot, MineChanged fires
+            // while OnEnable's own Rebind is mid-merge) tore the OutfitSystem out from under the running merge.
+            // Each call now owns its instance privately and only publishes it once the merge is done.
+            var previous = _instance;
             var parent = mount != null ? mount : transform;
-            _instance = Instantiate(prefab, parent);
-            _instance.transform.localPosition = Vector3.zero;
-            _instance.transform.localRotation = Quaternion.identity;
-            _instance.transform.localScale = Vector3.one;
-            _shownSignature = signature;
+
+            var instance = Instantiate(prefab, parent);
+            instance.transform.localPosition = Vector3.zero;
+            instance.transform.localRotation = Quaternion.identity;
+            instance.transform.localScale = Vector3.one;
 
             if (customized)
             {
-                var os = _instance.GetComponentInChildren<OutfitSystem>(true);
+                var os = instance.GetComponentInChildren<OutfitSystem>(true);
                 var data = AvatarService.BuildCharacter(mine);
                 if (os != null && data != null)
                 {
                     os.loadMode = OutfitSystem.LoadMode.Manual;   // before its Start — we drive the (async) merge ourselves
                     os.async = true;
                     try { await BMAC_SaveSystem.LoadCharacter(os, data); }
-                    catch (System.Exception e) { Debug.LogError($"[AvatarStageBinder] merge failed: {e.Message}"); }
-                    if (this == null || seq != _seq || _instance == null) return;   // superseded/torn down mid-merge
+                    catch (System.Exception e)
+                    {
+                        // A genuine failure now — being superseded no longer reaches here.
+                        Debug.LogWarning($"[AvatarStageBinder] merge failed, showing '{mine.BaseId}' unmerged: {e.Message}");
+                    }
                 }
                 else Debug.LogWarning("[AvatarStageBinder] actor prefab has no OutfitSystem or avatar didn't build — showing it unmerged.");
             }
+
+            // Superseded or torn down while merging: clean up OUR OWN instance and leave the newer one alone. The
+            // previous avatar is left standing — whichever call wins will replace it.
+            if (this == null || seq != _seq)
+            {
+                if (instance != null) Destroy(instance);
+                return;
+            }
+
+            // Committed. Only now is the old one safe to remove: nothing was ever awaiting on it.
+            if (previous != null) Destroy(previous);
+            _instance = instance;
+            _shownSignature = signature;
+            _inFlightSignature = null;
 
             // Stage cameras cull a dedicated layer — set it AFTER the merge so the merge-created meshes get it too.
             int layer = placeholder != null ? placeholder.layer : parent.gameObject.layer;
@@ -132,6 +164,8 @@ namespace PlayCard.Avatar
 
         private void ShowPlaceholder()
         {
+            _seq++;                    // abandon an in-flight merge rather than letting it publish over the placeholder
+            _inFlightSignature = null;
             if (_instance != null) { Destroy(_instance); _instance = null; _shownSignature = null; }
             if (placeholder != null) placeholder.SetActive(true);
         }

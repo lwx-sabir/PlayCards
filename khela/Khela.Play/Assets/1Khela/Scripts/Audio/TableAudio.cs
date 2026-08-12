@@ -31,7 +31,6 @@ namespace PlayCard.Audio
         [SerializeField] private BlackjackTableView view;
         [SerializeField] private DealerAnimator dealer;
         [SerializeField] private BetStacks betStacks;
-        [SerializeField] private BetBuilder betBuilder;
 
         [Header("Cards")]
         [Tooltip("The dealer TAKING A CARD FROM THE SHOE — the card sliding out. Fires once per card dealt, on the " +
@@ -60,19 +59,19 @@ namespace PlayCard.Audio
         [SerializeField] private SoundEvent shuffle;
 
         [Header("Chips")]
-        [Tooltip("Your dropped chips being PULLED INTO the committed stack when you press DEAL/REPEAT. Several chips " +
-                 "move at once, so this wants a multi-chip clip (3on2 / 5on3), not a single-chip one.")]
+        [Tooltip("ONE chip settling into the committed stack during the DEAL gather — fires per chip, staggered by " +
+                 "BetStacks' Gather Interval, so five chips give five ticks. Assign the SAME event the physics " +
+                 "chip-on-chip impact uses: it is literally the same thing happening, a chip landing on a stack. " +
+                 "It has to be fired from code because the gather is a kinematic tween — no collisions occur.")]
         [SerializeField] private SoundEvent chipsGather;
 
         [Tooltip("The dealer SWEEPING a losing bet to herself. Fires per losing hand, on the clip's release frame.")]
         [SerializeField] private SoundEvent chipsCollect;
 
-        [Tooltip("The dealer PUSHING winnings out to a seat. Fires per winning hand, on the clip's release frame — the " +
-                 "moment they LEAVE her hands. Leave empty if you only want the arrival below.")]
-        [SerializeField] private SoundEvent chipsPay;
-
-        [Tooltip("The winnings LANDING in front of the player. A separate beat from the push above: fires once per " +
-                 "winning hand when the flying chips arrive, at that hand's chip spot. This is the payoff sound.")]
+        [Tooltip("YOUR winnings LANDING in front of you — once, when the flying chips arrive at your chip spot. " +
+                 "Deliberately local-seat only: a payout landing across the table is somebody else's news, and the " +
+                 "pay loop is already the busiest moment of the round. There is intentionally no sound for the " +
+                 "dealer PUSHING chips out; the arrival is the beat that reads.")]
         [SerializeField] private SoundEvent chipsPayLand;
 
         [Tooltip("Chips ADDED to a hand already in play — a DOUBLE, or the matching bet on a freshly SPLIT hand. Not " +
@@ -98,10 +97,12 @@ namespace PlayCard.Audio
             if (view == null) view = FindAnyObjectByType<BlackjackTableView>(FindObjectsInactive.Include);
             if (dealer == null) dealer = FindAnyObjectByType<DealerAnimator>(FindObjectsInactive.Include);
             if (betStacks == null) betStacks = FindAnyObjectByType<BetStacks>(FindObjectsInactive.Include);
-            if (betBuilder == null) betBuilder = FindAnyObjectByType<BetBuilder>(FindObjectsInactive.Include);
 
-            if (betBuilder != null) betBuilder.OnDealCommitted += OnDealCommitted;
-            if (betStacks != null) betStacks.ChipsAdded += OnChipsAdded;
+            if (betStacks != null)
+            {
+                betStacks.ChipsAdded += OnChipsAdded;
+                betStacks.ChipGathered += OnChipGathered;
+            }
 
             if (view != null)
             {
@@ -118,8 +119,11 @@ namespace PlayCard.Audio
 
         private void OnDisable()
         {
-            if (betBuilder != null) betBuilder.OnDealCommitted -= OnDealCommitted;
-            if (betStacks != null) betStacks.ChipsAdded -= OnChipsAdded;
+            if (betStacks != null)
+            {
+                betStacks.ChipsAdded -= OnChipsAdded;
+                betStacks.ChipGathered -= OnChipGathered;
+            }
             if (view != null)
             {
                 view.CardLanded -= OnCardLanded;
@@ -202,9 +206,6 @@ namespace PlayCard.Audio
         /// <summary>The dealer swept a losing bet in. Played at her chip hand — where the gesture starts.</summary>
         public void PlayChipsCollect() => PlayAtDealerHands(chipsCollect);
 
-        /// <summary>The dealer pushed winnings out.</summary>
-        public void PlayChipsPay() => PlayAtDealerHands(chipsPay);
-
         /// <summary>The pushed winnings LANDED at a seat's chip spot. One per winning hand.</summary>
         public void PlayChipsPayLand(Vector3 worldPos)
         {
@@ -233,15 +234,13 @@ namespace PlayCard.Audio
             if (chipsAdded != null) chipsAdded.PlayAtPosition(transform, worldPos);
         }
 
-        private void OnDealCommitted(long amount)
+        // Owned by the CHIP, not by this component: Sonity keys an instance on (event, owner), so a shared owner would
+        // give all five gathered chips one voice and each would cut the last. Per-chip ownership is also what the
+        // physics impacts already do, which is why the same SoundEvent can be assigned to both.
+        private void OnChipGathered(Transform chip)
         {
-            if (chipsGather == null) return;
-
-            // At your own bet spot. Spatialised for consistency with the rest of the felt, though your own seat is
-            // near-centre from your camera anyway.
-            var anchor = (betStacks != null && table != null) ? betStacks.ChipAnchor(table.MySeat) : null;
-            if (anchor != null) chipsGather.PlayAtPosition(transform, anchor.position);
-            else chipsGather.Play(transform);
+            if (chipsGather == null || chip == null) return;
+            chipsGather.PlayAtPosition(chip, chip.position);
         }
     }
 }

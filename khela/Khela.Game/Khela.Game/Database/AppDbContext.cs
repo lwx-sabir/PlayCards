@@ -62,5 +62,10 @@ namespace Khela.Game.Database
         // --- Cosmetics shop (AddCosmeticsShop migration; docs/AVATAR_SHOP_SPEC.md) ---
         public DbSet<CosmeticSku> CosmeticSkus { get; set; }
         public DbSet<UserCosmetic> UserCosmetics { get; set; }
+
+        // --- Pass: free daily ladder + Golden subscription (AddPassTables migration; docs/PASS_SPEC.md) ---
+        public DbSet<PlayerPassClaim> PlayerPassClaims { get; set; }             // the only record of pass progress
+        public DbSet<PlayerPassEntitlement> PlayerPassEntitlements { get; set; } // subscription windows (append-only)
+        public DbSet<PlayerPassAdUnlock> PlayerPassAdUnlocks { get; set; }       // verified rewarded-ad catch-up credits
     }
 }

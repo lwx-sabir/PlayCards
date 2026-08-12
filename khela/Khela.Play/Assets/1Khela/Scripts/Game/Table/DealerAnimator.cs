@@ -399,9 +399,14 @@ namespace PlayCard.Game.Table
             if (_chipReleased) return;
             _chipReleased = true;
 
-            // On the release frame, so the chips are heard leaving her hands exactly as they visually do.
-            if (_audio == null) _audio = FindAnyObjectByType<TableAudio>(FindObjectsInactive.Include);
-            if (_audio != null) { if (_chipIsPay) _audio.PlayChipsPay(); else _audio.PlayChipsCollect(); }
+            // COLLECT only, on the release frame so the chips are heard leaving her hands exactly as they visually do.
+            // A PAY deliberately makes no sound here — the beat that reads is the winnings ARRIVING at the seat, which
+            // the round-end director fires (local seat only). _chipIsPay exists to suppress collect during a pay.
+            if (!_chipIsPay)
+            {
+                if (_audio == null) _audio = FindAnyObjectByType<TableAudio>(FindObjectsInactive.Include);
+                if (_audio != null) _audio.PlayChipsCollect();
+            }
 
             var cb = _chipRelease; _chipRelease = null;
             cb?.Invoke();

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using PlayCard.Core;
@@ -27,6 +28,20 @@ namespace PlayCard.App
         // runtime (no Inspector) — this is a dev tool, so a baked-in key is acceptable.
         private const string UploadEndpoint = "/api/devlog/upload";
         private const string DevKey = "khela-devlog-6f3a92";
+
+        /// <summary>
+        /// Hard cap on the upload body. The payload used to be every session log ever recorded, concatenated with no
+        /// bound — it grew with the device's lifetime and eventually every Send failed.
+        ///
+        /// The number is set by the SMALLEST limit in the chain. Two apply, and they are NOT the same:
+        ///   • nginx <c>client_max_body_size</c> — now <c>5m</c> in sites-enabled/khela. It rejects with a 413 BEFORE
+        ///     the request reaches Kestrel, so the server logs NOTHING and the failure is invisible from that side.
+        ///     Its default is 1 MB, which is what silently broke every upload until Aug-2026.
+        ///   • the controller's own <c>RequestSizeLimit</c> — 5 MB.
+        /// 4.5 MB leaves headroom under both rather than sitting exactly on the limit. Raising this past 5 MB requires
+        /// BOTH the nginx directive and <c>DevLogController.MaxBytes</c> to move first.
+        /// </summary>
+        private const int MaxUploadBytes = 4500 * 1024;
         private const bool CaptureThreaded = true;   // capture off-thread logs too (async/HTTP errors fire off-thread)
 
         public static DevLogRecorder Instance { get; private set; }
@@ -174,15 +189,47 @@ namespace PlayCard.App
             IsSending = false;
         }
 
+        /// <summary>
+        /// Build the upload body, NEWEST session first and bounded by <see cref="MaxUploadBytes"/>.
+        ///
+        /// Newest-first matters twice: it is the session you are actually debugging, and it means the budget is spent
+        /// on recent logs rather than exhausted by ancient ones. If a single session is itself over budget we keep its
+        /// TAIL — a crash is at the end of a log, never the beginning.
+        /// </summary>
         private string CollectAllLogs()
         {
             var sb = new StringBuilder();
-            foreach (var f in Directory.GetFiles(_dir, "*.log"))
+            int budget = MaxUploadBytes;
+            int skipped = 0;
+
+            var files = new List<string>(Directory.GetFiles(_dir, "*.log"));
+            // Newest first. The current session's file sorts last by name, so sort by write time, not by name.
+            files.Sort((a, b) => File.GetLastWriteTimeUtc(b).CompareTo(File.GetLastWriteTimeUtc(a)));
+
+            foreach (var f in files)
             {
-                sb.Append("\n\n===== ").Append(Path.GetFileName(f)).Append(" =====\n");
-                try { sb.Append(File.ReadAllText(f)); }
-                catch (Exception ex) { sb.Append("<read failed: ").Append(ex.Message).Append(">\n"); }
+                if (budget <= 0) { skipped++; continue; }
+
+                string text;
+                try { text = File.ReadAllText(f); }
+                catch (Exception ex) { text = $"<read failed: {ex.Message}>\n"; }
+
+                bool trimmed = false;
+                if (text.Length > budget)
+                {
+                    text = text.Substring(text.Length - budget);   // keep the END — that's where the failure is
+                    trimmed = true;
+                }
+
+                sb.Append("\n\n===== ").Append(Path.GetFileName(f));
+                if (trimmed) sb.Append("  [TRUNCATED — tail only]");
+                sb.Append(" =====\n").Append(text);
+                budget -= text.Length;
             }
+
+            if (skipped > 0)
+                sb.Append("\n\n===== ").Append(skipped).Append(" older session(s) omitted (upload size cap) =====\n");
+
             return sb.ToString();
         }
 

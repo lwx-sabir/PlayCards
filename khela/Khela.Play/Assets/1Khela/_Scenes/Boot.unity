@@ -150,7 +150,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Sonity.Public.Runtime::Sonity.SoundManager
   internals:
     settings:
-      settingExpandBase: 1
+      settingExpandBase: 0
       settingsExpandAdvanced: 1
       disablePlayingSounds: 0
       asyncStartup: 0
@@ -186,7 +186,7 @@ MonoBehaviour:
       editorToolSelectSameTypeEnable: 0
     debug:
       debugExpand: 1
-      logSoundEventsEnabled: 1
+      logSoundEventsEnabled: 0
       logSoundEventsLogType: 0
       logSoundEventsSelectObject: 0
       logSoundEventsPlay: 1

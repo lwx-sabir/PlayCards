@@ -178,6 +178,8 @@ builder.Services.AddSingleton<BlackjackTableManager>();
 builder.Services.AddHostedService<BlackjackRoundDriver>();   // server round-driver: auto-stand on timeout + auto-settle
 builder.Services.AddSingleton<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerTableManager>();   // plug-and-play 3CP module (own manager, reuses shared wallet/redis/audit)
 builder.Services.AddHostedService<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerRoundDriver>();   // 3CP round-driver: auto-fold on timeout + auto-settle
+builder.Services.AddSingleton<Khela.Game.Games.VideoPoker.VideoPokerService>();   // plug-and-play Video Poker module (single-player REST, reuses shared wallet/redis/audit)
+builder.Services.AddHostedService<Khela.Game.Games.VideoPoker.VideoPokerReaper>();   // VP reaper: stand-pat-settle abandoned dealt hands so no bet is stranded
 builder.Services.AddHostedService<LeaderboardPruneService>();   // nightly prune of old PlayerDailyStat rows
 builder.Services.AddHostedService<Khela.Game.Services.Vip.VipTierReviewService>();   // monthly VIP tier review (gentle decay, §3.4)
 builder.Services.AddSingleton<SettlementReconciliationService>();      // one shared instance...
@@ -197,6 +199,7 @@ builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGrantService, Khel
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; paid out on claim)
 builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();   // chest system (CK_Chest etc.; opened by the daily-mission bundle)
 builder.Services.AddScoped<Khela.Game.Services.Missions.IMissionService, Khela.Game.Services.Missions.MissionService>();   // daily missions (server-authoritative; progress at settle, reward on claim)
+builder.Services.AddScoped<Khela.Game.Services.Pass.IPassService, Khela.Game.Services.Pass.PassService>();   // monthly pass: free daily ladder + Golden subscription (docs/PASS_SPEC.md)
 builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
 builder.Services.AddScoped<Khela.Game.Services.Vip.IVipService, Khela.Game.Services.Vip.VipService>();
 builder.Services.AddScoped<Khela.Game.Services.Loyalty.ILoyaltyService, Khela.Game.Services.Loyalty.LoyaltyService>();

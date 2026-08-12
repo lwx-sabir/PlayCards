@@ -71,10 +71,21 @@ namespace PlayCard.Game.Betting
                  "Seconds so the chips and the cards travel together.")]
         [SerializeField] private float tuckFollowSeconds = 0.35f;
 
-        [Header("Float-away — the stack shrinks out just before the win burst")]
-        [Tooltip("How long the stack takes to shrink to nothing (seconds). ALL chips shrink together, so this is the " +
-                 "whole effect length regardless of how many chips are on the spot. Keep it short (~0.2).")]
-        [SerializeField] private float floatAwayShrinkSeconds = 0.2f;
+        [Header("Payout stack — winnings land BESIDE the bet, as a real dealer pays")]
+        [Tooltip("Offset from a hand's bet stack to where its WINNINGS land, in the seat's BET-anchor frame. A dealer " +
+                 "pays alongside your wager, not on top of it — so this is normally X only (sideways), leaving Y and " +
+                 "Z alone, with a small gap so the two stacks read as two.")]
+        [SerializeField] private Vector3 payoutOffset = new Vector3(0.09f, 0f, 0f);
+
+        [Header("Peel-away — how a seat's chips LEAVE the felt (win payout and push alike)")]
+        [Tooltip("Seconds for ONE chip to rise and shrink out.")]
+        [SerializeField] private float peelRiseSeconds = 0.35f;
+        [Tooltip("Gap between each chip starting its peel. Total length is Rise + Stagger × (chips − 1), so a tall " +
+                 "stack takes longer rather than each chip moving faster. SET THIS TO 0 for the old behaviour, where " +
+                 "the whole stack vanished at once.")]
+        [SerializeField] private float peelStagger = 0.07f;
+        [Tooltip("How far a chip lifts as it goes (world units). Small — it should read as being picked up, not thrown.")]
+        [SerializeField] private float peelRise = 0.05f;
 
         private List<GameObject>[] _stacks;   // flat: seatIdx * MaxHands + handIdx
         private long[] _lastAmount;            // flat, same indexing
@@ -160,6 +171,8 @@ namespace PlayCard.Game.Betting
             // the bets that were placed during the window (or a mid-round join seeing the felt for the first time) —
             // not chips being added. Only a seat that grows while we were already watching is a double or a split.
             bool wasInRound = _prevInRound;
+            // A NEW round lifts every mid-round clear, or a seat that busted last round would never show a bet again.
+            if (inRound && !wasInRound) _clearedHands.Clear();
             _prevInRound = inRound;
             if (render && chipSet != null) { _lastMinBet = board.MinBet; _lastMaxBet = board.MaxBet; }   // cache stakes for BuildLooseStack
 
@@ -201,6 +214,10 @@ namespace PlayCard.Game.Betting
                     }
                     seatTotal += amount;
 
+                    // A hand the dealer has ALREADY taken mid-round (a bust) keeps its bet on the server's board until
+                    // the round settles, so without this the very next push would rebuild the stack she just swept.
+                    if (_clearedHands.Contains(i * MaxHands + h)) { Clear(slot); _lastAmount[slot] = 0; continue; }
+
                     if (!handCountChanged && amount == _lastAmount[slot]) continue;   // unchanged → leave as-is (no flicker)
                     long previous = _lastAmount[slot];
                     _lastAmount[slot] = amount;
@@ -240,6 +257,29 @@ namespace PlayCard.Game.Betting
         /// with the round rather than during it.
         /// </summary>
         public event System.Action<int, Vector3> ChipsAdded;
+
+        /// <summary>
+        /// ONE chip has just settled into the committed stack during the DEAL gather. Fires per chip (staggered by
+        /// <c>Gather Interval</c>), carrying that chip's Transform so the sound can be owned by the chip itself.
+        /// </summary>
+        public event System.Action<Transform> ChipGathered;
+
+        /// <summary>
+        /// Hand over a hand's committed chips mid-round and stop tracking it — the dealer taking a BUST before the
+        /// round is over. Returns the chips for the caller to fly; they are no longer rebuilt from the board.
+        /// Suppression lifts on its own when the next round starts.
+        /// </summary>
+        public IReadOnlyList<GameObject> ClearHandMidRound(int seatNumber, int handIndex)
+        {
+            int seatIdx = seatNumber - 1;
+            if (_stacks == null || seatIdx < 0 || handIndex < 0 || handIndex >= MaxHands) return new List<GameObject>();
+            _clearedHands.Add(seatIdx * MaxHands + handIndex);
+            SetLabel(seatIdx, string.Empty);   // the amount badge goes with the chips
+            return DetachHandStack(seatNumber, handIndex);
+        }
+
+        // Hands taken mid-round, so the board render stops resurrecting them. Emptied when a round starts.
+        private readonly HashSet<int> _clearedHands = new HashSet<int>();
 
         // World point of one hand's stack, for callers that only have the seat/hand. Safe on an unauthored seat.
         private Vector3 ChipWorldPoint(int seatNumber, int handIndex, int handCount)
@@ -360,9 +400,14 @@ namespace PlayCard.Game.Betting
         // chips under `parent` climbing +Y by stackStep with colliders OFF (visual only), and make the TOP chip show the
         // stack TOTAL. Used for the committed bet stacks (into _stacks) AND the director's unmanaged winnings stacks.
         private void SpawnStack(Transform parent, Vector3 baseLocalPos, long amount,
-                                IReadOnlyList<long> values, IReadOnlyList<GameObject> prefabs, List<GameObject> outList)
+                                IReadOnlyList<long> values, IReadOnlyList<GameObject> prefabs, List<GameObject> outList,
+                                float chipScale = -1f, float step = -1f)
         {
             if (parent == null || prefabs == null || values == null || outList == null) return;
+            // -1 = "the normal felt size". Overridden for a TUCKED hand, whose chips are drawn smaller — a payout
+            // built at full size next to a shrunken wager reads as two different sets of chips.
+            if (chipScale < 0f) chipScale = FeltChipScale;
+            if (step < 0f) step = stackStep;
 
             long remaining = amount;
             int placed = 0;
@@ -374,11 +419,11 @@ namespace PlayCard.Game.Betting
                 while (remaining >= v && placed < maxChips)
                 {
                     var go = Instantiate(prefab, parent);
-                    go.transform.localPosition = baseLocalPos + new Vector3(0f, stackStep * placed, 0f);
+                    go.transform.localPosition = baseLocalPos + new Vector3(0f, step * placed, 0f);
                     go.transform.localRotation = Quaternion.identity;
                     // Same felt size as a hand-dropped chip, so a chip doesn't change size when the dropped pile is
                     // gathered into the committed stack, or when winnings land next to it.
-                    go.transform.localScale = Vector3.one * FeltChipScale;
+                    go.transform.localScale = Vector3.one * chipScale;
                     foreach (var c in go.GetComponentsInChildren<Collider>(true)) c.enabled = false; // visual only
                     var chip = go.GetComponentInChildren<ChipView>();
                     if (chip != null) chip.SetValue(v);
@@ -580,6 +625,14 @@ namespace PlayCard.Game.Betting
                 chip.transform.SetParent(anchor, worldPositionStays: false);
                 chip.transform.localPosition = targetLocal;
                 chip.transform.localRotation = Quaternion.identity;
+                // This chip has settled onto the stack. Announced per chip rather than once for the gather, because
+                // that is physically what happens — five chips arriving one after another, each onto the last.
+                //
+                // It has to be announced in code: the pull is a kinematic tween (transform written per frame), so
+                // SoundPhysics never fires for it, and AdoptAsStack then destroys the Rigidbody and disables the
+                // colliders. Nothing about the gather reaches the physics system. The chip's own Transform is passed
+                // so each chip owns its voice — otherwise they would all share one instance and cut each other.
+                ChipGathered?.Invoke(chip.transform);
             }
             done?.Invoke();
         }
@@ -678,58 +731,65 @@ namespace PlayCard.Game.Betting
         }
 
         /// <summary>
-        /// FLOAT AWAY: this seat's remaining committed chips peel off the TOP of the stack one after another, each
-        /// rising (ease-out) and shrinking away. Used as the hand-off into the win burst — the felt stack lifts off a
-        /// beat before the burst fires, so the chips flying to the balance read as THIS stack leaving, instead of the
-        /// stack sitting there untouched while a second set of chips appears out of nowhere.
+        /// PEEL a seat's chips off the felt ONE AT A TIME, top of the stack first — each lifting slightly and
+        /// shrinking out. The SINGLE way chips leave a seat, whether the hand won or pushed, so the table always
+        /// clears with the same gesture. Both the wager and any winnings go together.
         ///
         /// Effect length is <c>Rise Seconds + Stagger x (chips - 1)</c>: every chip gets the full rise time, so adding
-        /// chips makes the peel longer rather than making each chip's motion shorter (and choppier).
+        /// chips makes the peel longer rather than making each chip's motion shorter (and choppier). <b>Stagger 0
+        /// collapses it to the old behaviour</b>, the whole stack vanishing at once.
+        ///
+        /// Taking from the TOP is what makes it read as a hand picking chips up rather than the pile evaporating.
+        /// Chips SHRINK rather than fade because the chip materials are opaque (URP Lit) — an alpha fade would need a
+        /// transparent material variant per chip and would silently do nothing on the standard ones.
         ///
         /// The chips are detached from tracking first, so the board render and <see cref="ReleaseHold"/> won't fight
         /// the animation or double-destroy them. Only whatever is still on the felt moves — on a split whose losing
         /// hand was already collected, that is exactly the winning hand's stack.
-        ///
-        /// Chips SHRINK as they rise rather than fading: the chip materials are opaque (URP Lit), so an alpha fade
-        /// would need a transparent material variant per chip and would silently do nothing on the standard ones.
         /// </summary>
-        /// <returns>How long the shrink takes, so the caller can fire the burst right after it.</returns>
-        public float PlayFloatAway(int seatNumber)
+        /// <returns>Total length of the effect, so a caller can sequence the win burst after it.</returns>
+        public float PlayPeelAway(int seatNumber)
         {
-            var detached = DetachSeatStacks(seatNumber);
-            if (detached == null || detached.Count == 0) return 0f;
+            var detached = new List<GameObject>(DetachSeatStacks(seatNumber));
+            // Winnings leave WITH the wager, in one gesture — a payout lingering after the bet vanished reads as a
+            // bug. A push has no payout, so this is simply empty there.
+            CollectPayout(seatNumber, detached);
+            if (detached.Count == 0) return 0f;
 
-            var chips = new List<Transform>(detached.Count);
+            // Stacks are built bottom-up, so the last entry is the top chip — take from the top, as a hand would.
+            detached.Reverse();
+
+            float rise = Mathf.Max(0.01f, peelRiseSeconds);
+            float gap = Mathf.Max(0f, peelStagger);
             for (int i = 0; i < detached.Count; i++)
-                if (detached[i] != null) chips.Add(detached[i].transform);
-            if (chips.Count == 0) return 0f;
+                if (detached[i] != null) StartCoroutine(PeelOne(detached[i].transform, gap * i, rise));
 
-            float duration = Mathf.Max(0.01f, floatAwayShrinkSeconds);
-            StartCoroutine(ShrinkAway(chips, duration));
-            return duration;
+            return rise + gap * Mathf.Max(0, detached.Count - 1);
         }
 
-        // All chips shrink to nothing TOGETHER over `duration` — one coroutine for the whole stack, so the effect
-        // length never depends on the chip count.
-        private IEnumerator ShrinkAway(List<Transform> chips, float duration)
+        private IEnumerator PeelOne(Transform chip, float delay, float duration)
         {
-            var baseScales = new Vector3[chips.Count];
-            for (int i = 0; i < chips.Count; i++)
-                if (chips[i] != null) baseScales[i] = chips[i].localScale;
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            if (chip == null) yield break;
+
+            Vector3 from = chip.position;
+            Vector3 to = from + Vector3.up * peelRise;
+            Vector3 baseScale = chip.localScale;
 
             float t = 0f;
-            while (t < duration)
+            while (t < duration && chip != null)
             {
                 t += Time.unscaledDeltaTime;
-                float k = 1f - Mathf.Clamp01(t / duration);
-                for (int i = 0; i < chips.Count; i++)
-                    if (chips[i] != null) chips[i].localScale = baseScales[i] * k;
+                float k = Mathf.Clamp01(t / duration);
+                chip.position = Vector3.Lerp(from, to, Mathf.SmoothStep(0f, 1f, k));
+                chip.localScale = baseScale * (1f - k);
                 yield return null;
             }
-
-            for (int i = 0; i < chips.Count; i++)
-                if (chips[i] != null) Destroy(chips[i].gameObject);
+            if (chip != null) Destroy(chip.gameObject);
         }
+
+        // (The old all-at-once ShrinkAway is gone — PlayPeelAway with Peel Stagger 0 is the same thing, and one
+        // clearing gesture means the win and the push can never drift apart again.)
 
         /// <summary>
         /// WORLD position of a seat's per-hand chip spot — the point a split hand's chips are collected FROM and paid
@@ -745,19 +805,85 @@ namespace PlayCard.Game.Betting
         }
 
         /// <summary>
+        /// WORLD position where this hand's WINNINGS land — beside the bet stack, by <see cref="payoutOffset"/>.
+        /// A dealer pays alongside your wager; stacking the payout on top of it hides how much you won.
+        /// </summary>
+        public Vector3 HandPayoutPoint(int seatNumber, int handIndex, int handCount)
+            => HandPayoutPoint(seatNumber, handIndex, handCount, 0);
+
+        /// <summary>
+        /// Where chip number <paramref name="chipIndex"/> of a payout lands — the payout spot, climbing +Y by
+        /// <c>stackStep</c> exactly as a built stack does.
+        ///
+        /// Every paid chip flying to the SAME point is why a payout looked like a single chip however much was won:
+        /// they arrived perfectly coincident, and their overlapping faces z-fought, which is what made the printed
+        /// value look broken until the peel pulled them apart.
+        /// </summary>
+        public Vector3 HandPayoutPoint(int seatNumber, int handIndex, int handCount, int chipIndex)
+        {
+            var anchor = ChipAnchor(seatNumber);
+            if (anchor == null) return Vector3.zero;
+            // StackStepFor, not stackStep: a tucked hand's chips are smaller, so its payout must climb at the smaller
+            // step too or the stack looks stretched next to the wager beside it.
+            return anchor.TransformPoint(HandOffset(seatNumber, handIndex, handCount)
+                                         + payoutOffset
+                                         + new Vector3(0f, StackStepFor(seatNumber, handIndex, handCount) * Mathf.Max(0, chipIndex), 0f));
+        }
+
+        /// <summary>
+        /// Take ownership of a seat's landed WINNINGS so they persist as a second stack and leave WITH the bet stack.
+        ///
+        /// The director builds and flies these, but must not destroy them on arrival — the payout has to sit there
+        /// long enough to be read, then shrink away together with the wager in one gesture (see
+        /// <see cref="PlayPeelAway"/>). Anything still held is cleared by <see cref="ReleaseHold"/> at the sweep,
+        /// which is what covers remote seats: only the local seat's stack gets a float-away.
+        /// </summary>
+        public void HoldPayoutChips(int seatNumber, IReadOnlyList<GameObject> chips)
+        {
+            if (chips == null || chips.Count == 0) return;
+            if (!_payouts.TryGetValue(seatNumber, out var list)) { list = new List<GameObject>(); _payouts[seatNumber] = list; }
+            for (int i = 0; i < chips.Count; i++)
+                if (chips[i] != null) list.Add(chips[i]);
+        }
+
+        // Landed winnings per seat, awaiting the float-away (local seat) or the sweep (everyone else).
+        private readonly Dictionary<int, List<GameObject>> _payouts = new Dictionary<int, List<GameObject>>();
+
+        // Move a seat's held payout chips into `outList` and forget them here.
+        private void CollectPayout(int seatNumber, List<GameObject> outList)
+        {
+            if (!_payouts.TryGetValue(seatNumber, out var list)) return;
+            for (int i = 0; i < list.Count; i++)
+                if (list[i] != null) outList.Add(list[i]);
+            list.Clear();
+        }
+
+        /// <summary>
         /// Build an UNMANAGED winnings stack (never tracked in <c>_stacks</c>, so the board render never touches it)
         /// parented to <paramref name="parent"/> (the dealer's hand). The director flies it to the winner and destroys
         /// it. <paramref name="amount"/> is the seat's net winnings (LastResults.Delta). Empty for a non-positive
         /// amount or a missing chip set. Uses the stakes cached from the last live board so the denominations match.
         /// </summary>
-        public IReadOnlyList<GameObject> BuildLooseStack(Transform parent, Vector3 localPos, long amount)
+        public IReadOnlyList<GameObject> BuildLooseStack(Transform parent, Vector3 localPos, long amount,
+                                                        float chipScale = -1f, float step = -1f)
         {
             var outList = new List<GameObject>();
             if (parent == null || amount <= 0 || chipSet == null) return outList;
             SpawnStack(parent, localPos, amount, chipSet.Values(_lastMinBet, _lastMaxBet),
-                       chipSet.PrefabsFor(_lastMinBet, _lastMaxBet), outList);
+                       chipSet.PrefabsFor(_lastMinBet, _lastMaxBet), outList, chipScale, step);
             return outList;
         }
+
+        /// <summary>Chip size for a hand as currently DRAWN — shrunk while that hand is tucked. Winnings are built at
+        /// this so they match the wager they land beside.</summary>
+        public float ChipScaleFor(int seatNumber, int handIndex, int handCount) => FeltChipScale * TuckFactor(seatNumber, handIndex, handCount);
+
+        /// <summary>Vertical step between chips for a hand as currently DRAWN — shrinks with the chips.</summary>
+        public float StackStepFor(int seatNumber, int handIndex, int handCount) => stackStep * TuckFactor(seatNumber, handIndex, handCount);
+
+        private float TuckFactor(int seatNumber, int handIndex, int handCount)
+            => (followTuck && tableView != null && tableView.IsHandTucked(seatNumber, handIndex, handCount))
+                ? Mathf.Max(0.1f, 1f - tuckChipShrink) : 1f;
 
         /// <summary>That seat's chip anchor (1-based), bounds-checked; null if unauthored — the director pays winnings here.</summary>
         public Transform ChipAnchor(int seatNumber)
@@ -778,6 +904,15 @@ namespace PlayCard.Game.Betting
                 for (int slot = 0; slot < _stacks.Length; slot++) { Clear(slot); _lastAmount[slot] = -1; }
             if (_lastHandCount != null)
                 for (int i = 0; i < _lastHandCount.Length; i++) _lastHandCount[i] = -1;
+
+            // Winnings that never got a float-away — every REMOTE seat (only the local one bursts), and the local seat
+            // on a torn-down ceremony. Without this they would sit on the felt into the next round.
+            foreach (var kv in _payouts)
+            {
+                var list = kv.Value;
+                for (int i = 0; i < list.Count; i++) if (list[i] != null) Destroy(list[i]);
+                list.Clear();
+            }
         }
     }
 }

@@ -116,7 +116,9 @@ namespace PlayCard.UI
             if (board == null) return false;
             int seat = table != null ? table.MySeat : -1;
             bool roundEndSettling = view != null && view.RoundEndSettling;
-            bool dealt = view == null || view.DecisionReady(seat);
+            // ActionReady, matching TableCameraController exactly — this fade rides the camera move, so a different
+            // gate would fade the avatars a beat before or after the framing changed.
+            bool dealt = view == null || view.ActionReady(seat);
             // BettingOpenForMe, not raw !RoundInProgress — see TableCameraController.Resolve, which this must keep
             // matching. The shared window keeps the round "not started" until every seat has bet; once THIS player
             // commits, the camera pulls back to the table pose, so the avatars have to fade back in with it.

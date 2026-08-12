@@ -4,10 +4,16 @@
 in particular the dual-currency guardrail (§2) and wallet integrity (§3). `dotnet build`
 must pass with no unexpected pending migration.*
 
-Status: **slices 1–2 of 7 built.** §2 reward seam (`RewardKind`/`RewardGrant`, three granters,
-`RewardGrantService`, the XP cap bypass, `PlayerRewards.Kind/ItemId` — migration applied) and §3
-catalog (`PassCatalog`: programs, monthly cycle resolution, catch-up rules, validate, totals).
-64 tests green, all pure. Next: §4/§5 tables + `PassService` + `PassController`.
+Status: **slices 1–3 of 8 built.** §2 reward seam (migration applied); §3 catalog
+(`PassCatalog` + `PassClock`); §4/§5 core — `AddPassTables` (3 tables + `UserProfile.TimeZoneId`,
+**migration created, NOT yet applied**), `PassService` (state, claim, claim-all, entitlement read)
+and `PassController` (`GET /api/pass`, `claim`, `claim-all`). 76 tests green.
+Next: slice 4 — `GrantGoldenAsync` + the missed-days unlock + admin grant/revoke.
+
+⚠️ **Coverage gap to close in slice 4:** `PassService`'s claim ordering (reserve → spend → grant →
+complete) has no automated test — it needs a DB. The decisions it acts on are pure and covered;
+the persistence path is not. Same gap as the wallet's `SELECT … FOR UPDATE` (see
+`docs/PROJECT_REVIEW`), and it wants the same integration harness.
 
 ---
 
@@ -37,10 +43,16 @@ GOLDEN          [ 🔒]  [ 🔒]  [ 🔒]  [   ]  [   ]    [★]     ← monthly
   receipt validates. That retro pile *is* the conversion lever — the player sees what they're
   owed before paying. **T&C:** current cycle only, must be collected before the cycle ends, and
   it's void if the purchase is refunded (§5.5).
-- **Catch-up is a paid privilege by default** (`CatchUp = GoldenOnly`): free players get *today's*
-  node only, so missing a day really does cost the free reward — that's what makes daily return
-  worth something and what makes the subscription worth buying. One config knob flips it to
-  `None` (nobody backfills) or `All` (everyone backfills). §3.
+- **A missed day always costs something** (`CatchUp = GoldenOrAds`, the default): today's node is
+  always free; a *missed* node is free for subscribers, and everyone else buys it back with
+  **2 verified rewarded-ad views**, capped at **5 days per cycle**. So the free track earns ad
+  revenue instead of dead-ending, the subscription stays clearly better, and nobody just loses a
+  day with no recourse. Both numbers, and the policy itself (`None` / `GoldenOnly` / `All`), are
+  admin knobs. Ads are credited only by the network's **server-side callback** — never by the
+  client claiming it watched something (§5.6).
+- **Days flip at the PLAYER's local midnight, not UTC's.** A UTC reset means a Dhaka player's day
+  ends at 6am — play the evening, sleep, open the app, day gone. Every boundary here (day index
+  *and* cycle) is computed in a timezone stored per player (§5.1).
 - `MARKETING_SPEC` A5 (R1 renewal defence) reads its signals off this system: entitlement rows
   give renewal dates, claim rows give the "subscriber not claiming dailies" non-renewal predictor.
 
@@ -159,9 +171,10 @@ public enum PassCadence
 /// <summary>Who may claim a node whose day has already passed.</summary>
 public enum CatchUpPolicy
 {
-    None       = 0,   // today's node only, both tracks
-    GoldenOnly = 1,   // DEFAULT — free: today only; golden: every earlier node unlocks
-    All        = 2,   // both tracks backfill the whole cycle
+    None        = 0,   // today's node only, both tracks
+    GoldenOnly  = 1,   // free: today only; golden: every earlier node unlocks
+    All         = 2,   // both tracks backfill the whole cycle, free
+    GoldenOrAds = 3,   // DEFAULT — golden backfills free; everyone else pays in rewarded ads
 }
 
 public sealed class PassNode
@@ -187,7 +200,10 @@ public sealed class PassProgram
     public string Title { get; set; }
     public bool Enabled { get; set; } = true;
     public PassCadence Cadence { get; set; } = PassCadence.Monthly;
-    public CatchUpPolicy CatchUp { get; set; } = CatchUpPolicy.GoldenOnly;
+    public CatchUpPolicy CatchUp { get; set; } = CatchUpPolicy.GoldenOrAds;
+
+    public int AdsPerCatchUp { get; set; } = 2;           // verified ad views to buy back ONE missed day
+    public int MaxAdCatchUpsPerCycle { get; set; } = 5;   // 0 turns ad catch-up off without changing the policy
 
     public DateTime? StartUtc { get; set; }        // Fixed cadence only
     public DateTime? EndUtc { get; set; }          // Fixed cadence only, exclusive
@@ -210,11 +226,11 @@ public sealed class PassConfig
 }
 ```
 
-**Cycle resolution** (`PassCatalog.CurrentCycle(program, nowUtc)`) returns
-`{ CycleKey, StartUtc, EndUtc, Nodes, Length }`:
+**Cycle resolution** (`PassCatalog.CurrentCycle(program, nowUtc, tz)`) returns
+`{ CycleKey, LocalStart, LocalEnd, StartUtc, EndUtc, Nodes, Length, … }`:
 
-- `Monthly` → the calendar month containing `nowUtc`; key `"yyyy-MM"`; `Nodes` = the override for
-  that key if one exists, else the recurring ladder.
+- `Monthly` → the player's LOCAL calendar month (§5.1); key `"yyyy-MM"` from their local date;
+  `Nodes` = the override for that key if one exists, else the recurring ladder.
 - `Fixed` → the program's own window, key = the program key; null outside it.
 - **Effective length = `min(ladder nodes, days in the cycle)`.** A 31-node ladder in April simply
   stops at 30; in February it stops at 28. Author the final milestone at **node 28 or lower** or
@@ -223,7 +239,9 @@ public sealed class PassConfig
 `PassCatalog` mirrors `ChestCatalog`: `RedisKey = "khela:pass"`, `JsonOptions` (indented +
 `JsonStringEnumConverter`), `Defaults()`, `ToJson()`, `TryParse()`, `Validate()`, `Totals()`.
 
-**`Validate()` rejects:** duplicate program keys; a key longer than the 32-char column;
+**`Validate()` rejects:** an ad price above 10 or a per-cycle cap above 31, and `GoldenOrAds` with
+a price of 0 but a non-zero cap (that would be free catch-up for everyone, which is a different
+policy); duplicate program keys; a key longer than the 32-char column;
 duplicate/​non-contiguous node indexes (the ladder must be `1..N`); a ladder longer than 31 for a
 monthly program; empty node payloads on *both* tracks; a currency line outside the allowlist
 (with the explicit "tradeable token" message); non-positive amounts; a `Chest` line whose
@@ -279,8 +297,13 @@ which is not a backup. A hosted `ConfigBackupService` in Khela.Game:
 
 ## 4. Schema (one migration: `AddPassTables`)
 
-Two tables. There is deliberately **no progress/summary table** — the claim ledger is the only
-truth, so there's no cache to drift.
+Three tables plus one column. There is deliberately **no progress/summary table** — the claim
+ledger is the only truth, so there's no cache to drift.
+
+- `UserProfile.TimeZoneId` — `varchar(64)`, nullable (null ⇒ UTC). The player's IANA zone, §5.1.
+- `PlayerPassClaims` — the claim ledger.
+- `PlayerPassEntitlements` — subscription windows.
+- `PlayerPassAdUnlocks` — verified ad views spent on catch-up, §5.6.
 
 ```csharp
 [Table("PlayerPassClaims")]
@@ -293,8 +316,11 @@ public class PlayerPassClaim
     [Required, MaxLength(32)] public string PassKey { get; set; }    // program: "monthly" (a Season Pass is another key)
     [Required, MaxLength(32)] public string CycleKey { get; set; }   // "2026-09"
     [Required] public int Node { get; set; }                         // = day of the cycle
-    [Required] public DateTime ClaimedOnUtc { get; set; }            // the date the player actually tapped (audit; a
-                                                                     // catch-up claim has ClaimedOnUtc > node's own day)
+    [Required] public DateTime ClaimedOnUtc { get; set; }            // the instant the player tapped
+    [Required] public DateTime ClaimedOnLocalDate { get; set; }      // THEIR date (audit: a catch-up claim's local
+                                                                     // date is later than the node's own day)
+    [MaxLength(64)] public string TimeZoneId { get; set; }           // the zone that decided the boundary
+    [Required] public bool WasAdUnlock { get; set; }                 // this node was bought back with ads
     [Required] public bool FreeGranted { get; set; }
     [Required] public bool GoldenGranted { get; set; }               // false if not entitled at claim time → retro-owed
     [Required] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -321,6 +347,27 @@ public class PlayerPassEntitlement
     [Timestamp, Column(TypeName = "timestamp(6)")] public DateTime? RowVersion { get; set; }
 }
 ```
+
+```csharp
+[Table("PlayerPassAdUnlocks")]
+[Index(nameof(AdTransactionId), IsUnique = true)]                            // one credit per verified ad view
+[Index(nameof(UserId), nameof(PassKey), nameof(CycleKey))]                   // the per-cycle cap query
+public class PlayerPassAdUnlock
+{
+    [Key] public Guid Id { get; set; } = Guid.NewGuid();
+    [Required] public Guid UserId { get; set; }
+    [Required, MaxLength(32)] public string PassKey { get; set; }
+    [Required, MaxLength(32)] public string CycleKey { get; set; }
+    [Required, MaxLength(128)] public string AdTransactionId { get; set; }   // the AD NETWORK's id, from its SSV callback
+    [MaxLength(32)] public string Network { get; set; }                      // "admob" | "unityads" | "ironsource"
+    [Required] public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int? SpentOnNode { get; set; }                                    // null until consumed by a catch-up claim
+    public DateTime? SpentAt { get; set; }
+}
+```
+
+Ad credits are scoped to (player, pass, cycle) and simply stop existing at rollover — no expiry
+job, and no way to bank a hundred views in a cheap month and cash them in later.
 
 **Why entitlement is a window, not a per-cycle row.** Golden is a monthly *subscription* bought on
 any day, so its period (20th → 20th) crosses cycle boundaries. Each store transaction — the first
@@ -355,19 +402,47 @@ public interface IPassService
 }
 ```
 
-### 5.1 What a player may claim right now
+### 5.1 The player's clock (`PassClock`)
+
+Every boundary is the **player's local midnight**, from an IANA timezone stored on their profile
+(`UserProfile.TimeZoneId`, e.g. `Asia/Dhaka`), sent by the client at login and validated
+server-side. Production details that are easy to get wrong and are handled:
+
+- **IANA ids, not offsets** — DST comes from tzdata instead of from us.
+- **Unknown / missing / hostile id → UTC**, never an exception.
+- **Local midnight doesn't always exist** (spring-forward zones like Santiago, Tehran, Havana) and
+  is sometimes ambiguous (fall-back). `PassClock.ToUtc` walks to the first real instant and takes
+  the earlier offset when ambiguous, so a boundary never lands twice or throws.
+- **A test asserts the host can resolve `Asia/Dhaka`** — publishing with
+  `InvariantGlobalization=true` (or a container without tzdata) would silently drop every player
+  back to UTC, i.e. exactly the bug this design exists to prevent. Fail the build instead.
+- **Timezone hopping is not a payout exploit.** Nodes are claimed by INDEX under a unique
+  `(user, pass, cycle, node)` index, so the worst a clock-hopper achieves is reaching tomorrow's
+  node a few hours early — never a second payout, never past the ladder's end.
+- Each claim row stores the local date and tz used, so support can reconstruct what the player saw.
+
+### 5.2 What a player may claim right now
 
 ```
-dayIndex   = (utcNow.Date - cycle.StartUtc.Date).Days + 1     // 1..daysInCycle
-maxNode    = min(dayIndex, cycle.Length)                      // never ahead of the calendar
-claimable  = nodes 1..maxNode not already claimed, filtered by CatchUpPolicy:
-               None       → node == maxNode only
-               GoldenOnly → node == maxNode, or (isGolden and node < maxNode)   ← default
-               All        → every unclaimed node ≤ maxNode
+localDate  = PassClock.LocalDate(utcNow, tz)                  // the PLAYER's date
+dayIndex   = (localDate - cycle.LocalStart).Days + 1          // 1..daysInCycle
+maxNode    = min(dayIndex, cycle.Length)                      // never ahead of their calendar
+
+today (maxNode)  → always free
+missed (< maxNode, unclaimed) → by policy:
+  None         nothing
+  GoldenOnly   free if golden, else locked
+  GoldenOrAds  free if golden; else the first (cap − used) of them are AD-UNLOCKABLE     ← default
+               at AdsPerCatchUp views each; the rest are golden-locked (the subscribe CTA)
+  All          free for everyone
 ```
 
-Unclaimed nodes die with the cycle — there is no cross-cycle carry-over, and nothing is owed once
-the month rolls over. That is the "T&C" behind catch-up, and the client must show the countdown.
+`PassCatalog.Availability(...)` returns exactly that split — `Claimable`, `AdUnlockable`,
+`AdsPerUnlock`, `AdUnlocksLeft`, `GoldenLocked` — and is pure, so the whole policy is unit-tested
+without a database.
+
+Unclaimed nodes die with the cycle — no cross-cycle carry-over, nothing owed once the month rolls
+over. That is the "T&C" behind catch-up, and the client must show the countdown.
 
 ### 5.2 Claim (money-safe order — reserve, grant, complete)
 
@@ -442,6 +517,38 @@ untested when IAP lands.
 Scope of the unlock is the **current cycle only** — a subscription bought in October never pays
 out September's ladder, no matter when the subscription started.
 
+### 5.6 Ad catch-up (the free player's way back)
+
+A missed day costs `AdsPerCatchUp` **verified** rewarded-ad views, up to `MaxAdCatchUpsPerCycle`
+days per cycle. "Verified" is the whole design: **the client is never believed.**
+
+```
+client asks to unlock node N  → POST /api/pass/ad-intent { node }
+                                 → server returns a signed, single-use token
+                                   (userId, passKey, cycleKey, node, nonce, expiry)
+client shows the rewarded ad, passing that token as the network's custom data
+ad network (server → server)  → POST /api/ads/ssv?...&signature=...
+                                 → verify the network's signature over the WHOLE query,
+                                   replay-check its transactionId, then append PlayerPassAdUnlocks
+client re-claims               → POST /api/pass/claim { node, useAds: true }
+                                 → consume AdsPerCatchUp unspent credits IN THE SAME TRANSACTION
+                                   as the claim row, then pay out exactly as any other claim
+```
+
+Rules that keep it honest:
+
+- **Signature-verified SSV only** (AdMob's public-key SSV, Unity Ads / ironSource S2S callbacks).
+  An unsigned or mis-signed callback is dropped, and the endpoint is anonymous-but-authenticated
+  by that signature, never by a session.
+- **`AdTransactionId` is uniquely indexed** — a replayed callback credits nothing.
+- **Credits are consumed inside the claim transaction**, so a crash can't both spend the credits
+  and fail to pay, or pay twice.
+- **Cap enforced server-side** from the ledger, not from a client-side counter.
+- A player may hold at most `AdsPerCatchUp × MaxAdCatchUpsPerCycle` unspent credits per cycle;
+  further callbacks are recorded and ignored, which keeps ad-farming pointless.
+- Ads are a *catch-up* currency only — they never unlock the golden payload of a node. Golden is
+  bought with money, full stop.
+
 ### 5.5 Reads
 
 `GetStateAsync` returns the whole ladder + per-node claim state in one call (≤31 nodes is small):
@@ -465,9 +572,13 @@ kind generically — unknown kind → generic icon + label, never a crash.
 | Method | Route | Notes |
 |---|---|---|
 | GET | `/api/pass` | full state (§5.5); `?passKey=` defaults to `monthly` |
-| POST | `/api/pass/claim` | `{ node? }` — omit for today, pass an earlier node to catch up |
-| POST | `/api/pass/claim-all` | claim everything currently claimable, oldest first |
+| POST | `/api/pass/claim` | `{ node?, useAds? }` — omit node for today; `useAds` spends ad credits on a missed one |
+| POST | `/api/pass/claim-all` | claim everything currently free, oldest first (never spends ad credits) |
+| POST | `/api/pass/ad-intent` | `{ node }` → a signed single-use token to hand the ad SDK (§5.6) |
 | POST | `/api/pass/purchase` | `{ platform, productId, receipt }` → validate → `GrantGoldenAsync("iap")` |
+| POST | `/api/ads/ssv` | **the ad network's** signed server-side callback — no player session (§5.6) |
+
+The client also PATCHes its IANA timezone at login (`/api/profile`), validated server-side.
 
 ## 6.1 Admin panel — `/Pass` (Khela.Web, full CRUD page)
 
@@ -539,15 +650,17 @@ The player detail page also shows the current cycle's claim history, golden stat
 |---|---|---|
 | 1 ✅ | Reward seam | `RewardKind`/`RewardGrant`, 3 granters, `RewardGrantService`, `GrantXpAsync(bypassDailyCap)`, `AddRewardKindToPlayerRewards` |
 | 2 ✅ | Catalog | `PassCatalog` + `Defaults()` + `Validate()` + unit tests (no DB, no HTTP) |
-| 3 | Core | `AddPassTables`, `PassService` (state + claim), `PassController` GET/claim |
-| 4 | Entitlement | `GrantGoldenAsync` + retro-enqueue + admin grant/revoke (exercisable without IAP) |
+| 3 ✅ | Core | `AddPassTables` + `UserProfile.TimeZoneId`, `PassService` (state + claim), `PassController` GET/claim |
+| 4 | Entitlement | `GrantGoldenAsync` + missed-days unlock + admin grant/revoke (exercisable without IAP) |
 | 5 | Admin | `/Pass` full CRUD page (§6.1) + `ConfigBackupService` (§3.2) |
-| 6 | Client | `PassScreen` |
-| 7 | Real money | `POST /api/pass/purchase` wired to IAP receipt validation once that ships |
+| 6 | Client | `PassScreen` + timezone reporting at login |
+| 7 | Ads | `/api/pass/ad-intent` + `/api/ads/ssv` + credit consumption (§5.6) |
+| 8 | Real money | `POST /api/pass/purchase` wired to IAP receipt validation once that ships |
 | — | later | `CosmeticGranter`, `ItemGranter` + `PlayerItems` |
 
-Slices 1–2 are pure and testable with no infrastructure; do them first. Slice 7 is gated on the
-Phase-0 IAP work — everything before it ships and is playable on the free track.
+Slices 1–2 are pure and testable with no infrastructure; do them first. Slices 7–8 are gated on
+the ad SDK and the Phase-0 IAP work — everything before them ships and is playable on the free
+track (with catch-up simply unavailable until the ad path lands).
 
 ## 9. Tests (xUnit, alongside `ChestCatalogTests`)
 
@@ -557,8 +670,16 @@ Phase-0 IAP work — everything before it ships and is playable on the free trac
 - `CurrencyGranter` drops a non-allowlisted line even when `Validate` was bypassed (fail-closed).
 - Cycle math: Sept 15 → cycle "2026-09", day 15, maxNode 15; Feb 28 → maxNode 28 even with a
   31-node ladder; April 30 → 30; a milestone above 28 is flagged.
-- Catch-up policy: free player on day 20 may claim only node 20; a golden player may claim 1..20;
-  `None` allows only node 20 for everyone; `All` allows 1..20 for everyone.
+- Catch-up policy: on day 20 a free player may claim node 20 free, buy back the first 5 missed days
+  with ads, and sees the rest as golden-locked; a golden player may claim 1..20 free; `None` allows
+  only node 20 for everyone; `All` allows 1..20 for everyone; a `MaxAdCatchUpsPerCycle` of 0
+  removes the ad path without changing the policy.
+- Clock: the day flips at the player's local midnight (a Dhaka player is on day 16 while UTC is
+  still on day 15, and enters the new cycle 6h before UTC does); `NextLocalMidnightUtc` is always
+  in the future and within 25h across a year of DST transitions in every tested zone; an unknown
+  or hostile tz id falls back to UTC; the host can resolve IANA ids at all (environment guard).
+- Ads: a replayed SSV callback credits nothing; credits are consumed in the same transaction as
+  the claim; the per-cycle cap is enforced from the ledger.
 - Retro/unlock: subscribing on day 20 unlocks exactly 20 nodes' golden payloads (claimed ones
   enqueued, unclaimed ones claimed), and a second `GrantGoldenAsync` (renewal/replay) enqueues 0.
 - Replay: two concurrent `ClaimAsync` calls for the same node → one row, one payout.
@@ -575,3 +696,5 @@ Phase-0 IAP work — everything before it ships and is playable on the free trac
 4. Pass off (no program / no cycle / `Enabled=false` / bad config) pays nothing, breaks nothing.
 5. The monthly cycle rolls over on the 1st with no admin action, and the subscription window is
    whatever the store says — never our own clock.
+6. Day boundaries are the player's local midnight, and no ad credit exists without a
+   signature-verified network callback.

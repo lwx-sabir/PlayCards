@@ -35,11 +35,14 @@ namespace PlayCard.Audio
             bool usable = _button == null || _button.interactable;
 
             var sound = usable ? click : denied;
-            // NOT Play2D(): that overload lives behind Sonity's SONITY_ENABLE_LEGACY_FUNCTIONS_MUSIC_AND_2D define and
-            // does not exist in a default install. It was only ever a convenience for omitting the Transform — a sound
-            // is 2D because its SoundContainer says so (Spatial Blend 0, distance off), not because of how it is
-            // played. Author the UI containers that way and this is flat regardless of where the button is.
-            if (sound != null) sound.Play(transform);
+            // UIPlay, not Play2D: Play2D is the LEGACY name (behind SONITY_ENABLE_LEGACY_FUNCTIONS_MUSIC_AND_2D, which
+            // is not defined here) — UIPlay is the same thing under its current name. It owns the sound on the
+            // SoundManager's own UI transform, which is what makes SoundEvent.UIStopAll() able to kill every UI sound
+            // on a panel teardown.
+            //
+            // It does NOT make the sound 2D. A sound is 2D because its SoundContainer says so — Spatial Blend 0 and
+            // Enable Distance off. Author the UI containers that way or a button will pan with the camera.
+            if (sound != null) sound.UIPlay();
         }
 
         /// <summary>Assign the sounds from tooling (the bulk editor menu) without exposing the fields publicly.</summary>

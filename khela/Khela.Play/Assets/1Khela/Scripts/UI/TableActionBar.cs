@@ -147,7 +147,9 @@ namespace PlayCard.UI
             // Hold the action buttons until MY cards AND the DEALER's have landed (the dealer is dealt last, so that's
             // the whole deal finished) — but NOT other players' seats, so a remote hit can't eat my turn timer. Also OFF
             // during the round-end ceremony (a blackjack can leave a stale my-turn flag as it auto-resolves).
-            bool act = myTurn && !settling && (view == null || view.DecisionReady(table.MySeat));
+            // ActionReady = my cards + the dealer's landed AND nothing else is still flying. Shared with the camera so
+            // the close framing and these buttons enable on the same frame (see BlackjackTableView.ActionReady).
+            bool act = myTurn && !settling && (view == null || view.ActionReady(table.MySeat));
             Set(hitButton, act);
             Set(standButton, act);
             Set(doubleButton, act && hand != null && hand.Cards.Count == 2);
@@ -184,7 +186,10 @@ namespace PlayCard.UI
             // Committing a bet is a LOCAL flip on the button press — no board arrives to trigger Refresh, and during a
             // shared betting window the next push can be seconds away, so without this the bar stays live long after
             // the player has bet.
-            bool localUnsettled = view != null && !view.DecisionReady(table.MySeat);
+            // ActionReady, matching the gate Refresh actually uses. Watching DecisionReady while gating on something
+            // else would re-render on the wrong frame — the buttons would wait for the next server push to catch up
+            // with the camera, which is exactly the mismatch this pairing exists to prevent.
+            bool localUnsettled = view != null && !view.ActionReady(table.MySeat);
             bool settling = view != null && view.RoundEndSettling;
             bool committed = table.BettingCommitted;
             if (localUnsettled != _lastAnimating || settling != _lastSettling || committed != _lastCommitted)

@@ -68,7 +68,8 @@ namespace PlayCard.UI
                  "stagger, height, top-first) on BetStacks under 'Float-away'.")]
         [SerializeField] private BetStacks betStacks;
         [Tooltip("Extra pause between the stack finishing its shrink and the burst firing (seconds). 0 = burst the " +
-                 "moment the chips are gone.")]
+                 "moment the chips are gone. NOTE: with a RoundEndDirector the shrink (and the pause for reading the " +
+                 "payout) is owned by the director — see its Payout Read Seconds.")]
         [SerializeField] private float burstDelayAfterShrink = 0f;
 
         [Tooltip("The chip COUNT label's juice. Auto-found. Each chip that lands ticks the number up a slice and " +
@@ -164,7 +165,21 @@ namespace PlayCard.UI
             if (source == null || target == null || chipPrefab == null || spawnParent == null) return;
 
             SeatResultView r = board.LastResults?.Find(x => x.SeatNumber == table.MySeat);
-            if (r == null || r.Outcome != "win") return;   // win only — push / lose / bust do nothing
+            if (r == null) return;
+
+            // PER HAND, not the seat's Outcome. That field is a NET across the seat, so a SPLIT that wins one hand and
+            // loses the other is labelled "push" or even "lose" — and the burst never fired, even though the dealer
+            // had just paid real chips onto the felt for the hand that won. Every other split-aware surface in the
+            // table reads the per-hand list for exactly this reason; this was the last one still trusting the net.
+            bool won;
+            if (r.Hands != null && r.Hands.Count > 0)
+            {
+                won = false;
+                foreach (var h in r.Hands) if (h != null && h.Delta > 0m) { won = true; break; }
+            }
+            else won = r.Outcome == "win";   // older server with no per-hand list
+
+            if (!won) return;   // push / lose / bust do nothing
 
             // Claim the pending credit NOW, synchronously: the director's payout beat fires in this same frame and
             // would otherwise roll the count straight to the total before a single chip had flown.
@@ -178,9 +193,13 @@ namespace PlayCard.UI
         // With no BetStacks wired the wait is 0 and this is the old behaviour: burst immediately.
         private IEnumerator LiftStackThenBurst()
         {
+            // With a RoundEndDirector present it has already cleared the felt — it waits for every one of the seat's
+            // hands to be paid (a split pays two) and shrinks the wagers and the winnings in one gesture, then calls
+            // us. Doing it again here would be a no-op at best and, on a split, would fire before the second hand had
+            // landed. Standalone (no director) this is still ours.
             float shrink = 0f;
-            if (betStacks != null && table != null && table.MySeat > 0)
-                shrink = betStacks.PlayFloatAway(table.MySeat);
+            if (_settleDirector == null && betStacks != null && table != null && table.MySeat > 0)
+                shrink = betStacks.PlayPeelAway(table.MySeat);
 
             float wait = shrink + Mathf.Max(0f, burstDelayAfterShrink);
             if (wait > 0f) yield return new WaitForSecondsRealtime(wait);

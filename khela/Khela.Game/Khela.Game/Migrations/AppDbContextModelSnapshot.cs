@@ -1108,6 +1108,173 @@ namespace Khela.Game.Migrations
                     b.ToTable("PlayerDailyStats");
                 });
 
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerPassAdUnlock", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("AdTransactionId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CycleKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("Network")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("PassKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime?>("SpentAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("SpentOnNode")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdTransactionId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "PassKey", "CycleKey");
+
+                    b.ToTable("PlayerPassAdUnlocks");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerPassClaim", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("ClaimedOnLocalDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ClaimedOnUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CycleKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<bool>("FreeGranted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool>("GoldenGranted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int>("Node")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PassKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<bool>("WasAdUnlock")
+                        .HasColumnType("tinyint(1)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "PassKey", "CycleKey");
+
+                    b.HasIndex("UserId", "PassKey", "CycleKey", "Node")
+                        .IsUnique();
+
+                    b.ToTable("PlayerPassClaims");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerPassEntitlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<bool>("AutoRenew")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("GrantedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OriginalTransactionId")
+                        .HasMaxLength(96)
+                        .HasColumnType("varchar(96)");
+
+                    b.Property<string>("PassKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("PurchaseRef")
+                        .IsRequired()
+                        .HasMaxLength(96)
+                        .HasColumnType("varchar(96)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime>("StartsAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "PassKey");
+
+                    b.HasIndex("UserId", "PassKey", "PurchaseRef")
+                        .IsUnique();
+
+                    b.ToTable("PlayerPassEntitlements");
+                });
+
             modelBuilder.Entity("Khela.Game.Database.Models.PlayerReward", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1664,6 +1831,10 @@ namespace Khela.Game.Migrations
                     b.Property<string>("StatusMessage")
                         .HasMaxLength(80)
                         .HasColumnType("varchar(80)");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<decimal>("TotalWagered")
                         .HasPrecision(28, 4)

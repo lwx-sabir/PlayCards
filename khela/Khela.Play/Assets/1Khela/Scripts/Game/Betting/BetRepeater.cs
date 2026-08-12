@@ -27,7 +27,33 @@ namespace PlayCard.Game.Betting
         [SerializeField] private float settleBeforeDeal = 0.25f;
 
         private Coroutine _running;
-        private bool _dealing;   // true from the deal-tap until the server confirms the round started — blocks a double re-bet
+
+        /// <summary>
+        /// Re-entry guard, held from the deal-tap until the server confirms the round started, so a second tap can't
+        /// re-drop a phantom stack and re-bet across the network gap.
+        ///
+        /// A SELF-EXPIRING DEADLINE, not a bool. The bool version was cleared at the end of a coroutine, which meant
+        /// any path that didn't reach that line left Repeat dead for the whole session — and there was one: the wait
+        /// re-read the board's betting deadline every frame, and the server re-arms that for the NEXT window after
+        /// every round, so a deal that never started a round chased a deadline that kept moving and the loop never
+        /// exited. Expressed as a timestamp, the guard cannot outlive itself no matter what happens in between.
+        /// </summary>
+        private float _dealingUntil;
+
+        private bool Dealing => Time.unscaledTime < _dealingUntil;
+
+        [Tooltip("Absolute cap on the re-entry guard after a deal is fired. It normally clears the moment the round " +
+                 "starts; this is the backstop for a deal that never becomes a round (bet refused, request lost). " +
+                 "Must comfortably exceed the longest betting window, since a multiplayer deal can wait out the whole " +
+                 "window for other players.")]
+        [SerializeField] private float dealGuardMaxSeconds = 25f;
+
+        // A disabled object kills its coroutines, so release the guards rather than leaving them latched.
+        private void OnDisable()
+        {
+            _running = null;
+            _dealingUntil = 0f;
+        }
 
         /// <summary>True if there's a remembered bet to repeat.</summary>
         public bool CanRepeat => builder != null && builder.LastPlaced.Count > 0;
@@ -35,11 +61,11 @@ namespace PlayCard.Game.Betting
         /// <summary>Re-drop the last bet's chips onto the local spot, then deal.</summary>
         public void Repeat()
         {
-            // Silent bails again — and these two guards are STICKY: _running and _dealing are cleared by a later
-            // step, so if that step is ever missed they stay set and Repeat is dead for the rest of the session.
-            // That is precisely the "worked for ten hands then never again" shape, so name which one is holding.
+            // Silent bails are undiagnosable from the outside, so each names itself. The deal guard is a self-expiring
+            // deadline (see _dealingUntil) precisely because the old latching bool produced the "worked for ten hands
+            // then never again" failure; _running is still a handle, so OnDisable releases it.
             if (_running != null) { Debug.LogWarning("[BetRepeater] REPEAT ignored: a previous repeat coroutine is still marked running."); return; }
-            if (_dealing) { Debug.LogWarning("[BetRepeater] REPEAT ignored: _dealing is still set from an earlier deal that never confirmed."); return; }
+            if (Dealing) { Debug.LogWarning($"[BetRepeater] REPEAT ignored: a deal fired {dealGuardMaxSeconds - (_dealingUntil - Time.unscaledTime):0.0}s ago has not become a round yet (guard clears in {_dealingUntil - Time.unscaledTime:0.0}s)."); return; }
             if (!CanRepeat) { Debug.LogWarning("[BetRepeater] REPEAT ignored: no remembered bet to repeat (LastPlaced empty)."); return; }
             if (table != null && table.Board != null && table.Board.RoundInProgress)
             {
@@ -59,7 +85,7 @@ namespace PlayCard.Game.Betting
             // Same sticky guards as Repeat — this is the idle-kick popup's BET button, so a silent bail here gets
             // the player evicted from the table while they are pressing the thing meant to save them.
             if (_running != null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: a previous repeat coroutine is still marked running."); return; }
-            if (_dealing) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: _dealing is still set from an earlier deal that never confirmed."); return; }
+            if (Dealing) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: a deal is still awaiting its round (guard auto-clears)."); return; }
             if (builder == null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: no BetBuilder."); return; }
             if (table == null || table.Board == null) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: no board yet."); return; }
             if (table.Board.RoundInProgress) { Debug.LogWarning("[BetRepeater] BET-MIN ignored: board says a round is in progress."); return; }
@@ -79,7 +105,7 @@ namespace PlayCard.Game.Betting
         public void Clear()
         {
             if (_running != null) { StopCoroutine(_running); _running = null; }
-            _dealing = false;
+            _dealingUntil = 0f;
             if (builder != null) builder.Clear();
         }
 
@@ -118,24 +144,28 @@ namespace PlayCard.Game.Betting
             // Bridge the re-entry guard across the deal's network gap: after Deal() the round isn't "in progress"
             // until the server replies, and during THAT window a second tap would re-drop a phantom stack + re-bet.
             // Hold _dealing until the board confirms the round started (or a short timeout if the deal never lands).
-            _dealing = true;
+            _dealingUntil = Time.unscaledTime + Mathf.Max(5f, dealGuardMaxSeconds);
             _running = null;
             builder.Deal();   // place the running total + deal
 
-            // Hold the re-entry guard until the round actually STARTS — bounded by the board's OWN betting-window
-            // deadline, NOT a fixed timeout. With the multiplayer DealAsync HOLD our deal can sit for the whole window
-            // waiting on other players, and that window can exceed any magic constant (BettingSeconds is a live admin
-            // knob + the presentation ceiling scales with table size), so a fixed cap could clear _dealing mid-hold and
-            // let a second Repeat double-drop. Wait while the round hasn't started AND the window deadline (+grace) is
-            // still ahead. A null/absent deadline means the round is starting (DealCore nulls it as it sets
-            // RoundInProgress), so we release; the deadline is absolute, so this can never wedge.
-            while ((table == null || table.Board == null || !table.Board.RoundInProgress)
-                   && table?.Board?.BettingExpiresAt is System.DateTimeOffset deadline
-                   && System.DateTimeOffset.UtcNow < deadline.AddSeconds(2f))
+            // Release the guard as soon as the round really starts. The cap above is only the backstop — normally we
+            // exit here within a round trip.
+            //
+            // ⚠️ The window deadline is SNAPSHOT ONCE, deliberately. Re-reading board.BettingExpiresAt each frame was
+            // the bug: the server re-arms it for the NEXT window at the end of every round, so a deal that never
+            // became a round (bet refused, request lost) chased a deadline that kept moving forward and this loop
+            // never ended — leaving the guard latched and Repeat dead for the rest of the session.
+            //
+            // Still deadline-driven rather than a magic constant, because a multiplayer deal can legitimately sit for
+            // the whole betting window waiting on other players; the absolute cap only catches the pathological case.
+            var windowEnd = table?.Board?.BettingExpiresAt;
+            while (Time.unscaledTime < _dealingUntil)
             {
+                if (table?.Board != null && table.Board.RoundInProgress) break;                  // the round started
+                if (windowEnd.HasValue && System.DateTimeOffset.UtcNow >= windowEnd.Value.AddSeconds(2f)) break;
                 yield return null;
             }
-            _dealing = false;
+            _dealingUntil = 0f;
         }
 
         private BetSpot LocalSpot()

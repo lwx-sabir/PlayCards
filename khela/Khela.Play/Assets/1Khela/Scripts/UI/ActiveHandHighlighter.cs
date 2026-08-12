@@ -38,7 +38,6 @@ namespace PlayCard.UI
                  "grows the wrong way (depends on how the glow art + Glow Local Euler are set up).")]
         [SerializeField] private Axis widthAxis = Axis.X;
 
-        private bool _shown;
         private bool _warned;
         private Vector3 _baseGlowScale = Vector3.one;
         private bool _capturedBase;
@@ -114,8 +113,9 @@ namespace PlayCard.UI
 
         private void Show(bool on)
         {
+            // No log here. It fired on every turn change — which is normal, expected traffic, not a diagnostic — and
+            // buried the console during a hand. The glow is visible on the felt; that IS the state readout.
             if (glow.activeSelf != on) glow.SetActive(on);
-            if (_shown != on) { _shown = on; Debug.Log($"[ActiveHand] glow {(on ? "ON" : "off")}"); }   // state-change only
         }
 
         // Capture the glow's authored scale ONCE (before we ever scale it) so width-to-fit is relative to it.
