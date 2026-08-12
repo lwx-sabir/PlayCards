@@ -19,8 +19,12 @@ namespace Khela.Game.Controllers
     public class PassController : ControllerBase
     {
         private readonly IPassService _pass;
+        private readonly IPassAdService _ads;
 
-        public PassController(IPassService pass) => _pass = pass;
+        public PassController(IPassService pass, IPassAdService ads)
+        {
+            _pass = pass; _ads = ads;
+        }
 
         /// <summary>The whole pass screen: ladder, per-node state, what's claimable, golden state and countdowns.
         /// <c>Active = false</c> simply means no pass is running — the client hides it.</summary>
@@ -50,6 +54,26 @@ namespace Khela.Game.Controllers
             var me = CallerId();
             if (me == null) return Unauthorized();
             return Ok(await _pass.ClaimAllAsync(me.Value, request?.PassKey));
+        }
+
+        /// <summary>
+        /// Ask for permission to watch ads for a missed day. Returns a single-use, server-signed token to hand the ad
+        /// SDK as custom data — the network echoes it back in its callback, which is what ties the view to this
+        /// player, this cycle and this day. Refused for any day ads can't unlock.
+        /// </summary>
+        [HttpPost("ad-intent")]
+        public async Task<IActionResult> AdIntent([FromBody] AdIntentRequest request)
+        {
+            var me = CallerId();
+            if (me == null) return Unauthorized();
+            if (request == null || request.Node <= 0) return Ok(new Khela.Common.Pass.PassAdIntentDto { Ok = false, Error = "Which day?" });
+            return Ok(await _ads.CreateIntentAsync(me.Value, request.PassKey, request.Node));
+        }
+
+        public sealed class AdIntentRequest
+        {
+            public string PassKey { get; set; }
+            public int Node { get; set; }
         }
 
         public sealed class ClaimRequest

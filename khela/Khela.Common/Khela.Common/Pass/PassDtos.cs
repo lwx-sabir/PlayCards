@@ -69,6 +69,18 @@ namespace Khela.Common.Pass
         public decimal NewChipBalance { get; set; }
     }
 
+    /// <summary>The single-use token to hand the rewarded-ad SDK as custom data, plus what the unlock costs.</summary>
+    public sealed class PassAdIntentDto
+    {
+        public bool Ok { get; set; }
+        public string Error { get; set; }
+        public string Token { get; set; }        // pass to the ad SDK verbatim; the server signed it
+        public int Node { get; set; }
+        public int AdsRequired { get; set; }     // views needed to unlock this day
+        public int CreditsHeld { get; set; }     // verified, unspent views the player already has
+        public DateTime ExpiresUtc { get; set; }
+    }
+
     /// <summary>Result of a golden grant (purchase, renewal, or admin comp).</summary>
     public sealed class PassPurchaseResultDto
     {

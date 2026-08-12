@@ -39,6 +39,23 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // config) are all registered here. Never write a wallet balance via raw SQL.
 builder.Services.AddScoped<IWalletService, WalletService>();
 
+// --- Pass (docs/PASS_SPEC.md). An admin Golden comp must go through the SAME GrantGoldenAsync seam a validated IAP
+//     receipt uses — including the missed-days unlock, which pays through the reward inbox — so the dashboard needs
+//     the whole payout graph, not a shortcut. All scoped, all sharing this request's AppDbContext. ---
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.CurrencyGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.XpGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.ChestGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGrantService, Khela.Game.Services.Rewards.RewardGrantService>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();
+builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();
+builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
+builder.Services.AddScoped<Khela.Game.Services.Pass.IPassService, Khela.Game.Services.Pass.PassService>();
+
+// Config snapshots for the admin-edited Redis overlays (pass/missions/chests/settings). The dashboard takes one
+// before every save and lists/restores them; the game backend runs the periodic sweep. Both must point
+// Config:BackupDir at the same path when they share a box.
+builder.Services.AddSingleton<Khela.Game.Services.Config.IConfigBackupService, Khela.Game.Services.Config.ConfigBackupService>();
+
 // --- Shared Redis: same instance as the game backend (leaderboards, presence, idempotency keys). ---
 var redisString = builder.Environment.IsDevelopment()
     ? builder.Configuration.GetConnectionString("RedisConnectionDevelopment")

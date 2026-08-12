@@ -1,0 +1,155 @@
+@using System.Linq
+@using Khela.Game.Services.Pass
+@using Khela.Web.Controllers
+@model PassEditVm
+@{
+    ViewData["Title"] = "Pass · " + Model.Program.Key;
+    ViewData["Crumb"] = "Pass";
+    ViewData["Nav"] = "pass";
+    var p = Model.Program;
+    string Totals(Dictionary<string, decimal> t) => t.Count == 0 ? "—" : string.Join(" · ", t.OrderBy(k => k.Key).Select(k => $"{k.Value:#,0} {k.Key}"));
+}
+
+<h1 class="page-title">@p.Title <span class="dim" style="font-size:14px">(@p.Key)</span></h1>
+<p class="page-sub">
+    Day <b>N</b> of the cycle is node <b>N</b> — the ladder tracks the calendar, so nobody can run ahead of it.
+    @if (Model.Cycle != null)
+    {
+        <text>Live cycle <b>@Model.Cycle.CycleKey</b> (@Model.Cycle.Length days in UTC; a player's own month decides theirs).</text>
+    }
+    <a asp-action="Index">← all programs</a>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Season totals</h3>
+        <span class="dim" style="font-size:12.5px">what a player who claims every day walks away with</span>
+    </div>
+    <table class="data-table">
+        <tbody>
+            <tr><td style="width:120px"><b>Free</b></td><td>@Totals(Model.FreeTotals)</td></tr>
+            <tr><td><b>Golden</b></td><td>@Totals(Model.GoldenTotals)</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<form asp-action="Save" method="post">
+    <input type="hidden" name="Key" value="@p.Key" />
+
+    <div class="panel">
+        <div class="panel-head"><h3>Settings</h3></div>
+        <div style="padding:14px 16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px">
+            <label>Title<br /><input name="Title" value="@p.Title" class="vip-select" style="width:100%" /></label>
+            <label>Cadence<br />
+                <select name="Cadence" class="vip-select" style="width:100%">
+                    <option value="Monthly" selected="@(p.Cadence == PassCadence.Monthly)">Monthly (renews on the 1st)</option>
+                    <option value="Fixed" selected="@(p.Cadence == PassCadence.Fixed)">Fixed window (season pass)</option>
+                </select>
+            </label>
+            <label>Catch-up policy<br />
+                <select name="CatchUp" class="vip-select" style="width:100%">
+                    @foreach (var v in Enum.GetValues<CatchUpPolicy>())
+                    {
+                        <option value="@v" selected="@(p.CatchUp == v)">@v</option>
+                    }
+                </select>
+            </label>
+            <label>Ads per missed day<br /><input name="AdsPerCatchUp" type="number" min="0" max="10" value="@p.AdsPerCatchUp" class="vip-select" style="width:100%" /></label>
+            <label>Max ad catch-ups / cycle<br /><input name="MaxAdCatchUpsPerCycle" type="number" min="0" max="31" value="@p.MaxAdCatchUpsPerCycle" class="vip-select" style="width:100%" /></label>
+            <label>Apple product id<br /><input name="GoldenProductIdApple" value="@p.GoldenProductIdApple" class="vip-select" style="width:100%" /></label>
+            <label>Google product id<br /><input name="GoldenProductIdGoogle" value="@p.GoldenProductIdGoogle" class="vip-select" style="width:100%" /></label>
+            <label>Display price (USD)<br /><input name="GoldenPriceUsd" type="number" step="0.01" min="0" value="@p.GoldenPriceUsd" class="vip-select" style="width:100%" /></label>
+            @if (p.Cadence == PassCadence.Fixed)
+            {
+                <label>Starts (UTC)<br /><input name="StartUtc" type="datetime-local" value="@(p.StartUtc?.ToString("yyyy-MM-ddTHH:mm"))" class="vip-select" style="width:100%" /></label>
+                <label>Ends (UTC)<br /><input name="EndUtc" type="datetime-local" value="@(p.EndUtc?.ToString("yyyy-MM-ddTHH:mm"))" class="vip-select" style="width:100%" /></label>
+            }
+            <label style="align-self:end"><input name="Enabled" type="checkbox" value="true" checked="@p.Enabled" /> Live</label>
+        </div>
+        <div class="dim" style="font-size:11.5px; padding:0 16px 14px">
+            <b>GoldenOrAds</b> (default): today is free for everyone; a missed day is free for subscribers and costs
+            ad views for everyone else, up to the per-cycle cap. The subscription price itself comes from the store —
+            the USD figure here is only a fallback label.
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Ladder</h3>
+            <span class="dim" style="font-size:12.5px">@p.Nodes.Count days · format: <code>Chips 2000, Kash 15, XP 100, Chest CK_Chest:Rare</code></span>
+        </div>
+        <table class="data-table">
+            <thead><tr><th style="width:60px">Day</th><th style="width:70px">★</th><th>Free</th><th>Golden</th></tr></thead>
+            <tbody>
+                @for (int i = 0; i < p.Nodes.Count; i++)
+                {
+                    var node = p.Nodes[i];
+                    var beyondFeb = node.Index > PassCatalog.GuaranteedDays;
+                    <tr>
+                        <td>
+                            <b>@node.Index</b>
+                            @if (beyondFeb)
+                            {
+                                <span class="dim" title="This day doesn't exist in every month" style="font-size:11px"> ✱</span>
+                            }
+                        </td>
+                        <td><input type="checkbox" name="Milestone" value="@node.Index" checked="@node.IsMilestone" /></td>
+                        <td><input name="Free" value="@PassRewardText.Format(node.Free)" class="vip-select" style="width:100%" /></td>
+                        <td><input name="Golden" value="@PassRewardText.Format(node.Golden)" class="vip-select" style="width:100%" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <div style="display:flex; gap:10px; padding:14px 16px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save ladder</button>
+            <span class="dim" style="font-size:12px">
+                ✱ = only exists in longer months. A <b>★ milestone</b> above day @PassCatalog.GuaranteedDays is refused —
+                February players could never reach it. Chests available:
+                <code>@string.Join("</code>, <code>", Model.ChestIds)</code>.
+            </span>
+        </div>
+    </div>
+</form>
+
+<div class="panel">
+    <div class="panel-head"><h3>Bulk tools</h3></div>
+    <form asp-action="ApplyRange" method="post" style="display:flex; gap:10px; padding:14px 16px; align-items:center; flex-wrap:wrap">
+        <input type="hidden" name="key" value="@p.Key" />
+        <b style="font-size:13px">Days</b>
+        <input name="from" type="number" min="1" value="1" class="vip-select" style="width:80px" />
+        <span class="dim">→</span>
+        <input name="to" type="number" min="1" value="@p.Nodes.Count" class="vip-select" style="width:80px" />
+        <input name="free" placeholder="Free (blank = leave alone)" class="vip-select" style="flex:1; min-width:220px" />
+        <input name="golden" placeholder="Golden (blank = leave alone)" class="vip-select" style="flex:1; min-width:220px" />
+        <select name="milestone" class="vip-select">
+            <option value="">★ unchanged</option>
+            <option value="true">★ on</option>
+            <option value="false">★ off</option>
+        </select>
+        <button class="btn btn-outline" type="submit">Apply</button>
+    </form>
+    <form asp-action="Resize" method="post" style="display:flex; gap:10px; padding:0 16px 14px; align-items:center; flex-wrap:wrap">
+        <input type="hidden" name="key" value="@p.Key" />
+        <b style="font-size:13px">Ladder length</b>
+        <input name="length" type="number" min="1" max="@(p.Cadence == PassCadence.Monthly ? PassCatalog.MaxMonthlyNodes : PassCatalog.MaxFixedNodes)" value="@p.Nodes.Count" class="vip-select" style="width:90px" />
+        <button class="btn btn-outline" type="submit">Resize</button>
+        <span class="dim" style="font-size:12px">New days copy the last one. Shrinking drops days off the end.</span>
+    </form>
+</div>
+
+<style>
+    .vip-select {
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    }
+    label { font-size: 12.5px; color: var(--dim, #93a0b5); }
+</style>

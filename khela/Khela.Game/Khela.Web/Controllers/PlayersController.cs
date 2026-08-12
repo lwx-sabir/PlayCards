@@ -22,11 +22,13 @@ namespace Khela.Web.Controllers
 
         private readonly AppDbContext _db;
         private readonly IWalletService _wallet;
+        private readonly Khela.Game.Services.Pass.IPassService _pass;
 
-        public PlayersController(AppDbContext db, IWalletService wallet)
+        public PlayersController(AppDbContext db, IWalletService wallet, Khela.Game.Services.Pass.IPassService pass)
         {
             _db = db;
             _wallet = wallet;
+            _pass = pass;
         }
 
         [HttpGet]
@@ -84,6 +86,41 @@ namespace Khela.Web.Controllers
             vm.Saved = TempData["Saved"] as string;
             vm.Error = TempData["Error"] as string;
             return View(vm);
+        }
+
+        /// <summary>
+        /// Comp a player the Golden pass for N days (support, QA, influencers). Goes through the SAME
+        /// <c>GrantGoldenAsync</c> seam a validated IAP receipt uses — including the missed-days unlock — so this path
+        /// exercises the real thing rather than a shortcut, and works before IAP ships. No money moves.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> GrantPass(Guid userId, int days, string q)
+        {
+            days = Math.Clamp(days <= 0 ? 30 : days, 1, 365);
+            var now = DateTime.UtcNow;
+
+            var res = await _pass.GrantGoldenAsync(userId, null, "admin", $"admin:{Guid.NewGuid():N}",
+                startsAt: now, expiresAt: now.AddDays(days), originalTransactionId: null, autoRenew: false);
+
+            if (res.Ok)
+                TempData["Saved"] = $"Golden pass granted for {days} days (until {res.GoldenUntilUtc:yyyy-MM-dd}) — {res.UnlockedNodes} missed day(s) unlocked.";
+            else
+                TempData["Error"] = res.Error ?? "Grant failed.";
+
+            return RedirectToAction(nameof(Index), new { q });
+        }
+
+        /// <summary>Revoke every un-revoked Golden window (refund, chargeback, mistake). Collected rewards stay
+        /// collected; golden rewards still uncollected in the inbox expire with the entitlement.</summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> RevokePass(Guid userId, string reason, string q)
+        {
+            var res = await _pass.RevokeGoldenAsync(userId, null, null, string.IsNullOrWhiteSpace(reason) ? "admin" : reason.Trim());
+            if (res.Ok) TempData["Saved"] = "Golden pass revoked.";
+            else TempData["Error"] = res.Error ?? "Revoke failed.";
+            return RedirectToAction(nameof(Index), new { q });
         }
 
         /// <summary>Admin override: set a player's VIP level (0–10) and tier. Refreshes the level's maintenance window.</summary>

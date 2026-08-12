@@ -202,6 +202,23 @@ namespace Khela.Game.Services.Profile
                 p.CountryFlagId = NullIfEmpty(req.CountryFlagId); changed = true;
             }
 
+            // ---- TimeZone: the player's own midnight for daily systems (the pass). Client-reported, so validate it
+            //      against the tz database and IGNORE anything unknown — a stale or spoofed id must never break the
+            //      profile save, it just leaves them on the previous zone (UTC by default). ----
+            if (req.TimeZoneId != null)
+            {
+                var tz = req.TimeZoneId.Trim();
+                if (tz.Length == 0)
+                {
+                    if (p.TimeZoneId != null) { p.TimeZoneId = null; changed = true; }
+                }
+                else if (tz.Length <= 64 && Khela.Game.Services.Pass.PassClock.IsKnown(tz) && p.TimeZoneId != tz)
+                {
+                    p.TimeZoneId = tz;
+                    changed = true;
+                }
+            }
+
             // ---- Bio / StatusMessage: moderated; empty clears ----
             if (req.Bio != null)
             {

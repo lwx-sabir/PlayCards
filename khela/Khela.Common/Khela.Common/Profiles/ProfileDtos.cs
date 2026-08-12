@@ -115,5 +115,10 @@ namespace Khela.Common.Profiles
         public string CountryFlagId { get; set; }
         public string Bio { get; set; }
         public string StatusMessage { get; set; }
+
+        /// <summary>The device's IANA timezone ("Asia/Dhaka"), sent at login. Daily systems (the pass) roll over at
+        /// the player's LOCAL midnight, so without this everyone falls back to UTC — a Dhaka player's day would end
+        /// at 6am. Validated server-side; an unknown id is ignored rather than rejected.</summary>
+        public string TimeZoneId { get; set; }
     }
 }

@@ -30,6 +30,25 @@ namespace Khela.Game.Services.Pass
 
         /// <summary>True if an un-revoked subscription window covers <paramref name="atUtc"/>.</summary>
         Task<bool> IsGoldenAsync(Guid userId, string passKey, DateTime atUtc);
+
+        /// <summary>Which cycle this player is in right now (resolved in THEIR timezone) plus the ad catch-up terms —
+        /// so the ad path doesn't have to re-derive any of it and drift from the claim path.</summary>
+        Task<PassCycleRef> CurrentCycleAsync(Guid userId, string passKey = null);
+
+        /// <summary>
+        /// THE entitlement seam: record a subscription window and unlock the days the player missed. Idempotent on
+        /// <paramref name="purchaseRef"/> (the store's transaction id), so a replayed receipt or a retried renewal
+        /// grants nothing new. Callers: IAP receipt validation (<c>source: "iap"</c>) and the admin panel
+        /// (<c>"admin"</c>). There is NO in-game-currency purchase path — Golden is real money only.
+        /// </summary>
+        Task<PassPurchaseResultDto> GrantGoldenAsync(Guid userId, string passKey, string source, string purchaseRef,
+            DateTime startsAt, DateTime expiresAt, string originalTransactionId = null, bool autoRenew = false);
+
+        /// <summary>
+        /// Refund / chargeback / admin revoke: close the window. Already-collected rewards are NEVER clawed back (the
+        /// ledger is append-only), but golden rewards still sitting UNCOLLECTED in the inbox expire with it.
+        /// </summary>
+        Task<PassPurchaseResultDto> RevokeGoldenAsync(Guid userId, string passKey, string purchaseRef, string reason);
     }
 
     /// <summary>
@@ -116,6 +135,26 @@ namespace Khela.Game.Services.Pass
             return dto;
         }
 
+        public async Task<PassCycleRef> CurrentCycleAsync(Guid userId, string passKey = null)
+        {
+            var ctx = await LoadAsync(userId, passKey);
+            if (ctx == null) return null;
+
+            var claims = await ClaimsAsync(userId, ctx.Cycle);
+            return new PassCycleRef
+            {
+                PassKey = ctx.Cycle.PassKey,
+                CycleKey = ctx.Cycle.CycleKey,
+                LocalDate = ctx.LocalDate,
+                MaxNode = ctx.Cycle.MaxNode(ctx.LocalDate),
+                IsGolden = ctx.IsGolden,
+                AdsPerCatchUp = ctx.Cycle.AdsPerCatchUp,
+                MaxAdCatchUpsPerCycle = ctx.Cycle.MaxAdCatchUpsPerCycle,
+                Availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate,
+                    new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock)),
+            };
+        }
+
         public async Task<bool> IsGoldenAsync(Guid userId, string passKey, DateTime atUtc)
         {
             passKey = passKey ?? PassCatalog.MonthlyKey;
@@ -140,25 +179,14 @@ namespace Khela.Game.Services.Pass
             var pending = claims.FirstOrDefault(c => c.CompletedAt == null && (node == null || c.Node == node.Value));
             if (pending != null) return await GrantAndCompleteAsync(ctx, pending, new PassClaimResultDto { Ok = true });
 
-            int target = node ?? (availability.Claimable.Count > 0 ? availability.Claimable.Max() : availability.MaxNode);
+            // The whole "which day, and what does it cost" decision is pure and unit-tested (PassClaimPlan); this
+            // method only persists the outcome.
+            int creditsHeld = useAds ? await UnspentAdCreditsAsync(userId, ctx.Cycle) : 0;
+            var decision = PassClaimPlan.Decide(ctx.Cycle, availability, node, claimedNodes, useAds, creditsHeld);
+            if (!decision.Ok) return Fail(decision.Error);
 
-            // Why this node isn't claimable — the message the player actually needs.
-            if (ctx.Cycle.Node(target) == null) return Fail($"Day {target} isn't part of this pass.");
-            if (claimedNodes.Contains(target)) return Fail("Already claimed.");
-            if (target > availability.MaxNode) return Fail("That day hasn't arrived yet.");
-
-            bool spendAds = false;
-            if (!availability.Claimable.Contains(target))
-            {
-                if (!useAds || !availability.AdUnlockable.Contains(target))
-                    return Fail(availability.AdUnlockable.Contains(target)
-                        ? $"Watch {availability.AdsPerUnlock} ads to unlock day {target}."
-                        : "That day has passed — Golden unlocks the days you missed.");
-
-                if (await UnspentAdCreditsAsync(userId, ctx.Cycle) < availability.AdsPerUnlock)
-                    return Fail($"Watch {availability.AdsPerUnlock} ads to unlock day {target}.");
-                spendAds = true;
-            }
+            int target = decision.Node;
+            bool spendAds = decision.SpendAds;
 
             // RESERVE. The unique (user, pass, cycle, node) index is what makes a concurrent double-claim impossible;
             // losing that race is not an error — reload the winner's row and finish driving it.
@@ -192,7 +220,7 @@ namespace Khela.Game.Services.Pass
             // SPEND the ad credits BEFORE paying out: if the grant then fails, the retry re-drives the same claim row
             // and the credits are already tied to this node, so the player is never charged twice for one day.
             if (spendAds)
-                result.AdCreditsSpent = await SpendAdCreditsAsync(userId, ctx.Cycle, target, availability.AdsPerUnlock);
+                result.AdCreditsSpent = await SpendAdCreditsAsync(userId, ctx.Cycle, target, decision.AdCost);
 
             return await GrantAndCompleteAsync(ctx, claim, result);
         }
@@ -206,8 +234,7 @@ namespace Khela.Game.Services.Pass
             var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate,
                 new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock));
 
-            var pendingNodes = claims.Where(c => c.CompletedAt == null).Select(c => c.Node);
-            var todo = pendingNodes.Concat(availability.Claimable).Distinct().OrderBy(n => n).ToList();
+            var todo = PassClaimPlan.ClaimAllOrder(availability, claims.Where(c => c.CompletedAt == null).Select(c => c.Node));
             if (todo.Count == 0) return Fail("Nothing to claim.");
 
             var result = new PassClaimResultDto { Ok = true };
@@ -222,6 +249,144 @@ namespace Khela.Game.Services.Pass
             if (result.ClaimedNodes.Count == 0) return Fail("Nothing to claim.");
             return result;
         }
+
+        // ---------------- entitlement (real money) ----------------
+
+        public async Task<PassPurchaseResultDto> GrantGoldenAsync(Guid userId, string passKey, string source, string purchaseRef,
+            DateTime startsAt, DateTime expiresAt, string originalTransactionId = null, bool autoRenew = false)
+        {
+            passKey = string.IsNullOrWhiteSpace(passKey) ? PassCatalog.MonthlyKey : passKey.Trim();
+            if (string.IsNullOrWhiteSpace(purchaseRef)) return PurchaseFail("Missing purchase reference.");
+            if (expiresAt <= startsAt) return PurchaseFail("The entitlement ends before it starts.");
+
+            // 1. RECORD the window. The unique (user, pass, purchaseRef) index is the idempotency: a replayed receipt
+            //    or a retried renewal collides here and falls through to the unlock, which is itself idempotent.
+            bool inserted = true;
+            var existing = await _db.PlayerPassEntitlements
+                .FirstOrDefaultAsync(e => e.UserId == userId && e.PassKey == passKey && e.PurchaseRef == purchaseRef);
+            if (existing == null)
+            {
+                _db.PlayerPassEntitlements.Add(new PlayerPassEntitlement
+                {
+                    UserId = userId,
+                    PassKey = passKey,
+                    Source = string.IsNullOrWhiteSpace(source) ? "iap" : source.Trim(),
+                    PurchaseRef = purchaseRef.Trim(),
+                    OriginalTransactionId = originalTransactionId,
+                    StartsAt = startsAt,
+                    ExpiresAt = expiresAt,
+                    AutoRenew = autoRenew,
+                });
+                try { await _db.SaveChangesAsync(); }
+                catch (DbUpdateException) { _db.ChangeTracker.Clear(); inserted = false; /* concurrent insert won */ }
+            }
+            else
+            {
+                inserted = false;
+                if (existing.RevokedAt != null)
+                {
+                    // A resubscribe under the same transaction id: re-open the window rather than leaving them locked out.
+                    existing.RevokedAt = null;
+                    existing.ExpiresAt = expiresAt > existing.ExpiresAt ? expiresAt : existing.ExpiresAt;
+                    existing.AutoRenew = autoRenew;
+                    await SaveQuietlyAsync();
+                }
+            }
+
+            // 2. UNLOCK the missed days of the CURRENT cycle (never an earlier one — an October subscription never
+            //    pays out September's ladder).
+            int unlocked = await UnlockMissedDaysAsync(userId, passKey);
+
+            var until = await GoldenUntilAsync(userId, passKey, DateTime.UtcNow);
+            _logger.LogInformation("Pass golden granted: user {UserId} pass {PassKey} source {Source} ref {Ref} until {Until} (new row: {Inserted}, unlocked {Unlocked})",
+                userId, passKey, source, purchaseRef, expiresAt, inserted, unlocked);
+
+            return new PassPurchaseResultDto { Ok = true, IsGolden = until != null, GoldenUntilUtc = until, UnlockedNodes = unlocked };
+        }
+
+        public async Task<PassPurchaseResultDto> RevokeGoldenAsync(Guid userId, string passKey, string purchaseRef, string reason)
+        {
+            passKey = string.IsNullOrWhiteSpace(passKey) ? PassCatalog.MonthlyKey : passKey.Trim();
+            var now = DateTime.UtcNow;
+
+            var rows = await _db.PlayerPassEntitlements
+                .Where(e => e.UserId == userId && e.PassKey == passKey && e.RevokedAt == null
+                         && (purchaseRef == null || e.PurchaseRef == purchaseRef))
+                .ToListAsync();
+            foreach (var r in rows) r.RevokedAt = now;
+            await SaveQuietlyAsync();
+
+            // Uncollected golden rewards die with the entitlement — but only if the player is now actually un-golden
+            // (revoking ONE transaction of an overlapping pair must not strip a still-valid subscription).
+            int expired = 0;
+            var until = await GoldenUntilAsync(userId, passKey, now);
+            if (until == null)
+            {
+                var prefix = $"pass-retro:{passKey}:";
+                var pending = await _db.PlayerRewards
+                    .Where(r => r.UserId == userId && r.Status == RewardStatus.Pending && r.IdempotencyKey.StartsWith(prefix))
+                    .ToListAsync();
+                foreach (var p in pending) p.Status = RewardStatus.Expired;
+                expired = pending.Count;
+                await SaveQuietlyAsync();
+            }
+
+            _logger.LogWarning("Pass golden REVOKED: user {UserId} pass {PassKey} ref {Ref} reason {Reason} — {Rows} window(s), {Expired} uncollected reward(s) expired",
+                userId, passKey, purchaseRef ?? "(all)", reason, rows.Count, expired);
+
+            return new PassPurchaseResultDto { Ok = true, IsGolden = until != null, GoldenUntilUtc = until };
+        }
+
+        /// <summary>
+        /// The missed-days unlock — the reason subscribing mid-month is worth it.
+        ///
+        /// Nodes the player ALREADY claimed without golden get their golden payload ENQUEUED to the reward inbox
+        /// (collected by tapping, like every other reward — chips never just appear). Nodes they never claimed need
+        /// nothing here: catch-up is free for a subscriber, so they simply become claimable on the normal path, which
+        /// keeps ONE payout route and gives the player the collect moment for both halves.
+        ///
+        /// Idempotent per (pass, cycle, node, line), so a renewal, a retry or a resubscribe can never pay a day twice.
+        /// Returns how many days the purchase opened up — the number the UI celebrates.
+        /// </summary>
+        private async Task<int> UnlockMissedDaysAsync(Guid userId, string passKey)
+        {
+            var ctx = await LoadAsync(userId, passKey);
+            if (ctx == null || !ctx.IsGolden) return 0;
+
+            var claims = await ClaimsAsync(userId, ctx.Cycle);
+            var claimedNodes = new HashSet<int>(claims.Select(c => c.Node));
+            int maxNode = ctx.Cycle.MaxNode(ctx.LocalDate);
+            int unlocked = 0;
+
+            foreach (var claim in claims.Where(c => !c.GoldenGranted && c.Node <= maxNode).OrderBy(c => c.Node))
+            {
+                var node = ctx.Cycle.Node(claim.Node);
+                if (node?.Golden == null || node.Golden.Count == 0) continue;
+
+                for (int i = 0; i < node.Golden.Count; i++)
+                    await _rewards.GrantLineAsync(userId, RewardSource.Pass, node.Golden[i],
+                        $"{ctx.Cycle.Title ?? "Pass"} · day {claim.Node} (Golden)",
+                        $"pass-retro:{ctx.Cycle.PassKey}:{ctx.Cycle.CycleKey}:{userId:N}:{claim.Node}:{i}");
+
+                claim.GoldenGranted = true;
+                unlocked++;
+            }
+            await SaveQuietlyAsync();
+
+            // Days never claimed at all are now freely claimable — count them so the CTA's promise matches reality.
+            for (int n = 1; n <= maxNode; n++)
+                if (!claimedNodes.Contains(n) && ctx.Cycle.Node(n) != null) unlocked++;
+
+            return unlocked;
+        }
+
+        private async Task<DateTime?> GoldenUntilAsync(Guid userId, string passKey, DateTime atUtc)
+            => await _db.PlayerPassEntitlements.AsNoTracking()
+                .Where(e => e.UserId == userId && e.PassKey == passKey && e.RevokedAt == null
+                         && e.StartsAt <= atUtc && e.ExpiresAt > atUtc)
+                .OrderByDescending(e => e.ExpiresAt)
+                .Select(e => (DateTime?)e.ExpiresAt)
+                .FirstOrDefaultAsync();
 
         // ---------------- internals ----------------
 
@@ -361,5 +526,7 @@ namespace Khela.Game.Services.Pass
         }
 
         private static PassClaimResultDto Fail(string error) => new PassClaimResultDto { Ok = false, Error = error };
+
+        private static PassPurchaseResultDto PurchaseFail(string error) => new PassPurchaseResultDto { Ok = false, Error = error };
     }
 }

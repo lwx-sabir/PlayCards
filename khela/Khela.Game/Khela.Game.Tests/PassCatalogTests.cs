@@ -279,10 +279,11 @@ namespace Khela.Game.Tests
             Assert.Empty(golden.AdUnlockable);
 
             var free = PassCatalog.Availability(cycle, today, claimed, isGolden: false);
-            Assert.Equal(new[] { 20 }, free.Claimable);                // only today at no cost
+            Assert.Equal(new[] { 20 }, free.Claimable);                 // only today at no cost
             Assert.Equal(2, free.AdsPerUnlock);
-            Assert.Equal(new[] { 4, 5, 6, 7, 8 }, free.AdUnlockable);  // capped at MaxAdCatchUpsPerCycle
-            Assert.Equal(Enumerable.Range(9, 11), free.GoldenLocked);  // 9..19 — the "unlock 11 missed days" CTA
+            Assert.Equal(5, free.AdUnlocksLeft);                        // how MANY days ads can buy back this cycle
+            Assert.Equal(Enumerable.Range(4, 16), free.AdUnlockable);   // …but the player picks WHICH: any missed day
+            Assert.Equal(Enumerable.Range(4, 16), free.GoldenLocked);   // the subscription hands over all 16 free
         }
 
         [Fact]
@@ -293,11 +294,11 @@ namespace Khela.Game.Tests
 
             var fresh = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 0);
             Assert.Equal(5, fresh.AdUnlocksLeft);
-            Assert.Equal(5, fresh.AdUnlockable.Count);
+            Assert.Equal(19, fresh.AdUnlockable.Count);                 // any of the 19 missed days is a candidate
 
             var partly = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 4);
-            Assert.Equal(1, partly.AdUnlocksLeft);
-            Assert.Single(partly.AdUnlockable);
+            Assert.Equal(1, partly.AdUnlocksLeft);                      // one buy-back left…
+            Assert.Equal(19, partly.AdUnlockable.Count);                // …still their choice which day to spend it on
 
             var spent = PassCatalog.Availability(cycle, today, new HashSet<int>(), isGolden: false, adCatchUpsUsed: 5);
             Assert.Equal(0, spent.AdUnlocksLeft);

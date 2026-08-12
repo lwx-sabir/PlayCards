@@ -143,6 +143,25 @@
                 </div>
                 <div class="dim" style="font-size:11px; margin-top:8px">Chips/Coins/Gems/Kash post through the audited wallet ledger; Loyalty Pts adjust the profile.</div>
             </form>
+            <div class="modal-section">
+                <div class="modal-section-title">Golden pass</div>
+                <div class="modal-row">
+                    <form asp-action="GrantPass" method="post" style="display:flex; gap:8px; align-items:center; flex:1">
+                        <input type="hidden" name="userId" id="pmPassUserId" />
+                        <input type="hidden" name="q" value="@Model.Query" />
+                        <label>Days</label>
+                        <input type="number" name="days" min="1" max="365" value="30" class="vip-select" style="width:90px" />
+                        <button class="btn btn-outline" type="submit">Comp Golden</button>
+                    </form>
+                    <form asp-action="RevokePass" method="post" style="display:flex; gap:8px; align-items:center; margin-left:auto">
+                        <input type="hidden" name="userId" id="pmPassRevokeUserId" />
+                        <input type="hidden" name="q" value="@Model.Query" />
+                        <input type="text" name="reason" placeholder="reason" class="vip-select" style="width:130px" />
+                        <button class="btn btn-outline" type="submit">Revoke</button>
+                    </form>
+                </div>
+                <div class="dim" style="font-size:11px; margin-top:8px">Runs the same path a validated IAP receipt does, including the missed-days unlock. Revoking never claws back what the player already collected.</div>
+            </div>
         </div>
     </div>
 </div>
@@ -224,6 +243,8 @@
         document.getElementById('pmId').textContent = d.uid || '';
         document.getElementById('pmStatus').textContent = d.status || '';
         document.getElementById('pmVipUserId').value = d.uid || '';
+        document.getElementById('pmPassUserId').value = d.uid || '';
+        document.getElementById('pmPassRevokeUserId').value = d.uid || '';
         document.getElementById('pmGrantUserId').value = d.uid || '';
         document.getElementById('pmVipLevel').value = d.viplevel || '0';
         document.getElementById('pmVipTier').value = d.viptier || '0';

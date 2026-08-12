@@ -4,16 +4,26 @@
 in particular the dual-currency guardrail (§2) and wallet integrity (§3). `dotnet build`
 must pass with no unexpected pending migration.*
 
-Status: **slices 1–3 of 8 built.** §2 reward seam (migration applied); §3 catalog
-(`PassCatalog` + `PassClock`); §4/§5 core — `AddPassTables` (3 tables + `UserProfile.TimeZoneId`,
-**migration created, NOT yet applied**), `PassService` (state, claim, claim-all, entitlement read)
-and `PassController` (`GET /api/pass`, `claim`, `claim-all`). 76 tests green.
-Next: slice 4 — `GrantGoldenAsync` + the missed-days unlock + admin grant/revoke.
+Status: **the whole backend is built** — slices 1–5 and 7 (migrations applied). §2 reward seam;
+§3 catalog (`PassCatalog` + `PassClock` + `PassClaimPlan` + `PassRewardText`); §4/§5 core (3 tables
++ `UserProfile.TimeZoneId`, `PassService`, `PassController`, admin comp/revoke); §5.6 ads
+(`PassAdTokens`, `IAdSsvVerifier` + AdMob/HMAC/disabled, `PassAdService`, `/api/pass/ad-intent`,
+`/api/ads/ssv`); §6.1 the `/Pass` CRUD page + `ConfigBackupService`. 115 tests green.
 
-⚠️ **Coverage gap to close in slice 4:** `PassService`'s claim ordering (reserve → spend → grant →
-complete) has no automated test — it needs a DB. The decisions it acts on are pure and covered;
-the persistence path is not. Same gap as the wallet's `SELECT … FOR UPDATE` (see
-`docs/PROJECT_REVIEW`), and it wants the same integration harness.
+Next: **slice 6, the Unity `PassScreen`** — including reporting the device timezone at login, without
+which every player falls back to UTC. **Slice 8 (IAP) is PARKED until the UI is bound.**
+
+**Coverage: closed.** `PassPersistenceTests` runs the real service against a real **MySQL**
+(`KhelaDbFixture` → `Khela_IntegrationTests`, built from the current model, separate from dev data —
+override with `KHELA_TEST_DB`) and covers the ordering, the concurrent-claim race, crash recovery,
+the missed-days unlock, revoke and ad-credit spending. The same fixture also closed the two
+long-standing money gaps outside the pass: `WalletConcurrencyTests` (the `SELECT … FOR UPDATE` row
+lock) and `SettleReconciliationTests` (settle → wallet net). 127 pass tests; 506 in the suite.
+
+⚠️ **Remaining coverage gap:** the claim DECISION is now a pure, tested seam (`PassClaimPlan`),
+but `PassService`'s PERSISTENCE ordering (reserve → spend → grant → complete, and the
+missed-days unlock) still has no automated test — it needs a database. Same gap as the wallet's
+`SELECT … FOR UPDATE`, and it wants the same integration harness.
 
 ---
 
@@ -502,14 +512,15 @@ untested when IAP lands.
 
 `GrantGoldenAsync`:
 1. Insert the entitlement row (unique on `PurchaseRef` → a replay is a no-op).
-2. **Unlock the missed days.** For every node `1..maxNode` of the CURRENT cycle:
-   - already claimed with `GoldenGranted = false` → enqueue its golden lines into the inbox and
-     set the flag;
-   - never claimed at all → claim it now (a `PlayerPassClaim` with `FreeGranted` per policy and
-     the golden payload enqueued), because the whole point of subscribing mid-month is getting the
-     days you missed.
-   Idempotency key `pass-retro:{passKey}:{cycleKey}:{user:N}:{node}:{i}`, so re-running the unlock
-   (renewal, retry, resubscribe) can never pay a node twice.
+2. **Unlock the missed days** of the CURRENT cycle:
+   - a node already claimed WITHOUT golden → enqueue its golden lines to the inbox, set the flag.
+     Key `pass-retro:{passKey}:{cycleKey}:{user:N}:{node}:{i}`, so re-running the unlock (renewal,
+     retry, resubscribe) can never pay a node twice.
+   - a node never claimed at all → **nothing to do here**: catch-up is free for a subscriber, so it
+     simply becomes claimable on the normal path. That keeps ONE payout route and gives the player
+     the collect moment for both halves. (Earlier drafts force-claimed these; a second write path
+     into the same ledger was not worth the duplication risk.)
+   `UnlockedNodes` counts both — it's the number the UI celebrates.
 3. Enqueued, **not** auto-credited — chips arrive only when the player taps collect (the existing
    inbox rule), which also gives the purchase a payoff moment worth animating.
 4. Future claims grant golden inline (§5.2 step 5).
@@ -534,6 +545,14 @@ client re-claims               → POST /api/pass/claim { node, useAds: true }
                                  → consume AdsPerCatchUp unspent credits IN THE SAME TRANSACTION
                                    as the claim row, then pay out exactly as any other claim
 ```
+
+**Configuration** (`appsettings.json`): `Ads:Provider` = `admob` | `hmac` | *(anything else)*.
+`admob` verifies ECDSA-SHA256 against Google's published verifier keys (fetched and cached 24h,
+refetched on an unseen `key_id` so a key rotation self-heals). `hmac` verifies HMAC-SHA256 against
+`Ads:Secret` — the Unity Ads / ironSource shape. **Anything else registers a verifier that refuses
+everything**, so a deployment that forgets to configure ads grants no credits instead of granting
+them to whoever finds the callback URL. `Ads:IntentSecret` signs the intent tokens (falls back to
+the JWT key).
 
 Rules that keep it honest:
 
@@ -651,11 +670,11 @@ The player detail page also shows the current cycle's claim history, golden stat
 | 1 ✅ | Reward seam | `RewardKind`/`RewardGrant`, 3 granters, `RewardGrantService`, `GrantXpAsync(bypassDailyCap)`, `AddRewardKindToPlayerRewards` |
 | 2 ✅ | Catalog | `PassCatalog` + `Defaults()` + `Validate()` + unit tests (no DB, no HTTP) |
 | 3 ✅ | Core | `AddPassTables` + `UserProfile.TimeZoneId`, `PassService` (state + claim), `PassController` GET/claim |
-| 4 | Entitlement | `GrantGoldenAsync` + missed-days unlock + admin grant/revoke (exercisable without IAP) |
-| 5 | Admin | `/Pass` full CRUD page (§6.1) + `ConfigBackupService` (§3.2) |
+| 4 ✅ | Entitlement | `GrantGoldenAsync` + missed-days unlock + admin grant/revoke (exercisable without IAP) |
+| 5 ✅ | Admin | `/Pass` full CRUD page (§6.1) + `ConfigBackupService` (§3.2) |
+| 7 ✅ | Ads | `/api/pass/ad-intent` + `/api/ads/ssv` + credit consumption (§5.6) |
 | 6 | Client | `PassScreen` + timezone reporting at login |
-| 7 | Ads | `/api/pass/ad-intent` + `/api/ads/ssv` + credit consumption (§5.6) |
-| 8 | Real money | `POST /api/pass/purchase` wired to IAP receipt validation once that ships |
+| 8 ⏸ | Real money | `POST /api/pass/purchase` wired to IAP receipt validation — **parked until the UI is bound** |
 | — | later | `CosmeticGranter`, `ItemGranter` + `PlayerItems` |
 
 Slices 1–2 are pure and testable with no infrastructure; do them first. Slices 7–8 are gated on

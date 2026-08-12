@@ -200,6 +200,31 @@ builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Gam
 builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();   // chest system (CK_Chest etc.; opened by the daily-mission bundle)
 builder.Services.AddScoped<Khela.Game.Services.Missions.IMissionService, Khela.Game.Services.Missions.MissionService>();   // daily missions (server-authoritative; progress at settle, reward on claim)
 builder.Services.AddScoped<Khela.Game.Services.Pass.IPassService, Khela.Game.Services.Pass.PassService>();   // monthly pass: free daily ladder + Golden subscription (docs/PASS_SPEC.md)
+
+// Rewarded-ad catch-up (docs/PASS_SPEC.md §5.6). The verifier is chosen by Ads:Provider and defaults to one that
+// REFUSES everything — a deployment that forgets to configure ads grants no credits, rather than granting them to
+// anyone who can reach the callback URL.
+builder.Services.AddHttpClient();
+switch ((builder.Configuration.GetValue<string>("Ads:Provider") ?? "").Trim().ToLowerInvariant())
+{
+    case "admob":
+        builder.Services.AddSingleton<Khela.Game.Services.Ads.IAdSsvVerifier, Khela.Game.Services.Ads.AdMobSsvVerifier>();
+        break;
+    case "hmac":       // Unity Ads / ironSource style shared-secret callbacks
+        builder.Services.AddSingleton<Khela.Game.Services.Ads.IAdSsvVerifier, Khela.Game.Services.Ads.HmacAdSsvVerifier>();
+        break;
+    default:
+        builder.Services.AddSingleton<Khela.Game.Services.Ads.IAdSsvVerifier, Khela.Game.Services.Ads.DisabledAdSsvVerifier>();
+        break;
+}
+builder.Services.AddScoped<Khela.Game.Services.Pass.IPassAdService, Khela.Game.Services.Pass.PassAdService>();
+
+// Config overlays live in Redis, which is a cache, not a backup: snapshot them to disk every few days (and at
+// startup), only when the content changed, never deleting anything. The admin dashboard lists/restores them.
+// Singleton, not scoped: the hosted sweep below is itself a singleton and would fail scope validation at boot
+// otherwise. Its dependencies (Redis, config, environment) are all singletons anyway.
+builder.Services.AddSingleton<Khela.Game.Services.Config.IConfigBackupService, Khela.Game.Services.Config.ConfigBackupService>();
+builder.Services.AddHostedService<Khela.Game.Services.Config.ConfigBackupHostedService>();
 builder.Services.AddScoped<Khela.Game.Services.Progression.IProgressionService, Khela.Game.Services.Progression.ProgressionService>();
 builder.Services.AddScoped<Khela.Game.Services.Vip.IVipService, Khela.Game.Services.Vip.VipService>();
 builder.Services.AddScoped<Khela.Game.Services.Loyalty.ILoyaltyService, Khela.Game.Services.Loyalty.LoyaltyService>();

@@ -133,7 +133,8 @@ namespace Khela.Game.Services.Pass
         /// <summary>Nodes claimable at no cost right now (today's node, plus backfill if the player has earned it).</summary>
         public List<int> Claimable { get; set; } = new List<int>();
 
-        /// <summary>Missed nodes a non-subscriber may buy back with ads (already limited by the per-cycle cap).</summary>
+        /// <summary>Missed nodes a non-subscriber may buy back with ads right now. The player chooses WHICH; how many
+        /// they may still buy this cycle is <see cref="AdUnlocksLeft"/>. Empty once that runs out.</summary>
         public List<int> AdUnlockable { get; set; } = new List<int>();
 
         /// <summary>Ad views one unlock costs.</summary>
@@ -142,7 +143,8 @@ namespace Khela.Game.Services.Pass
         /// <summary>Ad unlocks still available this cycle after the cap.</summary>
         public int AdUnlocksLeft { get; set; }
 
-        /// <summary>Missed nodes only a subscription reaches — the "unlock N missed days" CTA number.</summary>
+        /// <summary>Every missed node a subscription would unlock free — the "unlock N missed days" CTA number.
+        /// Overlaps <see cref="AdUnlockable"/> on purpose: the same day can be bought with ads or with Golden.</summary>
         public List<int> GoldenLocked { get; set; } = new List<int>();
     }
 
@@ -370,9 +372,13 @@ namespace Khela.Game.Services.Pass
             for (int n = 1; n < a.MaxNode; n++)
             {
                 if (!Exists(n) || Claimed(n)) continue;
-                if (freeBackfill) a.Claimable.Add(n);
-                else if (adBackfill && a.AdUnlockable.Count < a.AdUnlocksLeft) a.AdUnlockable.Add(n);
-                else a.GoldenLocked.Add(n);
+                if (freeBackfill) { a.Claimable.Add(n); continue; }
+
+                // A missed day is always something a subscription would hand over free — that IS the CTA. It is
+                // ADDITIONALLY buyable with ads while the player has catch-ups left, and the player picks WHICH days
+                // to spend them on (the cap limits how many, not which).
+                a.GoldenLocked.Add(n);
+                if (adBackfill && a.AdUnlocksLeft > 0) a.AdUnlockable.Add(n);
             }
 
             a.Claimable.Sort();

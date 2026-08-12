@@ -1,0 +1,153 @@
+@using System.Linq
+@using Khela.Game.Services.Pass
+@using Khela.Web.Controllers
+@model PassIndexVm
+@{
+    ViewData["Title"] = "Pass";
+    ViewData["Crumb"] = "Pass";
+    ViewData["Nav"] = "pass";
+}
+
+<h1 class="page-title">Pass</h1>
+<p class="page-sub">
+    The <b>Monthly Pass</b>: a daily ladder with a free track and a <b>Golden</b> track unlocked by a real-money
+    subscription. Cycles renew by themselves on the 1st — in each player's OWN timezone — so there is nothing to
+    author per month. A <b>Season Pass</b> is just another program with a fixed window.
+    <strong>@(Model.Overridden ? "A saved override is live." : "Using the built-in defaults.")</strong>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Programs</h3>
+        <span class="dim" style="font-size:12.5px">@Model.Config.Programs.Count program(s)@(Model.Config.Enabled ? "" : " · PASS GLOBALLY OFF")</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Key</th><th>Title</th><th>Cadence</th><th>Catch-up</th><th>Days</th><th>Live cycle</th><th>Golden</th><th>State</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var p in Model.Config.Programs)
+            {
+                var cycle = Model.Cycles.TryGetValue(p.Key, out var c) ? c : null;
+                <tr>
+                    <td><b>@p.Key</b></td>
+                    <td>@p.Title</td>
+                    <td>@p.Cadence</td>
+                    <td class="dim" style="font-size:12.5px">
+                        @p.CatchUp
+                        @if (p.CatchUp == CatchUpPolicy.GoldenOrAds && p.MaxAdCatchUpsPerCycle > 0)
+                        {
+                            <text> · @p.AdsPerCatchUp ads/day, max @p.MaxAdCatchUpsPerCycle</text>
+                        }
+                    </td>
+                    <td>@p.Nodes.Count</td>
+                    <td class="dim" style="font-size:12.5px">@(cycle == null ? "—" : $"{cycle.CycleKey} · {cycle.Length} days")</td>
+                    <td class="dim" style="font-size:12.5px">@(p.SellsGolden ? $"${p.GoldenPriceUsd:0.00}/mo" : "not sold")</td>
+                    <td><span class="pill @(p.Enabled ? "active" : "suspend")">@(p.Enabled ? "Live" : "Off")</span></td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <a class="btn btn-outline" asp-action="Edit" asp-route-key="@p.Key">Edit</a>
+                        <form asp-action="Toggle" method="post" style="display:inline">
+                            <input type="hidden" name="key" value="@p.Key" />
+                            <button class="btn btn-outline" type="submit">@(p.Enabled ? "Disable" : "Enable")</button>
+                        </form>
+                        <form asp-action="Clone" method="post" style="display:inline" onsubmit="this.newKey.value = prompt('New program key?', '@p.Key-copy') || ''; return !!this.newKey.value;">
+                            <input type="hidden" name="key" value="@p.Key" />
+                            <input type="hidden" name="newKey" />
+                            <button class="btn btn-outline" type="submit">Clone</button>
+                        </form>
+                        @if (!string.Equals(p.Key, PassCatalog.MonthlyKey, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <form asp-action="Delete" method="post" style="display:inline" onsubmit="return confirm('Delete @p.Key? Past claims stay in the ledger.');">
+                                <input type="hidden" name="key" value="@p.Key" />
+                                <button class="btn btn-outline" type="submit">Delete</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <form asp-action="Create" method="post" style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
+        <b style="font-size:13px">New program</b>
+        <input name="key" placeholder="key (e.g. season1)" class="vip-select" style="width:170px" />
+        <input name="title" placeholder="title" class="vip-select" style="width:190px" />
+        <select name="cadence" class="vip-select">
+            <option value="Monthly">Monthly (renews on the 1st)</option>
+            <option value="Fixed">Fixed window (season pass)</option>
+        </select>
+        <button class="btn btn-primary" type="submit">Create</button>
+        <span class="dim" style="font-size:12px">Starts disabled, seeded with the default ladder.</span>
+    </form>
+</div>
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Backups</h3>
+        <span class="dim" style="font-size:12.5px">every 3 days + before each save · never auto-deleted</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Taken (UTC)</th><th>File</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var b in Model.Backups)
+            {
+                <tr>
+                    <td>@b.TakenUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td class="dim" style="font-size:12.5px">@b.FileName</td>
+                    <td class="dim" style="font-size:12.5px">@($"{b.Bytes / 1024.0:0.0} KB")</td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <a class="btn btn-outline" asp-action="Download" asp-route-file="@b.FileName">Download</a>
+                        <form asp-action="Restore" method="post" style="display:inline">
+                            <input type="hidden" name="file" value="@b.FileName" />
+                            <button class="btn btn-outline" type="submit">Load into editor</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            @if (Model.Backups.Count == 0)
+            {
+                <tr><td colspan="4" class="dim" style="padding:18px 16px">No snapshots yet — one is written the first time you save.</td></tr>
+            }
+        </tbody>
+    </table>
+    <div class="dim" style="font-size:11.5px; padding:10px 16px">
+        Restoring loads the file into the JSON editor below; it only goes live when you press <b>Save JSON</b>, so an old
+        bad config can't slip past validation. Prune old files by hand.
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">for bulk edits and restores</span></div>
+    <form asp-action="SaveJson" method="post">
+        <textarea name="json" rows="18" class="json-editor" spellcheck="false">@Model.Json</textarea>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save JSON</button>
+            <span class="dim" style="font-size:12px">
+                Validated exactly as the game would: no <b>Tokens</b> anywhere, ladder days must run 1..N, a milestone
+                can't sit above day 28 (February), and a golden payload needs a store product id.
+            </span>
+        </div>
+    </form>
+    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in monthly pass?');" style="margin-top:10px">
+        <button type="submit" class="btn btn-outline">Reset to defaults</button>
+    </form>
+</div>
+
+<style>
+    .json-editor {
+        width: 100%; min-height: 320px;
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 8px; padding: 12px;
+        font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 12.5px; line-height: 1.5; resize: vertical;
+    }
+    .vip-select {
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    }
+</style>
