@@ -82,4 +82,30 @@ namespace Khela.Game.Games.VideoPoker
             public int AtMaxCoins { get; set; }     // gross coins at max bet (captures the royal jackpot)
         }
     }
+
+    /// <summary>
+    /// Provably-fair verification of a settled hand — the commitment published BEFORE the deal, the seed revealed at
+    /// settle, and what independently RE-RUNNING the algorithm from that seed produces, with a per-field match report.
+    /// A skeptic can either trust <see cref="Verified"/> or replay <see cref="Algorithm"/> offline with the same inputs.
+    /// </summary>
+    public sealed class VideoPokerVerification
+    {
+        public string HandId { get; set; }
+        public string VariantId { get; set; }
+        public bool Verified { get; set; }              // every check below passed
+        public string Reason { get; set; }              // set only when verification could not run (e.g. seed missing)
+        public string Algorithm { get; set; }           // one-line spec for offline reimplementation
+
+        public Commit Committed { get; set; }           // published BEFORE the deal (cannot change after)
+        public Reveal Revealed { get; set; }            // published at settle
+        public Redo Recomputed { get; set; }            // output of re-running the shuffle + draw from the revealed seed
+        public MatchReport Matches { get; set; }
+        public ChainLink Chain { get; set; }
+
+        public sealed class Commit { public string ServerSeedHash { get; set; } public string DeckHash { get; set; } }
+        public sealed class Reveal { public string ServerSeed { get; set; } public string ClientSeed { get; set; } public long Nonce { get; set; } public int Jokers { get; set; } }
+        public sealed class Redo { public string DeckHash { get; set; } public string[] Dealt { get; set; } public bool[] Hold { get; set; } public string[] Final { get; set; } public string Category { get; set; } public int PayoutCoins { get; set; } public decimal Payout { get; set; } }
+        public sealed class MatchReport { public bool SeedBindsToCommitment { get; set; } public bool DeckHashMatches { get; set; } public bool DealtMatches { get; set; } public bool FinalMatches { get; set; } public bool CategoryMatches { get; set; } public bool PayoutMatches { get; set; } }
+        public sealed class ChainLink { public string PrevHandHash { get; set; } public string ResultChecksum { get; set; } public string HandHash { get; set; } }
+    }
 }

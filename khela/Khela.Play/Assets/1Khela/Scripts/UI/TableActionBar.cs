@@ -1,3 +1,5 @@
+using System;
+using System.Threading.Tasks;
 using PlayCard.Game.Betting;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
@@ -51,12 +53,12 @@ namespace PlayCard.UI
             Wire(dealButton, Deal);
             Wire(repeatButton, Repeat);
             Wire(clearButton, ClearBet);
-            Wire(hitButton, () => _ = table.Hit());
-            Wire(standButton, () => _ = table.Stand());
-            Wire(doubleButton, () => _ = table.DoubleDown());
-            Wire(splitButton, () => _ = table.Split());
+            Wire(hitButton, () => Decide(table.Hit));
+            Wire(standButton, () => Decide(table.Stand));
+            Wire(doubleButton, () => Decide(table.DoubleDown));
+            Wire(splitButton, () => Decide(table.Split));
             Wire(insuranceButton, PlaceInsurance);
-            Wire(dealerPlayButton, () => _ = table.DealerPlay());
+            Wire(dealerPlayButton, () => Decide(table.DealerPlay));
             Wire(leaveButton, () => _ = table.Leave());
         }
 
@@ -67,6 +69,7 @@ namespace PlayCard.UI
             {
                 table.OnBoardChanged += Refresh;
                 table.OnActionError += ShowError;
+                table.ActionPendingChanged += OnActionPendingChanged;   // fires on the tap frame — no board push needed
             }
             if (betBuilder != null) betBuilder.OnBetChanged += OnBetChanged;
             Refresh(table != null ? table.Board : null);
@@ -78,6 +81,7 @@ namespace PlayCard.UI
             {
                 table.OnBoardChanged -= Refresh;
                 table.OnActionError -= ShowError;
+                table.ActionPendingChanged -= OnActionPendingChanged;
             }
             if (betBuilder != null) betBuilder.OnBetChanged -= OnBetChanged;
         }
@@ -109,7 +113,39 @@ namespace PlayCard.UI
         private void PlaceInsurance()
         {
             var hand = MyCurrentHand();
-            if (hand != null) _ = table.Insurance(hand.Bet / 2m);
+            if (hand != null) Decide(() => table.Insurance(hand.Bet / 2m));
+        }
+
+        /// <summary>
+        /// Fire a decision on the TAP — one tap, one card, no waiting for the server to say so.
+        ///
+        /// The controls go dark on this frame, before the request has even left the device. Previously they stayed lit
+        /// for the whole round-trip because their only cue was the next board push, so spamming HIT sent two /hit calls
+        /// and the second card was a double-press, not a decision. The visual kill below is only the FEEDBACK; the
+        /// thing that actually makes it impossible is <see cref="TableController.TryClaimAction"/>, a synchronous claim
+        /// inside the controller — two taps dispatched in the same frame both reach this method (Unity queues pointer
+        /// events, so <c>interactable=false</c> here does not stop the one already in the queue), and the second is
+        /// dropped there.
+        ///
+        /// Nothing is predicted: the card still comes from the server. Only the input is instant.
+        /// </summary>
+        private void Decide(Func<Task> action)
+        {
+            if (table == null || table.ActionPending) return;
+            ClearError();
+            SetDecisionButtons(false);
+            _ = action();
+        }
+
+        /// <summary>Every control that spends a turn, killed or re-armed together — no half-live action bar.</summary>
+        private void SetDecisionButtons(bool on)
+        {
+            Set(hitButton, on);
+            Set(standButton, on);
+            Set(doubleButton, on);
+            Set(splitButton, on);
+            Set(insuranceButton, on);
+            Set(dealerPlayButton, on);
         }
 
         // Re-gate DEAL as chips are dropped/cleared (MeetsMinimum changes off-board).
@@ -149,7 +185,11 @@ namespace PlayCard.UI
             // during the round-end ceremony (a blackjack can leave a stale my-turn flag as it auto-resolves).
             // ActionReady = my cards + the dealer's landed AND nothing else is still flying. Shared with the camera so
             // the close framing and these buttons enable on the same frame (see BlackjackTableView.ActionReady).
-            bool act = myTurn && !settling && (view == null || view.ActionReady(table.MySeat));
+            // !ActionPending is the one-tap guard: from the frame a decision is tapped until its response lands, the
+            // board still describes the state BEFORE it (same hand, same card count, still my turn), so every gate
+            // below would happily stay lit through the whole round-trip. That window is where the double-hit lived.
+            bool act = myTurn && !settling && !table.ActionPending
+                       && (view == null || view.ActionReady(table.MySeat));
             Set(hitButton, act);
             Set(standButton, act);
             Set(doubleButton, act && hand != null && hand.Cards.Count == 2);
@@ -159,15 +199,18 @@ namespace PlayCard.UI
             // The server round-driver auto-settles ~2s after everyone has acted (and auto-stands a player whose
             // turn timer expired). This Dealer Play button is an optional "settle now" shortcut, shown once all
             // hands are resolved.
-            Set(dealerPlayButton, inRound && board != null && board.CurrentSeatNumber == -1);
+            Set(dealerPlayButton, inRound && !table.ActionPending && board != null && board.CurrentSeatNumber == -1);
             Set(leaveButton, true);
 
             if (statusText != null) statusText.text = BuildStatus(board);
         }
 
+        private void OnActionPendingChanged() => Refresh(table != null ? table.Board : null);
+
         private bool _lastAnimating;
         private bool _lastSettling;
         private bool _lastCommitted;   // betting commit flips on the button press, between board pushes
+        private bool _lastPending;     // ...and so does the decision claim
 
         private void Update()
         {
@@ -192,11 +235,16 @@ namespace PlayCard.UI
             bool localUnsettled = view != null && !view.ActionReady(table.MySeat);
             bool settling = view != null && view.RoundEndSettling;
             bool committed = table.BettingCommitted;
-            if (localUnsettled != _lastAnimating || settling != _lastSettling || committed != _lastCommitted)
+            // The decision claim normally clears with an event, but its backstop expiry is a plain timeout — nothing
+            // fires. Watch it here so a lost request re-arms the controls instead of leaving the player stuck.
+            bool pending = table.ActionPending;
+            if (localUnsettled != _lastAnimating || settling != _lastSettling || committed != _lastCommitted
+                || pending != _lastPending)
             {
                 _lastAnimating = localUnsettled;
                 _lastSettling = settling;
                 _lastCommitted = committed;
+                _lastPending = pending;
                 Refresh(table.Board);
             }
         }

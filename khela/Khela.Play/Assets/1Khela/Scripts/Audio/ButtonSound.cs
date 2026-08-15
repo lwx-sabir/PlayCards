@@ -10,13 +10,23 @@ namespace PlayCard.Audio
     /// button makes is part of how it is authored, so it belongs in the Inspector where you can see and override it.
     /// Add it in bulk with <c>Khela ▸ Audio ▸ Add Button Sound To Selection</c>.
     ///
-    /// Hooks <see cref="IPointerClickHandler"/> rather than <c>Button.onClick</c>, so it also fires on a DISABLED
-    /// button — that is the whole point of the Denied sound. onClick never fires when a button is non-interactable, so
-    /// a button wired that way is silent exactly when the player most needs to be told no.
+    /// Hooks <see cref="IPointerDownHandler"/> rather than <c>Button.onClick</c>, for two independent reasons.
+    ///
+    /// It fires on a DISABLED button — that is the whole point of the Denied sound. onClick never fires when a button
+    /// is non-interactable, so a button wired that way is silent exactly when the player most needs to be told no.
+    /// Pointer events are not gated by <c>interactable</c>, so they still arrive.
+    ///
+    /// And it must be DOWN, not CLICK. Unity dispatches a click to every handler on the object IN COMPONENT ORDER, and
+    /// Button sits above this component, so <c>Button.OnPointerClick</c> — and therefore every onClick listener — runs
+    /// FIRST. Any listener that disables its own button (which every decision button now does, on the tap frame, so a
+    /// second tap cannot spend a second action) flips <c>interactable</c> to false before this handler ever looks at
+    /// it. Reading it at click time meant Hit, Stand, Double and Split all silently played their Denied sound instead
+    /// of their click. PointerDown lands before any of that, on the frame the finger touches glass — which is also
+    /// where the sound belongs, alongside the press squash rather than a finger-lift later.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Button))]
-    public sealed class ButtonSound : MonoBehaviour, IPointerClickHandler
+    public sealed class ButtonSound : MonoBehaviour, IPointerDownHandler
     {
         [Tooltip("Played on a normal click. Leave empty for a silent button.")]
         [SerializeField] private SoundEvent click;
@@ -29,10 +39,12 @@ namespace PlayCard.Audio
 
         private void Awake() => _button = GetComponent<Button>();
 
-        public void OnPointerClick(PointerEventData eventData)
+        public void OnPointerDown(PointerEventData eventData)
         {
             if (_button == null) _button = GetComponent<Button>();
-            bool usable = _button == null || _button.interactable;
+            // IsInteractable(), not .interactable: a panel greyed out by a parent CanvasGroup still reports
+            // interactable true on the button itself, and would wrongly play the normal click.
+            bool usable = _button == null || _button.IsInteractable();
 
             var sound = usable ? click : denied;
             // UIPlay, not Play2D: Play2D is the LEGACY name (behind SONITY_ENABLE_LEGACY_FUNCTIONS_MUSIC_AND_2D, which

@@ -60,7 +60,15 @@ namespace PlayCard.UI
 
         private struct Badge { public GameObject Go; public TMP_Text Text; public Image Bg; }
 
+        /// <summary>
+        /// A hand just reached 21 WITHOUT being a natural blackjack (3+ cards, or a 21 on a split hand — a natural
+        /// has its own banner and its own sting). Carries the seat and the badge's world position, and fires on the
+        /// frame the badge first reads 21, so anything hung off it is in step with the card landing.
+        /// </summary>
+        public event System.Action<int, Vector3> HandMadeTwentyOne;
+
         private readonly Dictionary<int, Badge> _active = new Dictionary<int, Badge>();
+        private readonly HashSet<int> _announcedTwentyOne = new HashSet<int>();   // one sting per hand
         private readonly Stack<Badge> _free = new Stack<Badge>();
         private readonly HashSet<int> _desired = new HashSet<int>();
         private readonly List<int> _stale = new List<int>();
@@ -188,6 +196,16 @@ namespace PlayCard.UI
             // corner of the smaller card rather than floating off it.
             b.Go.transform.localScale = _baseScale;
             bool isBlackjack = landed == 2 && value == 21 && handCount == 1;
+
+            // A non-natural 21 has no banner of its own — the only thing the player sees is this badge reading 21 and
+            // turning green, and that happens right here, off LANDED cards. So this is the moment to announce it, and
+            // it is in step with the card touching the felt for free.
+            //
+            // A natural is excluded: it has its own banner and its own sting. One-shot per hand — Place runs every
+            // frame, and a 21 never becomes anything else (the next card busts it), so first-time is the only time.
+            if (value == 21 && !isBlackjack && _announcedTwentyOne.Add(key))
+                HandMadeTwentyOne?.Invoke(seat, cardWorldPos);
+
             if (b.Text != null)
             {
                 b.Text.text = value.ToString();
@@ -255,6 +273,7 @@ namespace PlayCard.UI
         {
             if (!_active.TryGetValue(key, out var b)) return;
             _active.Remove(key);
+            _announcedTwentyOne.Remove(key);   // the hand is gone; the next one at this slot must announce again
             if (b.Go != null) { b.Go.SetActive(false); _free.Push(b); }
         }
 

@@ -302,6 +302,23 @@ namespace PlayCard.Game.Table
             Kick();
             if (holdSeconds > 0f) yield return new WaitForSecondsRealtime(holdSeconds);
 
+            // 3b) INSURANCE — paid FIRST, before any hand is settled, exactly as at a real table: she showed
+            // blackjack, so the side bet on that is decided before the hands it was placed alongside.
+            //
+            // Only ever reached on a dealer natural. A LOST insurance bet was already taken mid-round, right after the
+            // peek that decided it (DealerPeek.TakeLostInsurance), and marks itself settled — so the guard below is
+            // what keeps these two paths from ever both paying out the same stake.
+            foreach (var ins in WinningInsurance())
+            {
+                if (betStacks != null && betStacks.InsuranceSettled(ins.Seat)) continue;   // taken at the peek → lost
+                Kick();
+                var won = ins;
+                if (dealer != null) yield return dealer.PayToSeat(won.Seat, () => PayInsurance(won));
+                else PayInsurance(won);
+                yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
+            }
+            if (dealer != null) dealer.ReturnToIdle();
+
             // 4) COLLECT — ONE losing HAND at a time: the dealer plays that seat's collect gesture and its event flies
             // THAT hand's chips to her (a split's hands are collected separately, so a winning hand keeps its bet).
             // Same one-at-a-time, event-coupled model as the deal throws.
@@ -462,9 +479,14 @@ namespace PlayCard.Game.Table
                     foreach (var h in hands)
                     {
                         if (h == null) continue;
-                        long d = (long)h.Delta;
+                        // HandDelta, not Delta: the wager and its insurance are two separate movements the dealer
+                        // makes, and Delta is their NET. An insured hand losing to a dealer blackjack nets to exactly
+                        // zero — the whole point of insurance — so on Delta it is neither a winner nor a loser, the
+                        // dealer never collects it, and PushedSeats then treats it as a push whose chips just sit
+                        // there. The insurance half is paid by its own beat.
+                        long d = (long)h.HandDelta;
                         if (winners ? d > 0 : d < 0)
-                            yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.Delta);
+                            yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.HandDelta);
                     }
                 }
                 else
@@ -584,6 +606,65 @@ namespace PlayCard.Game.Table
                 if (IsMySeat(h.Seat)) _winFlyByLanding = true;
                 StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget, h.Seat));
             }
+        }
+
+        private readonly struct InsuranceWin
+        {
+            public readonly int Seat;
+            public readonly decimal Winnings;   // gross return minus the stake — the stake itself stays on the felt
+            public InsuranceWin(int seat, decimal winnings) { Seat = seat; Winnings = winnings; }
+        }
+
+        /// <summary>
+        /// Seats whose insurance WON, read from the settle result rather than from the live board.
+        ///
+        /// It has to be the result: the server ZEROES <c>InsuranceBet</c> on the hand as it settles, so by the time
+        /// this ceremony runs the board shows nobody as insured. The result is also the only place that says what the
+        /// bet returned, which keeps the 2:1 rule where it belongs — on the server — instead of as a constant here
+        /// that could quietly disagree with what was actually paid.
+        /// </summary>
+        private IEnumerable<InsuranceWin> WinningInsurance()
+        {
+            if (_board?.LastResults == null) yield break;
+            foreach (var r in _board.LastResults)
+            {
+                var hands = r?.Hands;
+                if (hands == null) continue;
+                foreach (var h in hands)
+                {
+                    if (h == null || h.InsuranceBet <= 0m) continue;
+                    if (h.InsuranceDelta <= 0m) continue;            // lost — taken at the peek, nothing to pay
+                    yield return new InsuranceWin(r.SeatNumber, h.InsuranceDelta);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pay a winning insurance bet, landing the winnings ON the insurance stack the player built — the stake stays
+        /// where it is and the payout arrives beside it, the same way a hand's winnings land beside its wager.
+        /// </summary>
+        private void PayInsurance(InsuranceWin win)
+        {
+            var hub = ChipHub;
+            if (betStacks == null || hub == null) return;
+
+            long amount = (long)win.Winnings;
+            if (amount <= 0) return;
+
+            var target = betStacks.ChipAnchor(win.Seat);
+            if (target == null) return;
+
+            Vector3 startLocal = target.InverseTransformPoint(hub.position);
+            var chips = betStacks.BuildLooseStack(target, startLocal, amount);
+            Vector3 worldTarget = betStacks.InsuranceWorldPoint(win.Seat);
+
+            for (int i = 0; i < chips.Count; i++)
+                FlyChip(chips[i], worldTarget, chipFlightSeconds, keepOnArrival: true);
+
+            betStacks.HoldPayoutChips(win.Seat, chips);   // persist + peel away with the rest of the seat's chips
+
+            if (chips.Count > 0 && IsMySeat(win.Seat))
+                StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget, win.Seat));
         }
 
         private bool IsMySeat(int seat) => table != null && table.MySeat > 0 && seat == table.MySeat;

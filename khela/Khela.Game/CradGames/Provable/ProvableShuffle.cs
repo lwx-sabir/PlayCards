@@ -62,8 +62,8 @@ namespace CardGames.Provable
             return Convert.ToHexString(hash).ToLowerInvariant();
         }
 
-        /// <summary>Canonical single-card token, e.g. Ace of Hearts → "14H", Two of Diamonds → "2D".</summary>
-        public static string Canonical(Card c) => $"{(int)c.FaceVal}{SuitChar(c.Suit)}";
+        /// <summary>Canonical single-card token, e.g. Ace of Hearts → "14H", Two of Diamonds → "2D"; a joker → "JK".</summary>
+        public static string Canonical(Card c) => c.IsJoker ? "JK" : $"{(int)c.FaceVal}{SuitChar(c.Suit)}";
 
         private static char SuitChar(Suit s) => s switch
         {

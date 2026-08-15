@@ -1943,7 +1943,11 @@ namespace Khela.Game.Managers
                             Outcome = h.OutcomeCode,
                             Stake = h.Stake + h.InsuranceStake,
                             Payout = h.GrossReturn,
-                            Delta = h.GrossReturn - (h.Stake + h.InsuranceStake)
+                            Delta = h.GrossReturn - (h.Stake + h.InsuranceStake),
+                            InsuranceBet = h.InsuranceStake,
+                            InsuranceReturn = h.Insurance == InsuranceResult.Win
+                                ? h.InsuranceStake * BlackjackSettlement.InsuranceWinMultiplier
+                                : 0m
                         }).ToList()
                     });
 
@@ -3083,6 +3087,25 @@ namespace Khela.Game.Managers
         public decimal Payout { get; set; }
         /// <summary>Net for this hand = Payout − Stake (signed). The seat's Delta is the sum of these.</summary>
         public decimal Delta { get; set; }
+
+        /// <summary>
+        /// The insurance side bet on this hand, and what it returned gross (0 if it lost or was never placed).
+        ///
+        /// Broken out because <see cref="Delta"/> NETS them against the main hand, and a client presenting the round
+        /// has to move the two independently: the dealer takes a losing hand's wager AND pays a winning insurance bet,
+        /// as two gestures, even when the amounts cancel. Insurance against a dealer blackjack is the case that
+        /// cancels exactly — that is what insurance is FOR — so a netted Delta of 0 there reads as "a push, move
+        /// nothing" and the round silently skips both.
+        ///
+        /// Same flaw the seat-level Delta already had (see the per-hand results above, which exist because a seat's
+        /// net called a mixed win/loss a push); it simply survived one level lower, inside a hand.
+        ///
+        /// Hand-only net, for a client that wants the main wager alone: Delta − (InsuranceReturn − InsuranceBet).
+        /// </summary>
+        public decimal InsuranceBet { get; set; }
+
+        /// <inheritdoc cref="InsuranceBet"/>
+        public decimal InsuranceReturn { get; set; }
     }
 
     /// <summary>One buffered move in a round (bet/deal/hit/stand/double/split/insurance/dealerPlay), held in

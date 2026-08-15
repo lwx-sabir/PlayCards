@@ -14,14 +14,14 @@ namespace PlayCard.EditorTools
     /// Dev helper: credit test Chips to the signed-in player so you don't run dry while testing. Calls the
     /// dev-only server endpoint (POST /api/wallet/dev/chips, 404 outside Development) with the player's JWT,
     /// then refreshes the wallet HUD. Play mode only (needs the signed-in player + a running server).
-    /// Tools ▸ Khela ▸ Add … Chips.
+    /// Khela ▸ Add … Chips.
     /// </summary>
     public static class AddChipsTool
     {
-        [MenuItem("Tools/Khela/Add 10,000 Chips")]
+        [MenuItem("Khela/Add 10,000 Chips")]
         private static void Add10k() => Grant(10000);
 
-        [MenuItem("Tools/Khela/Add 100,000 Chips")]
+        [MenuItem("Khela/Add 100,000 Chips")]
         private static void Add100k() => Grant(100000);
 
         private static async void Grant(int amount)

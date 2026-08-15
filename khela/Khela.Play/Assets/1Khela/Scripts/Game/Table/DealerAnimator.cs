@@ -90,6 +90,11 @@ namespace PlayCard.Game.Table
                  "the real chips fly). The round-end director also flies the real chips FROM this point. Empty = none.")]
         [SerializeField] private GameObject dealHandChips;
 
+        [Tooltip("When ON, the in-hand card props above are painted with the TABLE's card-skin BACK at runtime, so the " +
+                 "card the dealer picks/holds/throws matches the dealt cards (and follows any skin swap). OFF = leave " +
+                 "whatever material the props already have.")]
+        [SerializeField] private bool matchTableCardBack = true;
+
         // Per-seat card totals from the last board (seat 0 = dealer). Null until the first snapshot sets the baseline,
         // so joining mid-round doesn't fire a burst of phantom deals.
         private Dictionary<int, int> _counts;
@@ -122,6 +127,7 @@ namespace PlayCard.Game.Table
             if (table != null) { table.OnBoardChanged += OnBoard; table.OnConnectionChanged += OnConnection; }
             else Debug.LogWarning("[DealerAnimator] no TableController found — dealer won't animate to the board.");
             if (tableView != null) tableView.RegisterConductor(this);   // become the deal conductor: cards fly on our throws
+            ApplyCardBackToProps();                                     // her held card matches the table's card skin
             PlayIdle();
         }
 
@@ -487,6 +493,34 @@ namespace PlayCard.Game.Table
             if (inHandCardLeft != null) inHandCardLeft.SetActive(false);
             if (inHandCardDealerOwn != null) inHandCardDealerOwn.SetActive(false);
             if (dealHandChips != null) dealHandChips.SetActive(false);   // reset the chips-in-hand prop on idle too
+        }
+
+        /// <summary>
+        /// Paint the in-hand card PROPS with the table's card-skin BACK so the card she picks/holds/throws matches the
+        /// dealt cards. Only swaps the base-map TEXTURE (via a MaterialPropertyBlock — no material instancing) and keeps
+        /// each prop's own UV mapping, so it works whether the prop is a standalone card-back mesh or shares the deck
+        /// mesh. No-op if the toggle is off, or the skin / its back / a prop is missing.
+        /// </summary>
+        private void ApplyCardBackToProps()
+        {
+            if (!matchTableCardBack) return;
+            var skin = tableView != null ? tableView.PreviewSkin : null;
+            if (skin == null || skin.back == null) return;
+            ApplyBack(inHandCard, skin);
+            ApplyBack(inHandCardLeft, skin);
+            ApplyBack(inHandCardDealerOwn, skin);
+        }
+
+        private static void ApplyBack(GameObject prop, CardSkin skin)
+        {
+            if (prop == null) return;
+            var mpb = new MaterialPropertyBlock();
+            foreach (var r in prop.GetComponentsInChildren<Renderer>(true))
+            {
+                r.GetPropertyBlock(mpb);
+                mpb.SetTexture(skin.baseMapProperty, skin.back);   // swap to the skin's back; keep the prop's own UVs
+                r.SetPropertyBlock(mpb);
+            }
         }
 
         // The RIGHT-hand holder for the throw currently playing: the dealer's OWN deal grips the card at a different

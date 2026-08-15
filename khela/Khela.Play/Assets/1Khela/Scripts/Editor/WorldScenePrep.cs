@@ -48,7 +48,7 @@ namespace PlayCard.EditorTools
         // 1. REPORT — changes nothing. Run this first.
         // ============================================================================================
 
-        [MenuItem("Tools/Khela/World Prep/1 - Report Scene Readiness", priority = 20)]
+        [MenuItem("Khela/World Prep/1 - Report Scene Readiness", priority = 20)]
         public static void ReportSceneReadiness()
         {
             var scene = SceneManager.GetActiveScene();
@@ -127,7 +127,7 @@ namespace PlayCard.EditorTools
         // 2. PREP — static flags + light bake types + reflection probes + probe grid
         // ============================================================================================
 
-        [MenuItem("Tools/Khela/World Prep/2 - Prep Open Scene", priority = 21)]
+        [MenuItem("Khela/World Prep/2 - Prep Open Scene", priority = 21)]
         public static void PrepOpenScene()
         {
             var scene = SceneManager.GetActiveScene();
@@ -143,7 +143,7 @@ namespace PlayCard.EditorTools
                       "Next: Tools ▸ Khela ▸ Bake Virtual-World Lighting, then World Prep ▸ 3 - Bake Occlusion Culling.");
         }
 
-        [MenuItem("Tools/Khela/World Prep/3 - Bake Occlusion Culling", priority = 22)]
+        [MenuItem("Khela/World Prep/3 - Bake Occlusion Culling", priority = 22)]
         public static void BakeOcclusion()
         {
             Debug.Log("[WorldPrep] Computing occlusion culling …");
@@ -151,7 +151,7 @@ namespace PlayCard.EditorTools
             Debug.Log($"[WorldPrep] Occlusion culling done — umbra data {StaticOcclusionCulling.umbraDataSize} bytes.");
         }
 
-        [MenuItem("Tools/Khela/World Prep/Prep ALL Virtual-World Scenes", priority = 40)]
+        [MenuItem("Khela/World Prep/Prep ALL Virtual-World Scenes", priority = 40)]
         public static void PrepAllScenes()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;

@@ -1,6 +1,7 @@
 using PlayCard.Game.Betting;
 using PlayCard.Game.Dtos;
 using PlayCard.Game.Table;
+using PlayCard.UI;
 using Sonity;
 using UnityEngine;
 
@@ -31,6 +32,10 @@ namespace PlayCard.Audio
         [SerializeField] private BlackjackTableView view;
         [SerializeField] private DealerAnimator dealer;
         [SerializeField] private BetStacks betStacks;
+        [SerializeField] private HandValueLabels valueLabels;
+        [SerializeField] private HandBlackjackLabels resultLabels;
+        [SerializeField] private BetTimerPopup betTimer;
+        [SerializeField] private TurnPopup turnPopup;
 
         [Header("Cards")]
         [Tooltip("The dealer TAKING A CARD FROM THE SHOE — the card sliding out. Fires once per card dealt, on the " +
@@ -87,6 +92,46 @@ namespace PlayCard.Audio
                  "on a table this small if the panning reads as distracting.")]
         [SerializeField] private bool spatialiseCards = true;
 
+        [Header("Hand results — fired the frame the label appears, not off the board")]
+        [Tooltip("A hand reached 21 without being a natural blackjack (3+ cards, or 21 on a split hand). Plays the " +
+                 "instant the value badge first reads 21.")]
+        [SerializeField] private SoundEvent handTwentyOne;
+
+        [Tooltip("A hand busted. Plays the instant the BUST banner unrolls.")]
+        [SerializeField] private SoundEvent handBust;
+
+        [Tooltip("A NATURAL blackjack — a 2-card 21 on an unsplit hand, pays 3:2. Plays the instant the BLACKJACK " +
+                 "banner unrolls, mid-round as the card lands. A natural never also plays the win sting: BJ is a " +
+                 "terminal banner, it never becomes Win at settle.")]
+        [SerializeField] private SoundEvent handBlackjack;
+
+        [Tooltip("The hand BEAT the dealer (not a natural — that has its own sting). Plays at settle, the instant the " +
+                 "WIN banner unrolls, which is during the round-end hold before the payout chips move.")]
+        [SerializeField] private SoundEvent handWin;
+
+        [Tooltip("The hand TIED the dealer — stake comes back. Plays as the PUSH banner unrolls.")]
+        [SerializeField] private SoundEvent handPush;
+
+        [Tooltip("The hand LOST without busting (a bust has its own sting). Plays as the LOSE banner unrolls — which " +
+                 "only happens if the banner prefab actually has a Label_Lose child; without it there is no banner " +
+                 "and so, correctly, no sound.")]
+        [SerializeField] private SoundEvent handLose;
+
+        [Tooltip("The betting window opened and it is YOUR turn to bet — plays as the countdown slides in. Skipped " +
+                 "for a window you have already committed to, and held until the round-end ceremony has finished so " +
+                 "it never lands on top of the payout.")]
+        [SerializeField] private SoundEvent bettingWindowOpen;
+
+        [Tooltip("LOOPING urgency bed, started when EITHER clock passes its warning threshold and stopped when that " +
+                 "clock stops. Shared by the turn timer and the betting timer — they never run at once, so one bed " +
+                 "covers both. The SoundContainer MUST have Loop on, or you get a single one-shot and silence after.")]
+        [SerializeField] private SoundEvent timerUrgentLoop;
+
+        [Tooltip("ON: only YOUR hands sting. These are announcer-length stingers (1.5-2s), so at a full table every " +
+                 "seat busting would talk over itself — and with polyphony 1 they would cut each other mid-word. " +
+                 "Turn OFF only if you want the whole table audible.")]
+        [SerializeField] private bool resultStingsMySeatOnly = true;
+
         private bool _prevInRound;
 
         private void OnEnable()
@@ -109,6 +154,23 @@ namespace PlayCard.Audio
                 view.CardLanded += OnCardLanded;
                 view.CardsSwept += OnCardsSwept;
             }
+            // The label components are the authority on WHEN a result becomes visible, so the stings hang off them
+            // rather than off the board. A board push announces a bust a beat before the card that caused it has even
+            // landed — sting off that and the player hears the bad news before seeing why.
+            if (valueLabels == null) valueLabels = FindAnyObjectByType<HandValueLabels>(FindObjectsInactive.Include);
+            if (resultLabels == null) resultLabels = FindAnyObjectByType<HandBlackjackLabels>(FindObjectsInactive.Include);
+            if (valueLabels != null) valueLabels.HandMadeTwentyOne += OnHandTwentyOne;
+            if (resultLabels != null) resultLabels.ResultShown += OnHandResult;
+
+            if (betTimer == null) betTimer = FindAnyObjectByType<BetTimerPopup>(FindObjectsInactive.Include);
+            if (turnPopup == null) turnPopup = FindAnyObjectByType<TurnPopup>(FindObjectsInactive.Include);
+            if (betTimer != null)
+            {
+                betTimer.WindowOpened += OnBettingWindowOpen;
+                betTimer.UrgencyChanged += OnBetUrgency;
+            }
+            if (turnPopup != null) turnPopup.UrgencyChanged += OnTurnUrgency;
+
             if (table != null)
             {
                 table.OnBoardChanged += OnBoard;
@@ -129,12 +191,99 @@ namespace PlayCard.Audio
                 view.CardLanded -= OnCardLanded;
                 view.CardsSwept -= OnCardsSwept;
             }
+            if (valueLabels != null) valueLabels.HandMadeTwentyOne -= OnHandTwentyOne;
+            if (resultLabels != null) resultLabels.ResultShown -= OnHandResult;
+            if (betTimer != null)
+            {
+                betTimer.WindowOpened -= OnBettingWindowOpen;
+                betTimer.UrgencyChanged -= OnBetUrgency;
+            }
+            if (turnPopup != null) turnPopup.UrgencyChanged -= OnTurnUrgency;
+
+            // Last line of defence. Unsubscribing does NOT stop a loop already playing, and leaving the table mid
+            // countdown is the single most likely way to strand one — a bed that survives into the lobby is the kind
+            // of bug players report as "the sound broke" with no way to clear it but a restart.
+            _turnUrgent = false;
+            _betUrgent = false;
+            StopUrgencyLoop();
             if (table != null) table.OnBoardChanged -= OnBoard;
         }
 
         // ---- state-driven ----
 
         private void OnCardLanded(int seat, Vector3 worldPos) => PlayCardLand(worldPos);
+
+        private void OnHandTwentyOne(int seat, Vector3 worldPos) => PlayResultSting(handTwentyOne, seat, worldPos);
+
+        // Always for this player — the popup only opens for them in the first place, so there is no seat to filter on.
+        private void OnBettingWindowOpen()
+        {
+            if (bettingWindowOpen != null) bettingWindowOpen.UIPlay();
+        }
+
+        // ---- urgency bed ----
+        //
+        // Two independent clocks feed ONE loop. They should never overlap (the turn clock runs in-round, the betting
+        // clock between rounds), but they are driven by separate components with separate lifetimes, so this tracks
+        // them as flags and derives the loop from "is either urgent" rather than trusting play/stop calls to arrive in
+        // order. A stray stop from the clock that ISN'T running can then never cut the one that is, and a missed stop
+        // cannot leave the bed on once both flags are down.
+        private bool _turnUrgent;
+        private bool _betUrgent;
+        private bool _urgencyPlaying;
+
+        private void OnTurnUrgency(bool on) { _turnUrgent = on; ApplyUrgencyLoop(); }
+        private void OnBetUrgency(bool on)  { _betUrgent = on;  ApplyUrgencyLoop(); }
+
+        private void ApplyUrgencyLoop()
+        {
+            bool want = _turnUrgent || _betUrgent;
+            if (want == _urgencyPlaying) return;   // idempotent: re-starting a loop every frame is a buzz, not a loop
+            if (want)
+            {
+                if (timerUrgentLoop != null) timerUrgentLoop.UIPlay();
+                _urgencyPlaying = true;
+            }
+            else StopUrgencyLoop();
+        }
+
+        private void StopUrgencyLoop()
+        {
+            if (!_urgencyPlaying) return;
+            _urgencyPlaying = false;
+            // UIStop pairs with UIPlay — same owner (the SoundManager's UI transform), so this stops exactly the
+            // instance started above. Fade-out left on, so a clock that stops on the beat doesn't clip the bed off.
+            if (timerUrgentLoop != null) timerUrgentLoop.UIStop();
+        }
+
+        /// <summary>
+        /// One banner, one sting — every outcome the banner can show has a slot here, and an unassigned slot is simply
+        /// silent, so which results speak is an authoring decision rather than a code one.
+        /// </summary>
+        private void OnHandResult(HandBlackjackLabels.Variant variant, int seat, Vector3 worldPos)
+        {
+            switch (variant)
+            {
+                case HandBlackjackLabels.Variant.BJ:   PlayResultSting(handBlackjack, seat, worldPos); break;
+                case HandBlackjackLabels.Variant.Bust: PlayResultSting(handBust, seat, worldPos);      break;
+                case HandBlackjackLabels.Variant.Win:  PlayResultSting(handWin, seat, worldPos);       break;
+                case HandBlackjackLabels.Variant.Push: PlayResultSting(handPush, seat, worldPos);      break;
+                case HandBlackjackLabels.Variant.Lose: PlayResultSting(handLose, seat, worldPos);      break;
+            }
+        }
+
+        /// <summary>
+        /// One place for both result stings, so they can never diverge on who hears them or how they are placed.
+        /// Played FLAT (UIPlay) rather than at the hand: these read as commentary on the round, not as a noise coming
+        /// from a spot on the felt, and a voice panning to the left seat is distracting. The world position is still
+        /// carried by the events for anything that wants to place a visual there.
+        /// </summary>
+        private void PlayResultSting(SoundEvent sound, int seat, Vector3 worldPos)
+        {
+            if (sound == null) return;
+            if (resultStingsMySeatOnly && table != null && seat != table.MySeat) return;
+            sound.UIPlay();
+        }
 
         private void OnCardsSwept(Vector3 discardPos)
         {

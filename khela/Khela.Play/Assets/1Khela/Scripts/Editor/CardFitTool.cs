@@ -9,7 +9,7 @@ namespace PlayCard.EditorTools
     /// number. It measures the table's world width (the "TableRoot" object's combined renderer bounds) and
     /// the card's world width, then uniformly scales the card to a chosen fraction of the table.
     ///
-    /// Use: select Card_BJ in the Hierarchy → Tools ▸ Khela ▸ Fit Card To Table → enter the width fraction
+    /// Use: select Card_BJ in the Hierarchy → Khela ▸ Fit Card To Table → enter the width fraction
     /// (pre-filled with <see cref="DefaultWidthFraction"/>) → Fit. Re-runnable.
     /// </summary>
     public static class CardFitTool
@@ -18,7 +18,7 @@ namespace PlayCard.EditorTools
         /// This is the value the dialog pre-fills with.</summary>
         public const float DefaultWidthFraction = 0.12f;
 
-        [MenuItem("Tools/Khela/Fit Card To Table")]
+        [MenuItem("Khela/Fit Card To Table")]
         public static void Open()
         {
             // Validate the selection up-front so the dialog only opens when it can actually do something.

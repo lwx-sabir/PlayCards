@@ -106,9 +106,28 @@ namespace PlayCard.UI
         {
             if (_panel == null) _panel = GetComponentInParent<BettingAvatarFader>(true);
             if (view == null) view = FindAnyObjectByType<BlackjackTableView>(FindObjectsInactive.Include);
+
+            // Blank FIRST, before anything can be shown. Render is the only thing that ever calls Show/Hide on a
+            // plate, and it only runs off a board — so until the first snapshot lands the cards keep whatever the
+            // SCENE authored, which is dummy content: a placeholder portrait and the sample name and chip count used
+            // to size the layout. On a fast connection the board arrives in the same breath and nobody sees it; on a
+            // real device with a slow first response that is four to seven seconds of a table showing invented
+            // players with invented balances, which is a far worse thing to show than nothing.
+            //
+            // An empty card is also the honest state: before the first board we genuinely do not know who is seated.
+            BlankUntilFirstBoard();
+
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             if (table.Board != null) OnBoard(table.Board);
+        }
+
+        /// <summary>Hide every plate until a board says otherwise. Skipped in the dev placeholder preview.</summary>
+        private void BlankUntilFirstBoard()
+        {
+            if (plates == null || PreviewPlaceholders) return;
+            foreach (var plate in plates)
+                if (plate != null) plate.Hide();
         }
 
         private void OnDisable()

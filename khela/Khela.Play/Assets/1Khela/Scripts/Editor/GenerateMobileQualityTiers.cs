@@ -59,7 +59,7 @@ namespace PlayCard.EditorTools
             new TierSpec { Name="Ultra", RenderScale=1.00f, MSAA=4, HDR=true,  MainShadowRes=2048, ShadowDistance=50, Cascades=4, SoftShadows=true,  SoftQuality=3, DepthTexture=true,  Advanced=true  },
         };
 
-        [MenuItem("Tools/Khela/Graphics/Generate Mobile Quality Tiers")]
+        [MenuItem("Khela/Graphics/Generate Mobile Quality Tiers")]
         public static void Generate()
         {
             if (AssetDatabase.LoadMainAssetAtPath(BaseUrp) == null)

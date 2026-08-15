@@ -77,6 +77,12 @@ namespace PlayCard.Game.Betting
                  "Z alone, with a small gap so the two stacks read as two.")]
         [SerializeField] private Vector3 payoutOffset = new Vector3(0.09f, 0f, 0f);
 
+        [Tooltip("Where the INSURANCE stack sits, offset from the seat's main bet stack. Mirrors Payout Offset to the " +
+                 "other side by default, so the wager reads left-to-right as insurance | bet | winnings and no two " +
+                 "stacks ever share a spot. Deliberately anchored to the seat's ONE-HAND position: insurance is a " +
+                 "side bet on the dealer, not on a hand, so it must not slide when the player splits.")]
+        [SerializeField] private Vector3 insuranceOffset = new Vector3(-0.09f, 0f, 0f);
+
         [Header("Peel-away — how a seat's chips LEAVE the felt (win payout and push alike)")]
         [Tooltip("Seconds for ONE chip to rise and shrink out.")]
         [SerializeField] private float peelRiseSeconds = 0.35f;
@@ -111,6 +117,13 @@ namespace PlayCard.Game.Betting
             for (int i = 0; i < _stacks.Length; i++) { _stacks[i] = new List<GameObject>(); _lastAmount[i] = -1; }
             _lastHandCount = new int[n];
             for (int i = 0; i < n; i++) _lastHandCount[i] = -1;
+
+            // Insurance lives in its OWN parallel array rather than as a third slot per seat. Every existing index is
+            // `seatIdx * MaxHands + handIndex`, and widening that would have meant re-deriving it at a dozen call
+            // sites for a stack that is not a hand and never splits.
+            _insStacks = new List<GameObject>[n];
+            _lastIns = new long[n];
+            for (int i = 0; i < n; i++) { _insStacks[i] = new List<GameObject>(); _lastIns[i] = -1; }
         }
 
         private void OnEnable()
@@ -125,6 +138,12 @@ namespace PlayCard.Game.Betting
                 builder.OnBetChanged += OnLocalBetChanged;
                 builder.OnBetRejected += OnBetRejected;
             }
+            // Same reason SeatPlates blanks itself here: the amount labels are SCENE objects carrying authored sample
+            // text (the "999k" used to size them), and SetLabel only ever runs off a board or a local chip drop. With
+            // a slow first response the felt advertises wagers nobody has placed.
+            if (labelsBySeat != null)
+                for (int i = 0; i < labelsBySeat.Length; i++) SetLabel(i, string.Empty);
+
             if (table == null) return;
             table.OnBoardChanged += OnBoard;
             if (table.Board != null) OnBoard(table.Board);
@@ -172,7 +191,7 @@ namespace PlayCard.Game.Betting
             // not chips being added. Only a seat that grows while we were already watching is a double or a split.
             bool wasInRound = _prevInRound;
             // A NEW round lifts every mid-round clear, or a seat that busted last round would never show a bet again.
-            if (inRound && !wasInRound) _clearedHands.Clear();
+            if (inRound && !wasInRound) { _clearedHands.Clear(); _clearedIns.Clear(); }
             _prevInRound = inRound;
             if (render && chipSet != null) { _lastMinBet = board.MinBet; _lastMaxBet = board.MaxBet; }   // cache stakes for BuildLooseStack
 
@@ -233,6 +252,31 @@ namespace PlayCard.Game.Betting
                     // wasInRound is what keeps the opening deal and a mid-round join from firing it for every seat.
                     if (inRound && wasInRound && amount > System.Math.Max(0L, previous))
                         ChipsAdded?.Invoke(i + 1, ChipWorldPoint(i + 1, h, handCount));
+                }
+
+                // ---- INSURANCE: a second wager at this seat, drawn as its own stack ----
+                //
+                // Read off hand 0 only. Insurance is offered once, before anyone acts, and the server records it on
+                // the main hand — a later split does not divide it, so summing across hands would double it the moment
+                // the player splits an insured hand.
+                long insurance = (showRound && hands != null && hands.Count > 0) ? (long)hands[0].Insurance : 0;
+                seatTotal += insurance;   // the seat's amount label reports everything the player has at risk
+
+                if (_clearedIns.Contains(i)) { ClearInsuranceStack(i); _lastIns[i] = 0; }
+                else if (insurance != _lastIns[i])
+                {
+                    long previousIns = _lastIns[i];
+                    _lastIns[i] = insurance;
+
+                    if (insurance > 0 && values != null && values.Count > 0)
+                        BuildInsurance(i, insurance, values, prefabs);
+                    else
+                        ClearInsuranceStack(i);
+
+                    // Placing insurance is money going down mid-round, exactly like a double or a split's matching
+                    // bet — same beat, so the same sound.
+                    if (inRound && wasInRound && insurance > System.Math.Max(0L, previousIns))
+                        ChipsAdded?.Invoke(i + 1, InsuranceWorldPoint(i + 1));
                 }
 
                 // While the LOCAL player is still dropping chips, the board has no bet yet — PlaceBet isn't sent until
@@ -448,6 +492,63 @@ namespace PlayCard.Game.Betting
             for (int j = 0; j < list.Count; j++) if (list[j] != null) Destroy(list[j]);
             list.Clear();
         }
+
+        // ---- INSURANCE stack ----
+
+        private List<GameObject>[] _insStacks;
+        private long[] _lastIns;
+        private readonly HashSet<int> _clearedIns = new HashSet<int>();   // seatIdx already taken/paid out this round
+
+        /// <summary>Local position of a seat's insurance stack — the one-hand bet spot, shifted by the authored offset.</summary>
+        private Vector3 InsuranceOffsetFor(int seatNumber) => HandOffset(seatNumber, 0, 1) + insuranceOffset;
+
+        /// <summary>WORLD position of a seat's insurance stack — where its chips are paid TO and collected FROM.</summary>
+        public Vector3 InsuranceWorldPoint(int seatNumber)
+        {
+            int idx = seatNumber - 1;
+            if (anchorsBySeat == null || idx < 0 || idx >= anchorsBySeat.Length || anchorsBySeat[idx] == null)
+                return transform.position;
+            return anchorsBySeat[idx].TransformPoint(InsuranceOffsetFor(seatNumber));
+        }
+
+        private void BuildInsurance(int seatIdx, long amount, IReadOnlyList<long> values, IReadOnlyList<GameObject> prefabs)
+        {
+            ClearInsuranceStack(seatIdx);
+            var anchor = anchorsBySeat != null && seatIdx < anchorsBySeat.Length ? anchorsBySeat[seatIdx] : null;
+            if (anchor == null) return;
+            SpawnStack(anchor, InsuranceOffsetFor(seatIdx + 1), amount, values, prefabs, _insStacks[seatIdx]);
+        }
+
+        private void ClearInsuranceStack(int seatIdx)
+        {
+            if (_insStacks == null || seatIdx < 0 || seatIdx >= _insStacks.Length) return;
+            var list = _insStacks[seatIdx];
+            for (int j = 0; j < list.Count; j++) if (list[j] != null) Destroy(list[j]);
+            list.Clear();
+        }
+
+        /// <summary>
+        /// Hand this seat's insurance chips over to a caller that will fly them somewhere (the dealer taking a lost
+        /// insurance bet), and stop the board rebuilding them for the rest of the round.
+        ///
+        /// The same shape as <see cref="ClearHandMidRound"/>, and for the same reason: the server keeps reporting the
+        /// insurance stake until the round settles, so without the cleared-marker the next push would rebuild the
+        /// stack the dealer has just taken.
+        /// </summary>
+        public List<GameObject> DetachInsurance(int seatNumber)
+        {
+            int idx = seatNumber - 1;
+            if (_insStacks == null || idx < 0 || idx >= _insStacks.Length) return null;
+            _clearedIns.Add(idx);
+            _lastIns[idx] = 0;
+
+            var chips = new List<GameObject>(_insStacks[idx]);
+            _insStacks[idx].Clear();   // released, NOT destroyed — the caller owns them now
+            return chips;
+        }
+
+        /// <summary>True once this seat's insurance has been settled (taken or paid) this round.</summary>
+        public bool InsuranceSettled(int seatNumber) => _clearedIns.Contains(seatNumber - 1);
 
         /// <summary>Felt chip size, from the shared <see cref="ChipSet"/> — the one value every felt spawner uses.
         /// <see cref="BetSpot"/> reads it through here too, so a dropped chip and a stacked one always match.</summary>

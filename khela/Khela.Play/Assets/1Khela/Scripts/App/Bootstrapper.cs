@@ -91,9 +91,12 @@ namespace PlayCard.App
             afps.PaddingOffset = new Vector2(15f, 45f);  // ×2 scale ≈ 30px left inset + 90px top inset (clears notch)
             afps.BackgroundPadding = 6;                  // a touch more background behind the text
 
-            // ===== SHIP SWITCH ===== visible while profiling (all builds incl. release). Before the first store
-            // build, change Normal → Disabled here so real players never see an fps counter.
-            afps.OperationMode = CodeStage.AdvancedFPSCounter.OperationMode.Normal;
+            // Boot visibility follows the persisted Settings toggle (FpsOverlay.Visible), which defaults to ON while
+            // profiling — so a player who hid the overlay stays hidden across restarts. SHIP SWITCH for a store
+            // build: default FpsOverlay's pref to 0 (or just hide the Settings toggle from players).
+            afps.OperationMode = FpsOverlay.Visible
+                ? CodeStage.AdvancedFPSCounter.OperationMode.Normal
+                : CodeStage.AdvancedFPSCounter.OperationMode.Disabled;
         }
 
         // Start (not Awake): guarantees AccountManager.Awake has already run and set up Instance + auth.

@@ -55,6 +55,15 @@ namespace PlayCard.UI
         [Range(0f, 1f)]
         [SerializeField] private float breatheMinAlpha = 0.35f;
 
+        /// <summary>
+        /// The countdown crossed (or came back over) its warning threshold — the same flag that recolours the warn
+        /// image, so anything hung off it is in step with the visual by construction. True = urgent, false = calm or
+        /// the timer stopped. Always ends on a false: the popup closing, or being disabled outright, both release it,
+        /// so a looping sound driven by this can never be stranded on.
+        /// </summary>
+        public event System.Action<bool> UrgencyChanged;
+
+        private bool _warning;
         private Color _warnBaseColor = Color.white;
 
         [Header("Slide")]
@@ -104,6 +113,15 @@ namespace PlayCard.UI
         private void OnDisable()
         {
             if (table != null) table.OnBoardChanged -= Apply;
+            ClearWarning();   // torn down mid-countdown — Tick will never run again to release it
+        }
+
+        /// <summary>Drop the urgency if it is up. The single release point, so no path can leave a loop playing.</summary>
+        private void ClearWarning()
+        {
+            if (!_warning) return;
+            _warning = false;
+            UrgencyChanged?.Invoke(false);
         }
 
         private bool _lastReady;
@@ -142,9 +160,19 @@ namespace PlayCard.UI
             // Running out. Driven off the same fraction as the ring so the colour flips exactly when the ring passes
             // the mark, and assigned every frame rather than on the edge — cheap, and it self-corrects if anything
             // else touches the colour.
+            bool warning = left01 < warnBelow;
+
+            // Computed OUTSIDE the warnImage null check on purpose: this same flag drives the urgency sound, and a
+            // table with no warn image authored should still get the audio. Raised on the EDGE only — Tick runs every
+            // frame, and a looping sound restarted 60 times a second is a buzz, not a loop.
+            if (warning != _warning)
+            {
+                _warning = warning;
+                UrgencyChanged?.Invoke(warning);
+            }
+
             if (warnImage != null)
             {
-                bool warning = left01 < warnBelow;
                 var c = warning ? warnColor : _warnBaseColor;
 
                 // Breathe on the warn colour's OWN alpha (multiply, don't overwrite) so an authored translucency is
@@ -192,6 +220,7 @@ namespace PlayCard.UI
         private void Hide()
         {
             _shown = false;
+            ClearWarning();   // the turn ended — the clock stopped, so the urgency stops with it
             StartSlide(_hiddenPos, deactivateAtEnd: !_selfHosted, showing: false);
         }
 

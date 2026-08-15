@@ -21,7 +21,15 @@ namespace Khela.Game.Games.VideoPoker
             if (p.WildRoyal > 0) rows.Add(new Row { Hand = "Wild Royal Flush", PerCoin = p.WildRoyal, AtMaxCoins = p.WildRoyal * max });
             if (p.FiveOfAKind > 0) rows.Add(new Row { Hand = "Five of a Kind", PerCoin = p.FiveOfAKind, AtMaxCoins = p.FiveOfAKind * max });
             Add(rows, "Straight Flush", p.StraightFlush, max);
-            Add(rows, "Four of a Kind", p.FourOfAKind, max);
+            if (p.QuadAces.HasValue)   // Bonus-family: rank-/kicker-tiered four of a kind
+            {
+                if (p.QuadAcesKicker.HasValue) Add(rows, "Four Aces + 2/3/4", p.QuadAcesKicker.Value, max);
+                Add(rows, "Four Aces", p.QuadAces.Value, max);
+                if (p.QuadLowKicker.HasValue) Add(rows, "Four 2s-4s + A/2/3/4", p.QuadLowKicker.Value, max);
+                if (p.QuadLow.HasValue) Add(rows, "Four 2s-4s", p.QuadLow.Value, max);
+                if (p.QuadHigh.HasValue) Add(rows, "Four 5s-Kings", p.QuadHigh.Value, max);
+            }
+            else Add(rows, "Four of a Kind", p.FourOfAKind, max);
             Add(rows, "Full House", p.FullHouse, max);
             Add(rows, "Flush", p.Flush, max);
             Add(rows, "Straight", p.Straight, max);

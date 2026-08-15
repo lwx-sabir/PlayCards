@@ -55,6 +55,17 @@ namespace Khela.Game.Controllers
             return board == null ? NotFound("Hand not found or expired.") : Ok(board);
         }
 
+        /// <summary>Provably-fair proof for a settled hand: recomputes the whole hand from its revealed seed and reports,
+        /// field by field, whether it reproduces the committed hashes and the recorded result. Public — the point of
+        /// provably-fair is that anyone can check any hand by id.</summary>
+        [HttpGet("verify/{handId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Verify(string handId)
+        {
+            var result = await _service.VerifyAsync(handId);
+            return result == null ? NotFound("Hand not found.") : Ok(result);
+        }
+
         /// <summary>Resolve the caller's userId, run the op, and map manager errors to 400 (insufficient funds, bad
         /// input, expired hand) / 404 (null board).</summary>
         private async Task<IActionResult> Run(Func<string, Task<VideoPokerBoard>> op)

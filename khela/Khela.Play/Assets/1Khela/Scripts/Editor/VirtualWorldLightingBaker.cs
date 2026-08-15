@@ -20,7 +20,7 @@ namespace PlayCard.EditorTools
     {
         private const string Root = "Assets/1Khela/_Scenes/Virtual_Worlds";
 
-        [MenuItem("Tools/Khela/Bake Virtual-World Lighting")]
+        [MenuItem("Khela/Bake Virtual-World Lighting")]
         public static void BakeAll()
         {
             // Don't clobber unsaved work; remember what was open so we can restore it after.

@@ -19,6 +19,8 @@ namespace Khela.Game.Games.VideoPoker
         public VideoPokerPaytable Paytable { get; init; }
         /// <summary>How this variant scores a final 5-card hand — natural, or wild (Deuces/Joker).</summary>
         public Func<IReadOnlyList<Card>, VideoPokerHandRank> Evaluate { get; init; }
+        /// <summary>Wild jokers added to the deck (Joker Poker = 1 → 53 cards); 0 = the standard 52.</summary>
+        public int Jokers { get; init; } = 0;
         public int MinCoins { get; init; } = 1;
         public int MaxCoins { get; init; } = 5;
 
@@ -46,11 +48,52 @@ namespace Khela.Game.Games.VideoPoker
             Evaluate = hand => VideoPokerEvaluator.EvaluateWild(hand, c => c.FaceVal == FaceValue.Two),
         };
 
+        /// <summary>Bonus Poker 8/5 — Jacks or Better with rank-tiered four-of-a-kind. Natural (no wilds).</summary>
+        public static readonly VideoPokerVariant BonusPoker = new()
+        {
+            Id = "bonus-poker",
+            Name = "Bonus Poker 8/5",
+            Paytable = VideoPokerPaytable.BonusPoker85,
+            Evaluate = hand => VideoPokerEvaluator.Evaluate(hand),
+        };
+
+        /// <summary>Double Bonus 9/7/5 — bigger quad bonuses. Natural (no wilds).</summary>
+        public static readonly VideoPokerVariant DoubleBonus = new()
+        {
+            Id = "double-bonus",
+            Name = "Double Bonus 9/7/5",
+            Paytable = VideoPokerPaytable.DoubleBonus975,
+            Evaluate = hand => VideoPokerEvaluator.Evaluate(hand),
+        };
+
+        /// <summary>Double Double Bonus 9/6 — quad bonuses with kicker premiums. Natural (no wilds).</summary>
+        public static readonly VideoPokerVariant DoubleDoubleBonus = new()
+        {
+            Id = "double-double-bonus",
+            Name = "Double Double Bonus 9/6",
+            Paytable = VideoPokerPaytable.DoubleDoubleBonus96,
+            Evaluate = hand => VideoPokerEvaluator.Evaluate(hand),
+        };
+
+        /// <summary>Joker Poker (Kings or Better) — one wild joker, a 53-card deck.</summary>
+        public static readonly VideoPokerVariant JokerPoker = new()
+        {
+            Id = "joker-poker",
+            Name = "Joker Poker (Kings or Better)",
+            Paytable = VideoPokerPaytable.JokerPokerKings,
+            Evaluate = hand => VideoPokerEvaluator.EvaluateWild(hand, c => c.IsJoker),
+            Jokers = 1,
+        };
+
         private static readonly Dictionary<string, VideoPokerVariant> All =
             new(StringComparer.OrdinalIgnoreCase)
             {
                 [JacksOrBetter.Id] = JacksOrBetter,
                 [DeucesWild.Id] = DeucesWild,
+                [BonusPoker.Id] = BonusPoker,
+                [DoubleBonus.Id] = DoubleBonus,
+                [DoubleDoubleBonus.Id] = DoubleDoubleBonus,
+                [JokerPoker.Id] = JokerPoker,
             };
 
         public const string DefaultId = "jacks-or-better";

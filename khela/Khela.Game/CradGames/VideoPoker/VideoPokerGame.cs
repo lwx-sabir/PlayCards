@@ -21,11 +21,13 @@ namespace CardGames.VideoPoker
         public List<Card> Final { get; private set; }
         public bool Drawn { get; private set; }
 
-        /// <summary>Shuffle a fresh 52-card deck (deterministic + replayable WITH a seed; crypto shuffle without) and
-        /// deal the first 5. Commit <see cref="DeckHash"/> with these 5 before accepting the hold.</summary>
-        public void Deal(byte[] seed = null)
+        /// <summary>Shuffle a fresh deck (deterministic + replayable WITH a seed; crypto shuffle without) and deal the
+        /// first 5. Commit <see cref="DeckHash"/> with these 5 before accepting the hold. <paramref name="jokers"/> adds
+        /// that many wild jokers (Joker Poker = 1 → a 53-card deck); 0 = the standard 52.</summary>
+        public void Deal(byte[] seed = null, int jokers = 0)
         {
-            Deck = new Deck();                       // single 52-card deck, reshuffled every hand
+            Deck = new Deck();                       // single deck, reshuffled every hand
+            for (int i = 0; i < jokers; i++) Deck.Cards.Add(Card.Joker());   // 53rd (+) card for Joker Poker
             if (seed != null) Deck.Shuffle(seed); else Deck.Shuffle();
 
             Dealt = new List<Card>(5);

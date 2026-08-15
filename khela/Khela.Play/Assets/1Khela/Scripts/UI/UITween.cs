@@ -18,5 +18,20 @@ namespace PlayCard.UI
         /// <summary>Ease IN with a wind-up — pulls slightly the WRONG way first, then shoots to the target. Use on HIDE.</summary>
         public static float EaseInBack(float t, float overshoot)
             => t * t * ((overshoot + 1f) * t - overshoot);
+
+        /// <summary>
+        /// Ease OUT, no overshoot — fast off the mark, decelerating into the target. The workhorse for anything that
+        /// must feel INSTANT: most of the distance is covered in the first third of the duration, so the eye reads the
+        /// motion as having already happened. Use it for button presses and any response to a touch.
+        ///
+        /// Prefer this over <see cref="EaseOutBack"/> when the travel is short. Back's overshoot is a fraction of the
+        /// DISTANCE, so over a 6% scale change even a bouncy 1.7 overshoot lands under 1% — invisible. Short pops need
+        /// an explicit overshoot target, not a Back ease.
+        /// </summary>
+        public static float EaseOutCubic(float t)
+        {
+            t = 1f - t;
+            return 1f - t * t * t;
+        }
     }
 }

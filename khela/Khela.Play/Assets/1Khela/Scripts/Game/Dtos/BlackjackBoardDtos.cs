@@ -105,6 +105,22 @@ namespace PlayCard.Game.Dtos
         public decimal Payout { get; set; }
         /// <summary>Net for this hand = Payout − Stake (signed). The seat's Delta is the sum of these.</summary>
         public decimal Delta { get; set; }
+
+        /// <summary>The insurance side bet on this hand, and what it returned gross (0 if lost or never placed).</summary>
+        public decimal InsuranceBet { get; set; }
+
+        /// <inheritdoc cref="InsuranceBet"/>
+        public decimal InsuranceReturn { get; set; }
+
+        /// <summary>What insurance did to the net: winnings if it won, −stake if it lost, 0 if never placed.</summary>
+        public decimal InsuranceDelta => InsuranceReturn - InsuranceBet;
+
+        /// <summary>
+        /// The MAIN WAGER's net, with insurance taken back out. This is what decides whether the dealer collects this
+        /// hand or pays it — <see cref="Delta"/> nets the two, and insurance against a dealer blackjack cancels the
+        /// hand exactly (that is what insurance is for), leaving a 0 that reads as a push and moves no chips at all.
+        /// </summary>
+        public decimal HandDelta => Delta - InsuranceDelta;
     }
 
     public sealed class FairnessView

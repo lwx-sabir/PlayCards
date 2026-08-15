@@ -6,7 +6,7 @@ namespace PlayCard.EditorTools
 {
     /// <summary>
     /// Optionally force Play mode to always start from the Boot scene (so the bootstrap + navigation always
-    /// run) no matter which scene is open. Toggle via <b>Tools ▸ Khela ▸ Play From Boot</b> (checkmark shows
+    /// run) no matter which scene is open. Toggle via <b>Khela ▸ Play From Boot</b> (checkmark shows
     /// the state). When <b>OFF</b>, Play runs the currently-open scene — handy for opening demo/sandbox scenes
     /// directly. The choice persists per-user via <see cref="EditorPrefs"/> and re-applies on every editor
     /// load/recompile. Default = ON (preserves the original behaviour). Editor-only.
@@ -15,7 +15,7 @@ namespace PlayCard.EditorTools
     public static class PlayFromBoot
     {
         private const string BootScenePath = "Assets/1Khela/_Scenes/Boot.unity";
-        private const string MenuPath = "Tools/Khela/Play From Boot";
+        private const string MenuPath = "Khela/Play From Boot";
         private const string PrefKey = "Khela.PlayFromBoot.Enabled";
 
         /// <summary>Per-user toggle; default ON so existing behaviour is unchanged until someone flips it.</summary>

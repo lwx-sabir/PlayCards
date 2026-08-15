@@ -98,7 +98,7 @@ namespace Khela.Game.Games.VideoPoker
             const long nonce = 0;
 
             var game = new VideoPokerGame();
-            game.Deal(ProvableShuffle.DeriveSeed(serverSeed, clientSeed, nonce));
+            game.Deal(ProvableShuffle.DeriveSeed(serverSeed, clientSeed, nonce), variant.Jokers);
             var deckHash = game.DeckHash();
 
             bool committed = false;   // becomes a real, reapable hand once state+OpenSet are durably written
@@ -176,6 +176,102 @@ namespace Khela.Game.Games.VideoPoker
             return BuildBoard(state, game, variant, balance);
         }
 
+        // ─────────────────────────────── provably-fair verification (public) ───────────────────────────────
+
+        private static readonly JsonSerializerOptions MetaJson = new() { PropertyNameCaseInsensitive = true };
+        private const string VerifyAlgorithm =
+            "seed = HMAC_SHA256(serverSeed, clientSeed + ':' + nonce); deck = 52 cards (+jokers) shuffled by Fisher-Yates " +
+            "using DeterministicRng(seed) [block k = HMAC_SHA256(seed, int64_BE(k)), 4 bytes BE per draw, rejection-sampled]; " +
+            "deckHash = sha256 of '<rank><suit>,...' (joker='JK'); dealt = first 5; draw replaces non-held from the remainder.";
+
+        /// <summary>
+        /// Recompute a settled hand entirely from its REVEALED seed and report, field by field, whether it reproduces
+        /// the committed deckHash and the recorded deal/draw/result. Reads the durable audit row (survives Redis TTL),
+        /// so anyone can check any hand by id — the point of provably-fair. Returns null if the hand isn't found.
+        /// </summary>
+        public async Task<VideoPokerVerification> VerifyAsync(string handId)
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var header = await db.GameHandHeaders.AsNoTracking().FirstOrDefaultAsync(h => h.RoundId == handId && h.GameType == GameType.VideoPoker);
+            if (header == null) return null;
+            var participant = await db.GameHandParticipants.AsNoTracking().FirstOrDefaultAsync(p => p.HandId == header.HandId);
+
+            HandMeta meta = null;
+            try { meta = JsonSerializer.Deserialize<HandMeta>(header.MetadataJson ?? "", MetaJson); } catch { }
+            var v = new VideoPokerVerification
+            {
+                HandId = handId,
+                VariantId = meta?.variant,
+                Algorithm = VerifyAlgorithm,
+                Committed = new VideoPokerVerification.Commit { ServerSeedHash = header.ShoeId, DeckHash = header.DeckHash },
+                Chain = new VideoPokerVerification.ChainLink
+                {
+                    PrevHandHash = header.PrevHandHash,
+                    ResultChecksum = header.ResultChecksum,
+                    HandHash = VideoPokerLedger.HandHash(handId, header.ShoeId, header.DeckHash, header.ResultChecksum,
+                                                         participant?.Bet ?? 0m, participant?.Payout ?? 0m, header.PrevHandHash),
+                },
+            };
+            if (meta == null || string.IsNullOrEmpty(meta.serverSeed))
+            {
+                v.Verified = false; v.Reason = "The revealed server seed is not available for this hand."; return v;
+            }
+
+            var variant = VideoPokerVariants.Resolve(meta.variant);
+            v.Revealed = new VideoPokerVerification.Reveal { ServerSeed = meta.serverSeed, ClientSeed = meta.clientSeed, Nonce = meta.nonce, Jokers = variant.Jokers };
+
+            // Re-run the shuffle purely from the revealed seed — the same deterministic function the deal used.
+            var game = new VideoPokerGame();
+            game.Deal(ProvableShuffle.DeriveSeed(Convert.FromHexString(meta.serverSeed), meta.clientSeed, meta.nonce), variant.Jokers);
+            var reDeckHash = game.DeckHash();
+            var reDealt = game.Dealt.Select(ProvableShuffle.Canonical).ToArray();
+
+            string[] reFinal = null; string reCategory = null; int rePayoutCoins = 0; decimal rePayout = 0m;
+            if (meta.hold != null && meta.hold.Length == 5)
+            {
+                game.Draw(meta.hold);
+                var rank = variant.Score(game.Final);
+                reFinal = game.Final.Select(ProvableShuffle.Canonical).ToArray();
+                reCategory = rank.Category.ToString();
+                rePayoutCoins = variant.Paytable.Payout(rank, meta.coins);
+                rePayout = rePayoutCoins * meta.denomination;
+            }
+
+            var reServerSeedHash = Convert.ToHexString(SHA256.HashData(Convert.FromHexString(meta.serverSeed))).ToLowerInvariant();
+            var m = new VideoPokerVerification.MatchReport
+            {
+                SeedBindsToCommitment = string.Equals(reServerSeedHash, header.ShoeId, StringComparison.OrdinalIgnoreCase),
+                DeckHashMatches = string.Equals(reDeckHash, header.DeckHash, StringComparison.OrdinalIgnoreCase),
+                DealtMatches = meta.dealt != null && reDealt.SequenceEqual(meta.dealt),
+                FinalMatches = reFinal != null && meta.final != null && reFinal.SequenceEqual(meta.final),
+                CategoryMatches = reCategory == meta.category,
+                PayoutMatches = rePayoutCoins == meta.payoutCoins && (participant == null || rePayout == participant.Payout),
+            };
+            v.Recomputed = new VideoPokerVerification.Redo { DeckHash = reDeckHash, Dealt = reDealt, Hold = meta.hold, Final = reFinal, Category = reCategory, PayoutCoins = rePayoutCoins, Payout = rePayout };
+            v.Matches = m;
+            bool drawn = meta.hold != null;
+            v.Verified = m.SeedBindsToCommitment && m.DeckHashMatches && m.DealtMatches
+                         && (!drawn || (m.FinalMatches && m.CategoryMatches && m.PayoutMatches));
+            return v;
+        }
+
+        /// <summary>Shape of the audit MetadataJson written at settle (used only to re-read for verification).</summary>
+        private sealed class HandMeta
+        {
+            public string variant { get; set; }
+            public int coins { get; set; }
+            public decimal denomination { get; set; }
+            public string[] dealt { get; set; }
+            public bool[] hold { get; set; }
+            public string[] final { get; set; }
+            public string category { get; set; }
+            public int payoutCoins { get; set; }
+            public string serverSeed { get; set; }
+            public string clientSeed { get; set; }
+            public long nonce { get; set; }
+        }
+
         /// <summary>
         /// Core settle used by both a player draw and the stale-hand reaper. Serialized per-hand by a Redis lock so two
         /// concurrent draws can never double-settle. A hand already <c>complete</c> returns its stored result unchanged.
@@ -207,7 +303,7 @@ namespace Khela.Game.Games.VideoPoker
                     : (standPat ? new[] { true, true, true, true, true } : hold);
 
                 var game = new VideoPokerGame();
-                game.Deal(ProvableShuffle.DeriveSeed(Convert.FromHexString(state.ServerSeedHex), state.ClientSeed, state.Nonce));
+                game.Deal(ProvableShuffle.DeriveSeed(Convert.FromHexString(state.ServerSeedHex), state.ClientSeed, state.Nonce), variant.Jokers);
                 game.Draw(effectiveHold);
                 var rank = variant.Score(game.Final);
                 int payoutCoins = variant.Paytable.Payout(rank, state.Coins);
@@ -458,6 +554,7 @@ namespace Khela.Game.Games.VideoPoker
         {
             using var scope = _scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var finalCanon = game.Final.Select(ProvableShuffle.Canonical).ToArray();
             var meta = JsonSerializer.Serialize(new
             {
                 variant = state.VariantId,
@@ -465,7 +562,7 @@ namespace Khela.Game.Games.VideoPoker
                 denomination = state.Denomination,
                 dealt = game.Dealt.Select(ProvableShuffle.Canonical).ToArray(),
                 hold = state.Hold,
-                final = game.Final.Select(ProvableShuffle.Canonical).ToArray(),
+                final = finalCanon,
                 category = state.Category,
                 payoutCoins = state.PayoutCoins,
                 wildCount = rank.WildCount,
@@ -473,37 +570,63 @@ namespace Khela.Game.Games.VideoPoker
                 clientSeed = state.ClientSeed,
                 nonce = state.Nonce,
             });
-            var header = new GameHandHeader
+            var resultChecksum = VideoPokerLedger.ResultChecksum(finalCanon, state.Category, state.PayoutCoins);
+
+            // Tamper-evident chain: link this hand to the player's previous one. Serialize the read-prev → set-head
+            // per user (a short NX lock) so concurrent same-user settles keep the chain linear. Best-effort — a chain
+            // gap only ever COSTS a link, never corrupts money.
+            string chainLockKey = $"vpchainlock:{uid:N}", chainKey = $"vp:chain:{uid:N}", chainToken = Guid.NewGuid().ToString("N");
+            var rdb = _redis.GetDatabase();
+            var deadline = DateTime.UtcNow.AddMilliseconds(3000);
+            while (!await rdb.StringSetAsync(chainLockKey, chainToken, TimeSpan.FromSeconds(5), When.NotExists))
             {
-                TableId = AuditTableId,
-                GameType = GameType.VideoPoker,
-                RoundId = state.HandId,
-                StartedAt = state.CreatedAt,
-                SettledAt = DateTime.UtcNow,
-                Status = HandStatus.Settled,
-                ShoeId = state.ServerSeedHash,
-                ShuffleSeed = $"{state.ClientSeed}:{state.Nonce}",
-                DeckHash = state.DeckHash,
-                ResultChecksum = state.Category,
-                MetadataJson = meta,
-            };
-            var participant = new GameHandParticipant
+                if (DateTime.UtcNow > deadline) break;   // fall through un-locked rather than block settle audit
+                await Task.Delay(20);
+            }
+            try
             {
-                HandId = header.HandId,
-                UserId = uid,
-                SeatNumber = 0,
-                HandIndex = 0,
-                Bet = state.Bet,
-                Payout = state.Payout,
-                Outcome = state.Category,
-                WalletDebitTxId = state.BetTxId,
-                WalletCreditTxId = state.PayTxId,
-                MetadataJson = meta,
-                Resolved = true,
-            };
-            db.GameHandHeaders.Add(header);
-            db.GameHandParticipants.Add(participant);
-            await db.SaveChangesAsync();
+                string prevHash = (await rdb.StringGetAsync(chainKey)).ToString() ?? string.Empty;
+                var thisHash = VideoPokerLedger.HandHash(state.HandId, state.ServerSeedHash, state.DeckHash, resultChecksum, state.Bet, state.Payout, prevHash);
+
+                var header = new GameHandHeader
+                {
+                    TableId = AuditTableId,
+                    GameType = GameType.VideoPoker,
+                    RoundId = state.HandId,
+                    StartedAt = state.CreatedAt,
+                    SettledAt = DateTime.UtcNow,
+                    Status = HandStatus.Settled,
+                    ShoeId = state.ServerSeedHash,
+                    ShuffleSeed = $"{state.ClientSeed}:{state.Nonce}",
+                    DeckHash = state.DeckHash,
+                    ResultChecksum = resultChecksum,
+                    PrevHandHash = prevHash,
+                    MetadataJson = meta,
+                };
+                var participant = new GameHandParticipant
+                {
+                    HandId = header.HandId,
+                    UserId = uid,
+                    SeatNumber = 0,
+                    HandIndex = 0,
+                    Bet = state.Bet,
+                    Payout = state.Payout,
+                    Outcome = state.Category,
+                    WalletDebitTxId = state.BetTxId,
+                    WalletCreditTxId = state.PayTxId,
+                    MetadataJson = meta,
+                    Resolved = true,
+                };
+                db.GameHandHeaders.Add(header);
+                db.GameHandParticipants.Add(participant);
+                await db.SaveChangesAsync();
+                await rdb.StringSetAsync(chainKey, thisHash);   // advance the chain head only after the row is durable
+            }
+            finally
+            {
+                const string lua = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+                try { await rdb.ScriptEvaluateAsync(lua, new RedisKey[] { chainLockKey }, new RedisValue[] { chainToken }); } catch { }
+            }
         }
 
         private async Task<long> AccrueProgressionAsync(Guid userId, decimal cleanWager, bool win, string handId)
@@ -580,7 +703,7 @@ namespace Khela.Game.Games.VideoPoker
         {
             var variant = VideoPokerVariants.Resolve(state.VariantId);
             var game = new VideoPokerGame();
-            game.Deal(ProvableShuffle.DeriveSeed(Convert.FromHexString(state.ServerSeedHex), state.ClientSeed, state.Nonce));
+            game.Deal(ProvableShuffle.DeriveSeed(Convert.FromHexString(state.ServerSeedHex), state.ClientSeed, state.Nonce), variant.Jokers);
             if (state.Status == "complete" && state.Hold != null) game.Draw(state.Hold);
             return (game, variant);
         }

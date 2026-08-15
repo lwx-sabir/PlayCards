@@ -11,7 +11,7 @@ namespace PlayCard.EditorTools
     /// Cuts a packed playing-card SHEET into individual cards, then either exports them as separate PNGs or
     /// builds the gapless 13×5 (rank-column × suit-row) atlas <c>CardSkin</c> uses. <b>Auto-Detect Grid</b>
     /// finds each card's exact bounds (bright cards on a dark bg), so there's no pitch drift even with uneven
-    /// spacing. Tools ▸ Khela ▸ Card Atlas Repacker.
+    /// spacing. Khela ▸ Card Atlas Repacker.
     /// </summary>
     public sealed class CardAtlasRepacker : EditorWindow
     {
@@ -29,7 +29,7 @@ namespace PlayCard.EditorTools
         private Vector2 scroll;
         private const string Ranks = "A23456789TJQK"; // sheet order when aceFirst (T = 10)
 
-        [MenuItem("Tools/Khela/Card Atlas Repacker")]
+        [MenuItem("Khela/Card Atlas Repacker")]
         private static void Open() => GetWindow<CardAtlasRepacker>("Card Atlas Repacker");
 
         private void OnGUI()

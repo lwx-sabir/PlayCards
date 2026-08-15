@@ -234,8 +234,40 @@ namespace PlayCard.Game.Table
         /// </summary>
         public void ClearHand(int seat, int handIndex)
         {
-            if (!_clearedHands.Add(HandKey(seat, handIndex))) return;   // already gone
-            if (_lastBoard != null) Render(_lastBoard);                 // re-render → its cards go stale → they sweep
+            int key = HandKey(seat, handIndex);
+            _clearingHands.Remove(key);                                 // the removal is DONE, not pending
+            if (!_clearedHands.Add(key)) return;                        // already gone
+
+            // Sweep this hand's cards DIRECTLY and unconditionally. Routing it through a re-render — "drop the hand
+            // from the desired set and let the stale path take it" — has two ways to silently do nothing, and the last
+            // hand of a split busting can land in either because the round settles while this is still running:
+            //
+            //   • Render is a NO-OP while the round-end director holds the felt, so the call just returns; and
+            //   • the render path that DOES run only ARMS a deferred sweep (_collectPending), which BeginRoundEnd
+            //     then explicitly cancels — so the sweep is queued and thrown away a frame later.
+            //
+            // Both end the same way: the chips fly off a hand whose cards stay on the felt for the rest of the round.
+            // The destination is identical either way (CollectStale is the one sweep every path funnels through) —
+            // this just reaches it without going through a gate that may be closed or a queue that may be discarded.
+            SweepHand(seat, handIndex);
+
+            // The re-render is still wanted for what's LEFT: the surviving hand re-fans and re-tucks now that its
+            // neighbour is gone. Skipped while held — the director owns the felt, and it re-lays it out on release.
+            if (!_roundEndHeld && _lastBoard != null) Render(_lastBoard);
+        }
+
+        /// <summary>Send exactly one hand's rendered cards to the discard, without a re-render.</summary>
+        private void SweepHand(int seat, int handIndex)
+        {
+            _stale.Clear();
+            foreach (var kv in _rendered)
+            {
+                // SlotKey packs seat * 10000 + hand * 100 + cardIndex.
+                if (kv.Key / 10000 != seat) continue;
+                if ((kv.Key / 100) % 100 != handIndex) continue;
+                _stale.Add(kv.Key);
+            }
+            if (_stale.Count > 0) CollectStale();   // fully collected here, so the director's later sweep skips them
         }
 
         /// <summary>True once <see cref="ClearHand"/> has taken this hand off the felt this round.</summary>
@@ -249,6 +281,21 @@ namespace PlayCard.Game.Table
         /// tuck away, then get collected and swept. Un-tucks it again if it already had.
         /// </summary>
         public void MarkHandClearing(int seat, int handIndex) => _clearingHands.Add(HandKey(seat, handIndex));
+
+        /// <summary>
+        /// Is a hand at this seat currently being taken off the felt? True from <see cref="MarkHandClearing"/> until
+        /// <see cref="ClearHand"/> — i.e. for the whole read-the-bust → collect → sweep sequence.
+        ///
+        /// The next hand's controls gate on this. Busting one half of a split hands the turn straight to the other
+        /// half, and the server is right to do that — but the dealer is still taking the busted hand's chips, so the
+        /// player was being asked to act on hand two while hand one was mid-collection. Two things happening to the
+        /// same seat at once, and the one you are meant to be watching is the one you are being pulled away from.
+        /// </summary>
+        public bool HandClearingAtSeat(int seat)
+        {
+            foreach (int key in _clearingHands) if (key / 100 == seat) return true;   // HandKey packs seat * 100 + hand
+            return false;
+        }
 
         // Hands removed mid-round, and hands about to be. Keyed like the tuck set; emptied when a new round begins.
         private readonly HashSet<int> _clearedHands = new HashSet<int>();
@@ -507,7 +554,14 @@ namespace PlayCard.Game.Table
         /// turn clock can't start) until she's finished checking. Decision UI (action buttons, turn prompt, decision
         /// camera, insurance) and the /presented turn-clock handshake all gate on this.
         /// </summary>
-        public bool DecisionReady(int seat) => !_peekHeld && SeatSettled(seat) && SeatSettled(0);
+        /// ALSO false while a hand at this seat is being taken off the felt after a bust. Busting one half of a split
+        /// hands the turn straight to the other half — correctly, server-side — but the dealer is still collecting the
+        /// busted hand's chips and sweeping its cards, and prompting for the next decision over the top of that asks
+        /// the player to look away from the thing being shown to them. Gating HERE rather than in
+        /// <see cref="ActionReady"/> is deliberate: this is the gate the /presented handshake uses, so the clock stays
+        /// on the server's generous ceiling for the length of the sweep instead of the player paying for it.
+        public bool DecisionReady(int seat)
+            => !_peekHeld && !HandClearingAtSeat(seat) && SeatSettled(seat) && SeatSettled(0);
 
         /// <summary>
         /// The gate for the DECISION PRESENTATION — the close camera framing and the action buttons. It is
@@ -709,12 +763,11 @@ namespace PlayCard.Game.Table
                 if (_desiredData.TryGetValue(kv.Key, out var want) && SameCard(kv.Value.Data, want)) continue;
                 _movableKeys.Add(kv.Key);
             }
-            if (_movableKeys.Count == 0) return;   // nothing moved — the common (no-split) path
-
             // For each desired slot that is EMPTY (no rendered card), claim a movable card of matching identity from the
             // SAME seat and re-key it there. Only fill empty slots — occupied ones are left to LayOutHand.
             foreach (var d in _desiredData)
             {
+                if (_movableKeys.Count == 0) break;            // nothing left to migrate — the common (no-split) path
                 int destKey = d.Key;
                 if (_rendered.ContainsKey(destKey)) continue;   // occupied → LayOutHand reconciles it
                 int destSeat = destKey / 10000;
@@ -732,6 +785,39 @@ namespace PlayCard.Game.Table
                     _movableKeys.RemoveAt(m);
                     break;
                 }
+            }
+
+            // POSITIONAL pass — for the migration identity is BLIND to.
+            //
+            // The movable test above asks "does this card's own slot still want this face?". In a 6-deck shoe the card
+            // freshly dealt into the vacated slot can carry the SAME face as the card that just moved out of it: split
+            // 10♥/Q♠ and draw another Q♠ to the first hand, and slot (hand 0, card 1) still wants a Q♠ — so the ORIGINAL
+            // Q♠ sitting there looks correctly placed, is never offered as movable, and the loop above finds nothing to
+            // do. The moved card is then treated as brand new: it is re-dealt from the shoe, and the second hand sits
+            // EMPTY until the dealer throws it a card it was already holding.
+            //
+            // SameCard cannot break that tie — the two cards are indistinguishable, which is exactly the point. Position
+            // can, because the split rule is fixed and stated at the top of this method: hand H's 2nd card IS hand H+1's
+            // 1st card. Claim it by that rule instead of by face.
+            //
+            // Moving a card out of an already-satisfied slot is safe: it empties one slot and fills another, so the
+            // number of cards still to be dealt does not change — the vacated slot simply receives the genuinely new
+            // card, which is the one that should have been dealt in the first place.
+            foreach (var d in _desiredData)
+            {
+                int destKey = d.Key;
+                if (_rendered.ContainsKey(destKey)) continue;      // already placed (usually by the pass above)
+
+                int hand = (destKey / 100) % 100;
+                if (hand <= 0 || destKey % 100 != 0) continue;     // only a split-created hand's FIRST card migrates
+
+                int srcKey = SlotKey(destKey / 10000, hand - 1, 1);   // the previous hand's second card
+                if (_pendingDeal.Contains(srcKey)) continue;          // still parked at the shoe — not on the felt yet
+                if (!_rendered.TryGetValue(srcKey, out var slot) || !SameCard(slot.Data, d.Value)) continue;
+
+                _rendered.Remove(srcKey);
+                _rendered[destKey] = slot;
+                if (_landed.Remove(srcKey)) _landed.Add(destKey);
             }
         }
 
@@ -1067,7 +1153,19 @@ namespace PlayCard.Game.Table
                 var hands = seat.Player.Hands;
                 if (hands == null) continue;
                 for (int h = 0; h < hands.Count; h++)
+                {
+                    // A hand already taken off the felt mid-round STAYS off. The server still reports a busted hand in
+                    // the settle snapshot — that is correct, it is part of the result — but BustHandCleaner has already
+                    // collected its chips and swept its cards, and its card objects are out of _rendered. Laying it out
+                    // again here counts every one of them as brand new, so the whole hand is re-instantiated: a hitch
+                    // while the pool refills, a landing sound, and a hand the player watched leave reappearing on the
+                    // felt just as the dealer goes to turn her hole card.
+                    //
+                    // Render's desired-build applies the same guard; this path bypasses Render entirely (the director
+                    // holds it), which is exactly why it needs its own.
+                    if (_clearedHands.Contains(HandKey(seat.SeatNumber, h))) continue;
                     LayOutHand(hands[h].Cards, anchor, seat.SeatNumber, h, hands.Count, snapNew: true);
+                }
             }
         }
 

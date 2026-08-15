@@ -466,13 +466,72 @@ namespace PlayCard.Game.Table
                                             e.IndexOf("already in progress", StringComparison.OrdinalIgnoreCase) >= 0);
             if (!ok) ReleaseBetting();
         }
-        public Task Hit()                       => Do(Rest.HitAsync(TableId, MySeat, CurrentHand));
-        public Task Stand()                     => Do(Rest.StandAsync(TableId, MySeat, CurrentHand));
-        public Task DoubleDown()                => Do(Rest.DoubleAsync(TableId, MySeat, CurrentHand));
-        public Task Split()                     => Do(Rest.SplitAsync(TableId, MySeat, CurrentHand));
-        public Task Insurance(decimal amount)   => Do(Rest.InsuranceAsync(TableId, MySeat, amount, 0)); // insurance is on the main hand (pre-split), and may be placed off-turn
-        public Task DeclineInsurance()          => Do(Rest.DeclineInsuranceAsync(TableId, MySeat));
-        public Task DealerPlay()                => Do(Rest.DealerPlayAsync(TableId));
+        public Task Hit()                       => Act(() => Rest.HitAsync(TableId, MySeat, CurrentHand));
+        public Task Stand()                     => Act(() => Rest.StandAsync(TableId, MySeat, CurrentHand));
+        public Task DoubleDown()                => Act(() => Rest.DoubleAsync(TableId, MySeat, CurrentHand));
+        public Task Split()                     => Act(() => Rest.SplitAsync(TableId, MySeat, CurrentHand));
+        public Task Insurance(decimal amount)   => Act(() => Rest.InsuranceAsync(TableId, MySeat, amount, 0)); // insurance is on the main hand (pre-split), and may be placed off-turn
+        public Task DeclineInsurance()          => Act(() => Rest.DeclineInsuranceAsync(TableId, MySeat));
+        public Task DealerPlay()                => Act(() => Rest.DealerPlayAsync(TableId));
+
+        // ── One tap, one decision ──────────────────────────────────────────────────────────────────────────────────
+        //
+        // A decision is spent the INSTANT the finger lands, not when the server answers. Between the tap and the
+        // response there was a window — a whole network round-trip wide — in which nothing on the client knew the
+        // action had happened: the board still said "your turn, two cards", so Hit stayed interactable and a second
+        // tap sent a second /hit. The server obliged, because a second hit IS legal there. The player got a card they
+        // never asked for.
+        //
+        // Button.interactable cannot close that window on its own. Unity dispatches every pointer-click queued for a
+        // frame before anything you set in the first handler is re-evaluated, so two taps in one frame both fire
+        // regardless. The guard has to be a plain synchronous claim taken before the request is built — which is why
+        // the calls above pass a FACTORY: if the claim fails, the request is never even constructed.
+        //
+        // Deliberately NOT a client-side prediction of the card. The client cannot know what it drew (rule 1: the
+        // server deals), and a guessed card that snapped to a different one would be far worse than a held button.
+        // What is made instant is the INPUT: the claim is taken and <see cref="ActionPendingChanged"/> fires on the
+        // tap frame, so the UI can go dark immediately instead of a round-trip later.
+        [Header("Input")]
+        [Tooltip("Backstop: how long a sent decision may hold the controls if no response and no board ever arrives. " +
+                 "Reached only when the request is lost — the normal release is the response itself.")]
+        [SerializeField] private float actionGuardSeconds = 8f;
+
+        private float _actionHeldUntil;
+
+        /// <summary>True from the frame a decision is tapped until its response lands. Every decision control gates on it.</summary>
+        public bool ActionPending => _actionHeldUntil > 0f && Time.unscaledTime < _actionHeldUntil;
+
+        /// <summary>Fires on the TAP frame when a decision is claimed, and again when it clears — no board push needed.</summary>
+        public event Action ActionPendingChanged;
+
+        /// <summary>Take the single outstanding decision slot. False means this tap is a repeat and must be dropped.</summary>
+        public bool TryClaimAction()
+        {
+            if (ActionPending) return false;
+            _actionHeldUntil = Time.unscaledTime + Mathf.Max(1f, actionGuardSeconds);
+            ActionPendingChanged?.Invoke();
+            return true;
+        }
+
+        private void ReleaseAction()
+        {
+            if (_actionHeldUntil == 0f) return;
+            _actionHeldUntil = 0f;
+            ActionPendingChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// Send a decision under the one-tap claim. Released in a <c>finally</c> — a throw must never leave the
+        /// controls dead for the rest of the session (the same latching-bool wedge that killed REPEAT once already).
+        /// By the time it releases, <see cref="Do"/> has already applied the returned board, so the controls re-gate
+        /// against the new state rather than the old one.
+        /// </summary>
+        private async Task Act<T>(Func<Task<ApiResult<T>>> call)
+        {
+            if (!TryClaimAction()) return;
+            try { await Do(call()); }
+            finally { ReleaseAction(); }
+        }
 
         public async Task Leave()
         {

@@ -1,13 +1,14 @@
 using UnityEngine;
 using UnityEngine.UI;
+using PlayCard.App;
 using PlayCard.Quality;
 using Tier = PlayCard.Quality.GraphicsQualityManager.Tier;
 
 namespace PlayCard.UI
 {
     /// <summary>
-    /// Minimal Settings panel — testing scaffold. For now it wires ONLY the close button and the four
-    /// graphics-quality toggles. Audio / language / push / vibration come later.
+    /// Minimal Settings panel — testing scaffold. For now it wires the close button, the three graphics-quality
+    /// toggles (Low / Mid / High), and a dev FPS-overlay on/off toggle. Audio / language / push / vibration come later.
     ///
     /// Selecting a toggle routes through <see cref="GraphicsQualityManager"/> (the single source of truth),
     /// which swaps the URP asset, sets the FPS ceiling, persists the choice, and — crucially — is also the
@@ -22,15 +23,19 @@ namespace PlayCard.UI
         [SerializeField] private GameObject panelRoot;
         [SerializeField] private Button closeButton;
 
-        [Header("Graphics quality (put all four in ONE ToggleGroup for radio behaviour)")]
+        [Header("Graphics quality (put all three in ONE ToggleGroup for radio behaviour)")]
         [SerializeField] private Toggle lowToggle;
         [SerializeField] private Toggle mediumToggle;   // UI "Medium" → Tier.Mid
         [SerializeField] private Toggle highToggle;
-        [SerializeField] private Toggle ultraToggle;
 
         [Tooltip("Optional small label/panel, e.g. \"Graphics changes apply when you enter a game.\" Shown when " +
                  "the player changes tier — resolution/MSAA/HDR only take full effect on the next scene load.")]
         [SerializeField] private GameObject applyHint;
+
+        [Header("Developer")]
+        [Tooltip("Standalone on/off toggle (do NOT put it in the graphics ToggleGroup) — shows/hides the on-screen " +
+                 "FPS + memory overlay. Persisted; also controls whether the overlay boots visible next launch.")]
+        [SerializeField] private Toggle fpsToggle;
 
         private void Awake()
         {
@@ -40,7 +45,9 @@ namespace PlayCard.UI
             Wire(lowToggle,    Tier.Low);
             Wire(mediumToggle, Tier.Mid);
             Wire(highToggle,   Tier.High);
-            Wire(ultraToggle,  Tier.Ultra);
+
+            if (fpsToggle != null)
+                fpsToggle.onValueChanged.AddListener(on => FpsOverlay.Visible = on);
         }
 
         private void OnEnable()
@@ -76,7 +83,8 @@ namespace PlayCard.UI
             Set(lowToggle,    cur == Tier.Low);
             Set(mediumToggle, cur == Tier.Mid);
             Set(highToggle,   cur == Tier.High);
-            Set(ultraToggle,  cur == Tier.Ultra);
+
+            Set(fpsToggle, FpsOverlay.Visible);   // dev overlay on/off — standalone, not part of the radio group
         }
 
         private static void Set(Toggle t, bool on) { if (t != null) t.SetIsOnWithoutNotify(on); }

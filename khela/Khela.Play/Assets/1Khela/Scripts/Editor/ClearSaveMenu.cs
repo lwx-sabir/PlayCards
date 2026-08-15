@@ -6,10 +6,10 @@ using UnityEngine;
 namespace PlayCard.EditorTools
 {
     /// <summary>Dev helper: wipe the local guest save (auth credentials/token) so the next Play
-    /// re-registers a fresh device account. Tools ▸ Khela ▸ Clear Local Save.</summary>
+    /// re-registers a fresh device account. Khela ▸ Clear Local Save.</summary>
     public static class ClearSaveMenu
     {
-        [MenuItem("Tools/Khela/Clear Local Save")]
+        [MenuItem("Khela/Clear Local Save")]
         public static void ClearSave()
         {
             var path = Path.Combine(Application.persistentDataPath, "client_save.json");

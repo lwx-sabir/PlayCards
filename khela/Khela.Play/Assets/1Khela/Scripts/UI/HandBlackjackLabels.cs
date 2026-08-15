@@ -85,11 +85,24 @@ namespace PlayCard.UI
         [Tooltip("Overshoot of the ease-out-back unroll — 0 = clean, ~1.7 = stretches past full then settles.")]
         [SerializeField] private float overshoot = 1.7f;
 
-        private enum Variant { None, BJ, Bust, Win, Push, Lose }
+        /// <summary>
+        /// A hand's result banner just became visible — which one is in the <see cref="Variant"/>. Carries the seat (so
+        /// audio can decide whose results are worth hearing) and the banner's world position.
+        ///
+        /// Raised once per hand per variant, on the frame the banner appears. Sound hung off this cannot drift out of
+        /// step with the visual, because it IS the visual's own moment — no matched delay to keep in sync.
+        ///
+        /// <see cref="Variant.None"/> is never raised (it means "no banner"), and BJ / Bust are terminal, so a natural
+        /// never also announces Win.
+        /// </summary>
+        public event System.Action<Variant, int, Vector3> ResultShown;
+
+        public enum Variant { None, BJ, Bust, Win, Push, Lose }
 
         private struct Badge { public GameObject Go; public float ShownAt; public GameObject BjChild; public GameObject BustChild; public GameObject WinChild; public GameObject PushChild; public GameObject LoseChild; }
 
         private readonly Dictionary<int, Badge> _active = new Dictionary<int, Badge>();
+        private readonly Dictionary<int, Variant> _lastVariant = new Dictionary<int, Variant>();   // for one-shot announcements
         private readonly Stack<GameObject> _free = new Stack<GameObject>();
         private readonly HashSet<int> _desired = new HashSet<int>();
         private readonly List<int> _stale = new List<int>();
@@ -295,6 +308,18 @@ namespace PlayCard.UI
                 worldRot * Quaternion.Euler(FlatEulerFor(tucked)));
             b.Go.transform.localScale = _baseScale;
 
+            // Announce the moment a variant first appears — this exact line is where the banner becomes visible, so
+            // anything hung off it (the result stings) is in step with what the player sees by construction rather
+            // than by a matched delay somewhere else. Fired on the TRANSITION, not on the state: Place runs every
+            // frame, so testing the value alone would retrigger forever. A hand CAN change variant in place (a plain
+            // hand becomes Win at settle), which is exactly why the previous value is kept rather than a "done" flag.
+            _lastVariant.TryGetValue(key, out var previous);
+            if (variant != previous)
+            {
+                _lastVariant[key] = variant;
+                ResultShown?.Invoke(variant, seat, b.Go.transform.position);
+            }
+
             // Show the variant for this situation, hide the rest.
             SetChild(b.BjChild,   variant == Variant.BJ);
             SetChild(b.BustChild, variant == Variant.Bust);
@@ -375,6 +400,7 @@ namespace PlayCard.UI
         {
             if (!_active.TryGetValue(key, out var b)) return;
             _active.Remove(key);
+            _lastVariant.Remove(key);   // the hand is gone; the next one at this slot must be able to announce again
             if (b.Go != null) { b.Go.SetActive(false); _free.Push(b.Go); }
         }
 

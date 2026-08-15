@@ -35,6 +35,15 @@ namespace CardGames.Platforms
         [JsonInclude]
         public bool IsCardUp { get; set; }
 
+        /// <summary>
+        /// True only for the wild JOKER (the 53rd card, used by Joker Poker). Additive + defaults false, so every
+        /// existing 52-card game (blackjack, 3CP, standard video poker) is byte-identical. A joker is only ever read as
+        /// "wild" — never by <see cref="Suit"/>/<see cref="FaceVal"/> — but it carries a distinct identity so the deck
+        /// hash stays unique (see <c>ProvableShuffle.Canonical</c>).
+        /// </summary>
+        [JsonInclude]
+        public bool IsJoker { get; set; }
+
         public Card()
         {
         }
@@ -46,6 +55,9 @@ namespace CardGames.Platforms
             FaceVal = faceVal;
             IsCardUp = isCardUp;
         }
+
+        /// <summary>A wild joker. Its suit/face are placeholders (never scored by rank/suit); only <see cref="IsJoker"/> matters.</summary>
+        public static Card Joker() => new Card(Suit.Spades, FaceValue.Ace, true) { IsJoker = true };
 
         /// <summary>
         /// Return the card as a string (i.e. "The Ace of Spades")

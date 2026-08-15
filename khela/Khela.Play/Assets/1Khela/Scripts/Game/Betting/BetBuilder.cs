@@ -152,7 +152,21 @@ namespace PlayCard.Game.Betting
             if (table.Board != null && table.Board.RoundInProgress)
             {
                 Debug.LogWarning("[BetBuilder] DEAL ignored: the board says a round is already in progress. " +
+                                 $"Rolling back the {Total} stake left on the felt. " +
                                  "If the felt looks idle, this board is stale — the hub push or resync has stopped.");
+
+                // ROLL BACK, don't just bail. This is the one bail the player cannot recover from: the betting window
+                // is gone, so the chips on the felt can never become a bet, and the controls that would clear them
+                // are themselves gated on the window being open. It is reached most often by REPEAT tapped near the
+                // end of the window — the chips drop one at a time with physics, the round starts during the drop,
+                // and by the time this runs the stake is unplaceable. Leaving it there shows a wager the player does
+                // not hold, on a hand they are not in, for the rest of the round.
+                //
+                // Clear() is the whole rollback: it zeroes the running total, and BetSpot self-clears its dropped
+                // chips on OnBetChanged(0) while BetStacks repaints the amount label off the same notification.
+                // Nothing was committed on this path — no gather ran and no stake was ever sent — so there is nothing
+                // else to undo.
+                Clear();
                 return;
             }
             _ = DealRoutine();

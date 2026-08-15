@@ -50,6 +50,25 @@ namespace PlayCard.UI
         [SerializeField] private float urgentBelowSeconds = 5f;
         [SerializeField] private Color urgentColor = new Color(1f, 0.35f, 0.3f);
 
+        /// <summary>
+        /// The betting window just opened for THIS player — raised as the countdown slides in, once per window.
+        /// Not raised for a window this player has already committed to, and not while the round-end ceremony is
+        /// still playing (see <see cref="Show"/> for why a board field is the wrong thing to watch).
+        /// </summary>
+        public event System.Action WindowOpened;
+
+        /// <summary>
+        /// The betting countdown crossed (or came back over) <see cref="urgentBelowSeconds"/> — the same flag that
+        /// recolours the timer label. True = urgent, false = calm or the window closed. Always ends on a false, so a
+        /// looping sound driven by this can never be stranded on.
+        ///
+        /// Deliberately a SECONDS threshold, not the turn timer's fraction-of-duration: the board carries
+        /// TurnDurationSeconds but no betting equivalent, and the betting deadline is a ceiling the server renews, so
+        /// there is no honest total to take a fraction of here.
+        /// </summary>
+        public event System.Action<bool> UrgencyChanged;
+
+        private bool _urgent;
         private Vector2 _shownPos;
         private Vector2 _hiddenPos;
         private bool _shown;
@@ -106,6 +125,7 @@ namespace PlayCard.UI
         private void OnDisable()
         {
             if (table != null) table.OnBoardChanged -= Apply;
+            ClearUrgency();   // torn down mid-window — ApplyUrgency will never run again to release it
         }
 
         private void Update()
@@ -115,8 +135,10 @@ namespace PlayCard.UI
             // for the deal-landed gate.
             Apply(table != null ? table.Board : null);
 
-            if (!_shown || timerLabel == null) return;
-            timerLabel.text = Format(Remaining(table != null ? table.Board : null));
+            if (!_shown) return;
+            // The label is optional here on purpose — ApplyUrgency also drives the urgency SOUND, and a popup with no
+            // countdown text authored should still go urgent.
+            if (timerLabel != null) timerLabel.text = Format(Remaining(table != null ? table.Board : null));
             ApplyUrgency();
         }
 
@@ -141,9 +163,28 @@ namespace PlayCard.UI
 
         private void ApplyUrgency()
         {
-            if (timerLabel == null || !_hasNormalColor || urgentBelowSeconds <= 0f) return;
-            bool urgent = Remaining(table != null ? table.Board : null) <= urgentBelowSeconds;
+            if (urgentBelowSeconds <= 0f) return;
+            bool urgent = _shown && Remaining(table != null ? table.Board : null) <= urgentBelowSeconds;
+
+            // Announced BEFORE the colour, and independently of whether a label or its colour was ever authored: this
+            // same flag drives the urgency sound, and gating it on the label would make the audio depend on a visual
+            // this popup does not necessarily have. Edge only — ApplyUrgency runs every frame.
+            if (urgent != _urgent)
+            {
+                _urgent = urgent;
+                UrgencyChanged?.Invoke(urgent);
+            }
+
+            if (timerLabel == null || !_hasNormalColor) return;
             timerLabel.color = urgent ? urgentColor : _normalColor;
+        }
+
+        /// <summary>Drop the urgency if it is up. The single release point, so no path can leave a loop playing.</summary>
+        private void ClearUrgency()
+        {
+            if (!_urgent) return;
+            _urgent = false;
+            UrgencyChanged?.Invoke(false);
         }
 
         private void Apply(BoardSnapshot board)
@@ -175,6 +216,12 @@ namespace PlayCard.UI
         private void Show()
         {
             _shown = true;
+            // The betting window has visibly OPENED — this is the one moment it does. Deliberately raised from here
+            // rather than from a board field: BettingExpiresAt is renewed by the server DURING a window, so watching
+            // it change would re-announce mid-window, and it is armed before the round-end ceremony has finished, so
+            // watching it arm would announce over the payout. Apply() above already resolves both, plus "this player
+            // has already committed". Anything hung off this fires exactly when the player sees the clock arrive.
+            WindowOpened?.Invoke();
             if (captionLabel != null && !string.IsNullOrEmpty(caption)) captionLabel.text = caption;
             if (timerLabel != null && _hasNormalColor) timerLabel.color = _normalColor;
             if (!_selfHosted && !panel.gameObject.activeSelf) panel.gameObject.SetActive(true);
@@ -185,6 +232,7 @@ namespace PlayCard.UI
         private void Hide()
         {
             _shown = false;
+            ClearUrgency();   // the window closed — the clock stopped, so the urgency stops with it
             StartSlide(_hiddenPos, deactivateAtEnd: !_selfHosted, showing: false);
         }
 

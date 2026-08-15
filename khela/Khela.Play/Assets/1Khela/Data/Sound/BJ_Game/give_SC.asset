@@ -657,9 +657,6 @@ MonoBehaviour:
     - {fileID: 8300000, guid: 4145e7154b597044d94e087182f09ff2, type: 3}
     - {fileID: 8300000, guid: 2cc6c2e8ecb7c8b4c8f2041d39f8ce41, type: 3}
     - {fileID: 8300000, guid: c32546bd616e21f42b955dae68bb66e6, type: 3}
-    - {fileID: 8300000, guid: 8be4374e54fa3e348b27ace8e9e90966, type: 3}
-    - {fileID: 8300000, guid: 8dc07517a88e3e448b2746fbc696bcfa, type: 3}
-    - {fileID: 8300000, guid: 79f5bebcdb0d1c44789073ee2632a638, type: 3}
     notes: Notes
   assetGuid: 852694032e9a31043b0378f9b58c2921
   assetGuidHash: 2652302569791081049

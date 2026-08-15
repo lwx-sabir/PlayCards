@@ -113,9 +113,29 @@ namespace PlayCard.Game.Table
             if (readSeconds > 0f) yield return new WaitForSecondsRealtime(readSeconds);
             if (view.IsHandCleared(seat, handIndex)) yield break;   // the round ended underneath us
 
-            // The dealer's scoop, but ONLY if she is free. She cannot throw a card and collect at the same time, and
-            // the deal pump owns her while anything is still being dealt — interrupting it would strand a card.
-            bool gesture = playDealerGesture && dealer != null && !view.AnyCardAnimating();
+            // IF THE ROUND IS ENDING, DO NOTHING AT ALL — not the chips, not the cards, not the gesture.
+            //
+            // This exists to stop a busted hand sitting on the felt through everyone ELSE's turns. When the bust
+            // resolves the last live hand there are no other turns to wait through: the server settles within about a
+            // second and the RoundEndDirector runs its own ceremony, which already collects and sweeps this hand with
+            // the dealer's full gesture and its sound. Doing it here as well means two owners racing over one rig —
+            // she reached for the chips, the director cut her mid-clip to start its reveal, and the wager was left in
+            // mid-air. Suppressing only her ANIMATION was worse still: the chips then flew bare, silent and unmotivated,
+            // which on a single-hand bust is every single time, because that bust always ends the round.
+            //
+            // CurrentSeatNumber == -1 is the table saying every hand is resolved (it is what drives "Dealer playing…"),
+            // so the settle is already on its way even though RoundEndSettling has not latched yet.
+            //
+            // The hand stays marked as clearing, which is still true — the director is about to sweep it — and that
+            // keeps a split hand from tucking on its way out. The next round clears the mark.
+            var live = table != null ? table.Board : null;
+            if (live == null || !live.RoundInProgress || live.CurrentSeatNumber == -1) yield break;
+
+            // The dealer's scoop, but ONLY if she is free. Two owners of that rig, and exactly one may drive it:
+            //  • the deal pump, while anything is still being thrown — interrupting it would strand a card;
+            //  • this, in the gap between deals. (The director's window is excluded outright, above.)
+            bool gesture = playDealerGesture && dealer != null
+                           && !view.AnyCardAnimating() && !view.RoundEndSettling;
             bool flew;
             if (gesture)
             {

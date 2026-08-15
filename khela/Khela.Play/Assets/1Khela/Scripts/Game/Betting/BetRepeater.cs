@@ -123,6 +123,18 @@ namespace PlayCard.Game.Betting
 
             foreach (var v in chipValues)
             {
+                // The window can close BETWEEN chips. Repeat is guarded on RoundInProgress before it starts, but the
+                // drop is deliberately slow (dropInterval each, so they land as separate chips rather than a clump),
+                // and a tap near the end of the window means the round starts partway through. Keep going and we are
+                // throwing chips onto a table that is already dealing. Stop here and let Deal below roll back what
+                // has landed so far — it now clears the felt instead of bailing silently.
+                if (table != null && table.Board != null && table.Board.RoundInProgress)
+                {
+                    Debug.LogWarning("[BetRepeater] drop aborted mid-stack: the round started while the chips were " +
+                                     "falling. Rolling back the partial stake.");
+                    break;
+                }
+
                 if (!builder.CanPlace(v)) break;   // can't afford the rest of the bet
 
                 var prefab = PrefabFor(v, values, prefabs);
