@@ -111,6 +111,11 @@ namespace PlayCard.Account
 
         private async Task InitializeAsync()
         {
+            // The cached token/UserId/DeviceId belong to ONE server+DB. If the API URL changed since they were
+            // issued, drop them BEFORE anything reads them (RegisterDeviceAsync below sends UserId) so we
+            // re-authenticate cleanly against the current server instead of flashing a stale account.
+            InvalidateAuthIfServerChanged();
+
             // Optional: register device fingerprint on the server before account operations
             await RegisterDeviceAsync();
 
@@ -254,6 +259,7 @@ namespace PlayCard.Account
             _authSave.Username = auth.Username;
             _authSave.UserId = auth.UserId;
             _authSave.ExpiresAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + auth.ExpiresIn;
+            _authSave.ServerUrl = SafeBaseUrl();   // bind the token to its issuer so a later URL switch invalidates it
             SaveController.MarkDirty();
             SaveController.Save();
             KhelaAnalytics.SetUserId(_authSave.UserId);
@@ -402,6 +408,41 @@ namespace PlayCard.Account
                 ? baseApiUrl.TrimEnd('/')
                 : AppConfig.Instance.BaseApiUrl;
 
+        /// <summary>ResolveBaseUrl that never throws — AppConfig.Instance may be null at the very first boot moment.</summary>
+        private string SafeBaseUrl()
+        {
+            try { return ResolveBaseUrl(); } catch { return string.Empty; }
+        }
+
+        /// <summary>
+        /// The cached token + UserId + DeviceId belong to the server that ISSUED them: a JWT is only valid on
+        /// its issuer, and the device-guest account is per-DB. If the configured API URL has changed since —
+        /// e.g. dev switching localhost &lt;-&gt; live — trusting the old token makes the client briefly authenticate
+        /// as a stale/absent account (no avatar =&gt; Onboarding) until a 401 forces a re-login, which is the
+        /// "onboarding, then the old profile snaps back" flip. So on a server change we discard ONLY the
+        /// server-specific bits; the deterministic device-guest login (Email/Password derived from the device
+        /// id — identical on every server) then re-resolves the correct account for the current server.
+        /// </summary>
+        private void InvalidateAuthIfServerChanged()
+        {
+            var current = SafeBaseUrl();
+            if (string.IsNullOrEmpty(current)) return;          // config not ready; 401->refresh is the backstop
+            if (string.IsNullOrEmpty(_authSave.Token)) return;  // nothing cached to invalidate
+
+            if (!string.Equals(_authSave.ServerUrl, current, StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.Log($"[AccountManager] API server changed ('{_authSave.ServerUrl}' -> '{current}'); " +
+                          "discarding cross-server token/account and re-authenticating for this server.");
+                _authSave.Token = string.Empty;
+                _authSave.UserId = string.Empty;
+                _authSave.ExpiresAtUnix = 0;
+                _authSave.DeviceId = string.Empty;   // device rows are per-server DB; RegisterDeviceAsync re-issues one
+                // Email/Password kept on purpose — deterministic from the device id, so the same account on every server.
+                SaveController.MarkDirty();
+                SaveController.Save();
+            }
+        }
+
         /// <summary>
         /// Shared JSON POST. Pass <paramref name="bearerToken"/> to authenticate the call as the current
         /// user — required by the social sign-in upgrade path, where the server links the new identity onto
@@ -483,6 +524,7 @@ namespace PlayCard.Account
         public string UserId;
         public long ExpiresAtUnix;
         public string DeviceId;
+        public string ServerUrl;   // base API URL that issued Token/UserId/DeviceId; a mismatch invalidates them
 
         public string Key => "auth";
 
