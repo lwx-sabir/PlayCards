@@ -12,6 +12,11 @@ namespace Khela.Common.Pass
         public List<RewardGrant> Free { get; set; } = new List<RewardGrant>();
         public List<RewardGrant> Golden { get; set; } = new List<RewardGrant>();
 
+        /// <summary>What the card SHOWS, per track — authored server-side, never derived on the client. Always
+        /// filled (the server falls back to the compacted amounts), so the client just prints it.</summary>
+        public string FreeText { get; set; }
+        public string GoldenText { get; set; }
+
         public bool Claimed { get; set; }              // the free payload has been collected
         public bool GoldenClaimed { get; set; }        // the golden payload has been collected
         public bool ClaimableNow { get; set; }         // tappable right now at no cost

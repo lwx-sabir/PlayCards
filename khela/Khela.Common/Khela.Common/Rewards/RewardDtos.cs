@@ -11,6 +11,7 @@ namespace Khela.Common.Rewards
         public string Title { get; set; }
         public int Kind { get; set; }               // RewardKind as int (0=Currency,1=Xp,2=Chest,3=Cosmetic,4=Item)
         public string ItemId { get; set; }          // chest "key:tier" / sku / item key; null for Currency and Xp
+        public List<string> Images { get; set; }    // artwork, back layer first (same meaning as RewardGrant.Images)
         public int Currency { get; set; }           // CurrencyType as int (0=Chips,1=Coins,2=Gems,…) — Kind=Currency only
         public decimal Amount { get; set; }
         public DateTime CreatedAt { get; set; }

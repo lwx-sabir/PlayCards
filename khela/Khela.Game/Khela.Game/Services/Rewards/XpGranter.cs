@@ -47,7 +47,7 @@ namespace Khela.Game.Services.Rewards
             var granted = await progression.GrantXpAsync(userId, amount, "reward", idemKey, bypassDailyCap: true);
             if (granted <= 0) return null;
 
-            return new[] { new GrantedLineDto { Kind = (int)RewardKind.Xp, Amount = granted } };
+            return new[] { new GrantedLineDto { Kind = (int)RewardKind.Xp, Amount = granted, Images = line.Images } };
         }
     }
 }

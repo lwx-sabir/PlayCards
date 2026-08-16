@@ -476,6 +476,48 @@ namespace Khela.Game.Tests
         }
 
         [Fact]
+        public void Validate_ChecksRewardArtwork()
+        {
+            RewardGrant WithImages(params string[] urls)
+            {
+                var line = RewardGrant.Currency("Chips", 100m);
+                line.Images = urls.ToList();
+                return line;
+            }
+
+            Assert.Null(PassCatalog.Validate(Cfg(Program(Node(1, free: new[] { WithImages("a.png", "b.png", "c.png") })))));
+            Assert.Contains("at most 3 images",
+                PassCatalog.Validate(Cfg(Program(Node(1, free: new[] { WithImages("a.png", "b.png", "c.png", "d.png") })))));
+            Assert.Contains("blank",
+                PassCatalog.Validate(Cfg(Program(Node(1, free: new[] { WithImages("a.png", "  ") })))));
+            Assert.Contains("longer than",
+                PassCatalog.Validate(Cfg(Program(Node(1, free: new[] { WithImages(new string('u', PassCatalog.MaxImageUrlLength + 1)) })))));
+        }
+
+        [Fact]
+        public void AutoLabel_IsWhatACardShowsWhenNoTextWasAuthored()
+        {
+            // XP has no icon on a card, so it must not read as a second reward.
+            Assert.Equal("10K", PassCatalog.AutoLabel(new[] { RewardGrant.Currency("Chips", 10000m), RewardGrant.Xp(50) }));
+            Assert.Equal("3,000 + 10", PassCatalog.AutoLabel(new[] { RewardGrant.Currency("Chips", 3000m), RewardGrant.Currency("Kash", 10m) }));
+            Assert.Equal("2M", PassCatalog.AutoLabel(new[] { RewardGrant.Currency("Chips", 2_000_000m) }));
+            Assert.Equal(string.Empty, PassCatalog.AutoLabel(new[] { RewardGrant.Xp(100) }));
+            Assert.Equal(string.Empty, PassCatalog.AutoLabel(null));
+        }
+
+        [Fact]
+        public void Validate_RefusesACardLabelTooLongForTheCard()
+        {
+            var node = Node(1);
+            node.GoldenText = new string('x', PassCatalog.MaxCardLabelLength + 1);
+            node.Golden = new List<RewardGrant> { RewardGrant.Currency("Chips", 100m) };
+            Assert.Contains("golden card's text is longer", PassCatalog.Validate(Cfg(Program(node))));
+
+            node.GoldenText = "Mystery";
+            Assert.Null(PassCatalog.Validate(Cfg(Program(node))));
+        }
+
+        [Fact]
         public void Validate_RefusesAKindThisBuildCannotPayOut()
         {
             var payable = new HashSet<RewardKind> { RewardKind.Currency, RewardKind.Xp, RewardKind.Chest };

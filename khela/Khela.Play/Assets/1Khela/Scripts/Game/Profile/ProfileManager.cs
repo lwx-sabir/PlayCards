@@ -73,9 +73,43 @@ namespace PlayCard.Game.Profile
                 }
                 Profile = res.Value;
                 OnProfileChanged?.Invoke(Profile);
+                ReportTimeZone();
                 return true;
             }
             finally { IsLoading = false; }
+        }
+
+        private const string TimeZonePrefKey = "profile.timezone.reported";
+
+        /// <summary>
+        /// Tell the server which timezone this device is in, so daily systems roll over at the player's OWN midnight
+        /// rather than UTC's — without it a Dhaka player's day ends at 6am.
+        ///
+        /// Sent once per zone: the last reported id is cached locally and only re-sent when it actually changes
+        /// (travel, a DST-less move, a wrong device clock corrected), so this costs one request per install, not one
+        /// per login. Fire-and-forget — a failure here must never block the profile load.
+        /// </summary>
+        private void ReportTimeZone()
+        {
+            string id;
+            try { id = TimeZoneInfo.Local.Id; }
+            catch { return; }   // some stripped platforms have no tz database
+
+            if (string.IsNullOrWhiteSpace(id)) return;
+            if (PlayerPrefs.GetString(TimeZonePrefKey, string.Empty) == id) return;
+
+            _ = SendTimeZoneAsync(id);
+        }
+
+        private async Task SendTimeZoneAsync(string id)
+        {
+            var (ok, error) = await EditAsync(new ProfileEditRequest { TimeZoneId = id });
+            if (ok)
+            {
+                PlayerPrefs.SetString(TimeZonePrefKey, id);
+                PlayerPrefs.Save();
+            }
+            else Debug.LogWarning($"[ProfileManager] could not report timezone '{id}': {error}");
         }
 
         /// <summary>

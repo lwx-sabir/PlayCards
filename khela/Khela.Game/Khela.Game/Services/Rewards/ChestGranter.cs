@@ -68,7 +68,7 @@ namespace Khela.Game.Services.Rewards
             }
             if (opened == 0) return null;
 
-            applied.Insert(0, new GrantedLineDto { Kind = (int)RewardKind.Chest, Id = line.Id, Amount = opened });
+            applied.Insert(0, new GrantedLineDto { Kind = (int)RewardKind.Chest, Id = line.Id, Amount = opened, Images = line.Images });
             return applied;
         }
     }

@@ -158,6 +158,8 @@ namespace Khela.Web.Controllers
                     IsMilestone = form.Milestone != null && form.Milestone.Contains(i + 1),
                     Free = free,
                     Golden = golden,
+                    FreeText = At(form.FreeText, i),
+                    GoldenText = At(form.GoldenText, i),
                 });
             }
             program.Nodes = nodes;
@@ -363,6 +365,10 @@ namespace Khela.Web.Controllers
 
         private static string Trim(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
+        /// <summary>The node grid posts one entry per day; a blank label means "derive it" and is stored as null.</summary>
+        private static string At(List<string> values, int index)
+            => (values != null && index < values.Count) ? Trim(values[index]) : null;
+
         private IActionResult Back(string error)
         {
             TempData["Error"] = error;
@@ -394,6 +400,8 @@ namespace Khela.Web.Controllers
 
         public List<string> Free { get; set; } = new();
         public List<string> Golden { get; set; } = new();
+        public List<string> FreeText { get; set; } = new();     // the card's headline; blank = derive from the rewards
+        public List<string> GoldenText { get; set; } = new();
         public List<int> Milestone { get; set; } = new();
     }
 

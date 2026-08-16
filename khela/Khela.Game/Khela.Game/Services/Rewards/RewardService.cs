@@ -82,6 +82,7 @@ namespace Khela.Game.Services.Rewards
                 Source = source,
                 Kind = line.Kind,
                 ItemId = line.Kind == RewardKind.Currency ? null : line.Id,
+                ImagesJson = SerializeImages(line.Images),
                 Currency = currency,
                 Amount = line.Amount,
                 Title = title,
@@ -98,22 +99,25 @@ namespace Khela.Game.Services.Rewards
         public async Task<List<RewardDto>> GetPendingAsync(Guid userId)
         {
             var now = DateTime.UtcNow;
-            return await _db.PlayerRewards.AsNoTracking()
+            // Materialise first: the images are stored as JSON, which the provider can't deserialize server-side.
+            var rows = await _db.PlayerRewards.AsNoTracking()
                 .Where(r => r.UserId == userId && r.Status == RewardStatus.Pending && (r.ExpiresAt == null || r.ExpiresAt > now))
                 .OrderBy(r => r.CreatedAt)
-                .Select(r => new RewardDto
-                {
-                    Id = r.Id.ToString(),
-                    Source = (int)r.Source,
-                    Title = r.Title,
-                    Kind = (int)r.Kind,
-                    ItemId = r.ItemId,
-                    Currency = (int)r.Currency,
-                    Amount = r.Amount,
-                    CreatedAt = r.CreatedAt,
-                    ExpiresAt = r.ExpiresAt,
-                })
                 .ToListAsync();
+
+            return rows.Select(r => new RewardDto
+            {
+                Id = r.Id.ToString(),
+                Source = (int)r.Source,
+                Title = r.Title,
+                Kind = (int)r.Kind,
+                ItemId = r.ItemId,
+                Images = DeserializeImages(r.ImagesJson),
+                Currency = (int)r.Currency,
+                Amount = r.Amount,
+                CreatedAt = r.CreatedAt,
+                ExpiresAt = r.ExpiresAt,
+            }).ToList();
         }
 
         public async Task<ClaimResultDto> ClaimAsync(Guid userId, Guid rewardId)
@@ -155,6 +159,7 @@ namespace Khela.Game.Services.Rewards
                 Kind = reward.Kind,
                 Id = reward.Kind == RewardKind.Currency ? reward.Currency.ToString() : reward.ItemId,
                 Amount = reward.Amount,
+                Images = DeserializeImages(reward.ImagesJson),   // the granter echoes these into the collect animation
             };
             var granted = await _grants.GrantOneAsync(userId, line, $"reward:{reward.Id:N}", reward.Title ?? "Reward",
                 externalRef: reward.IdempotencyKey);
@@ -164,6 +169,21 @@ namespace Khela.Game.Services.Rewards
             try { await _db.SaveChangesAsync(); }
             catch (DbUpdateConcurrencyException) { _db.ChangeTracker.Clear(); /* a concurrent claim won; the payout was idempotent so no double-pay */ }
             return granted;
+        }
+
+        /// <summary>Artwork is stored as a JSON array, trimmed to the allowed count so a bad caller can't overflow the
+        /// column. Null when there is none, so the row stays as small as it was before art existed.</summary>
+        private static string SerializeImages(List<string> images)
+        {
+            var clean = images?.Where(u => !string.IsNullOrWhiteSpace(u)).Take(RewardGrant.MaxImages).ToList();
+            return (clean == null || clean.Count == 0) ? null : System.Text.Json.JsonSerializer.Serialize(clean);
+        }
+
+        private static List<string> DeserializeImages(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json); }
+            catch { return null; }   // a malformed value costs an icon, never a payout
         }
 
         private async Task<decimal> ChipsAsync(Guid userId) => await _wallet.GetBalanceAsync(userId.ToString(), CurrencyType.Chips);

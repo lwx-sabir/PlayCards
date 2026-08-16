@@ -125,6 +125,10 @@ namespace Khela.Game.Services.Pass
                     IsMilestone = node.IsMilestone,
                     Free = node.Free ?? new List<RewardGrant>(),
                     Golden = node.Golden ?? new List<RewardGrant>(),
+                    // Always send a headline: authored if the admin wrote one, else derived here so every client
+                    // shows the same string instead of each inventing its own formatting.
+                    FreeText = string.IsNullOrWhiteSpace(node.FreeText) ? PassCatalog.AutoLabel(node.Free) : node.FreeText,
+                    GoldenText = string.IsNullOrWhiteSpace(node.GoldenText) ? PassCatalog.AutoLabel(node.Golden) : node.GoldenText,
                     Claimed = claim != null,
                     GoldenClaimed = claim?.GoldenGranted ?? false,
                     ClaimableNow = availability.Claimable.Contains(node.Index),

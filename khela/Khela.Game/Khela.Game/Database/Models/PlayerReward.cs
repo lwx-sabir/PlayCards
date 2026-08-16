@@ -38,6 +38,14 @@ namespace Khela.Game.Database.Models
         /// Currency (which uses <see cref="Currency"/>) and XP.</summary>
         [MaxLength(64)] public string ItemId { get; set; }
 
+        /// <summary>
+        /// The reward's artwork as a JSON array of up to <see cref="RewardGrant.MaxImages"/> urls, back layer first.
+        /// Captured when the reward is ENQUEUED so the inbox shows the same art the ladder did — a pass reward
+        /// collected three weeks later must not fall back to a generic icon because the config moved on.
+        /// Null for rewards granted without art.
+        /// </summary>
+        [MaxLength(2000)] public string ImagesJson { get; set; }
+
         [Required] public CurrencyType Currency { get; set; } = CurrencyType.Chips;
         [Precision(18, 4)] public decimal Amount { get; set; }
         [Required] public RewardStatus Status { get; set; } = RewardStatus.Pending;

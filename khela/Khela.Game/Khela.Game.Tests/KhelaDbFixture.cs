@@ -50,8 +50,10 @@ namespace Khela.Game.Tests
             using var db = NewContext();
             try
             {
-                // EnsureCreated, not Migrate: the schema comes straight from the current model, so the suite doesn't
-                // inherit a year of migration history just to test today's tables.
+                // Drop and rebuild from the CURRENT model each run. EnsureCreated alone is a no-op on an existing
+                // database, so a model change (a new column) would leave the suite running against yesterday's schema
+                // and failing with "unknown column". Recreating also stops test rows accumulating forever.
+                db.Database.EnsureDeleted();
                 db.Database.EnsureCreated();
             }
             catch (Exception ex)

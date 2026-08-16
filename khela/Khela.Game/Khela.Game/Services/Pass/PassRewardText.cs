@@ -13,6 +13,11 @@ namespace Khela.Game.Services.Pass
     ///
     /// <code>Chips 2000, Kash 15, XP 100, Chest CK_Chest:Rare, Item lottery_ticket x3</code>
     ///
+    /// A reward may carry up to <see cref="RewardGrant.MaxImages"/> artwork urls, appended after <c>@</c> and
+    /// separated by <c>|</c> (back layer first):
+    ///
+    /// <code>Chips 2000 @icons/chip.png|icons/glow.png</code>
+    ///
     /// Round-trips: <see cref="Format"/>(<see cref="Parse"/>(s)) is stable, so an edit that changes nothing leaves the
     /// stored JSON untouched. PURE and unit-tested — the admin page just calls it and shows the error verbatim.
     /// </summary>
@@ -26,12 +31,14 @@ namespace Khela.Game.Services.Pass
 
             string One(RewardGrant l)
             {
+                string body;
                 switch (l.Kind)
                 {
-                    case RewardKind.Currency: return $"{l.Id} {Num(l.Amount)}";
-                    case RewardKind.Xp: return $"XP {Num(l.Amount)}";
-                    default: return l.Amount == 1m ? $"{l.Kind} {l.Id}" : $"{l.Kind} {l.Id} x{Num(l.Amount)}";
+                    case RewardKind.Currency: body = $"{l.Id} {Num(l.Amount)}"; break;
+                    case RewardKind.Xp: body = $"XP {Num(l.Amount)}"; break;
+                    default: body = l.Amount == 1m ? $"{l.Kind} {l.Id}" : $"{l.Kind} {l.Id} x{Num(l.Amount)}"; break;
                 }
+                return (l.Images == null || l.Images.Count == 0) ? body : body + " @" + string.Join("|", l.Images);
             }
         }
 
@@ -50,6 +57,21 @@ namespace Khela.Game.Services.Pass
                 var token = raw.Trim();
                 if (token.Length == 0) continue;
 
+                // Peel off the artwork suffix (" @back.png|front.png") before the reward itself is parsed, so a url
+                // containing digits or a colon can never be mistaken for an amount or a chest tier.
+                List<string> images = null;
+                var at = token.IndexOf('@');
+                if (at >= 0)
+                {
+                    var urls = token.Substring(at + 1).Trim();
+                    token = token.Substring(0, at).Trim();
+                    images = urls.Split('|', StringSplitOptions.RemoveEmptyEntries).Select(u => u.Trim()).Where(u => u.Length > 0).ToList();
+                    if (images.Count == 0) images = null;
+                    if (images != null && images.Count > RewardGrant.MaxImages)
+                    { error = $"'{raw.Trim()}' — at most {RewardGrant.MaxImages} images per reward."; return null; }
+                    if (token.Length == 0) { error = $"'{raw.Trim()}' — images need a reward in front of them."; return null; }
+                }
+
                 var parts = token.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) { error = $"'{token}' — write a kind then a value, e.g. \"Chips 1000\"."; return null; }
 
@@ -64,7 +86,7 @@ namespace Khela.Game.Services.Pass
                 if (head.Equals("XP", StringComparison.OrdinalIgnoreCase))
                 {
                     if (!TryAmount(parts[1], out var xp) || xp <= 0) { error = $"'{token}' — XP needs a positive amount."; return null; }
-                    lines.Add(RewardGrant.Xp((long)xp));
+                    { var g = RewardGrant.Xp((long)xp); g.Images = images; lines.Add(g); }
                     continue;
                 }
 
@@ -80,7 +102,7 @@ namespace Khela.Game.Services.Pass
                     }
                     if (kind == RewardKind.Chest && !RewardIds.TryParseChest(id, out _, out _))
                     { error = $"'{token}' — a chest is \"Key:Tier\", e.g. Chest CK_Chest:Rare."; return null; }
-                    lines.Add(new RewardGrant { Kind = kind, Id = id, Amount = count });
+                    lines.Add(new RewardGrant { Kind = kind, Id = id, Amount = count, Images = images });
                     continue;
                 }
 
@@ -97,7 +119,7 @@ namespace Khela.Game.Services.Pass
                 if (!TryAmount(parts[1], out var amount) || amount <= 0)
                 { error = $"'{token}' — {currency} needs a positive amount."; return null; }
 
-                lines.Add(RewardGrant.Currency(currency.ToString(), amount));
+                { var g = RewardGrant.Currency(currency.ToString(), amount); g.Images = images; lines.Add(g); }
             }
             return lines;
         }

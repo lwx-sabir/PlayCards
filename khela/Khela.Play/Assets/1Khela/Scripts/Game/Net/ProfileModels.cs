@@ -128,6 +128,11 @@ namespace PlayCard.Game.Net
         public string CountryFlagId { get; set; }
         public string Bio { get; set; }
         public string StatusMessage { get; set; }
+
+        /// <summary>The device's IANA timezone ("Asia/Dhaka"). Daily systems (the pass) roll over at the player's
+        /// LOCAL midnight, so without this the server falls back to UTC and a Dhaka player's day ends at 6am.
+        /// Validated server-side; an unknown id is ignored, never rejected.</summary>
+        public string TimeZoneId { get; set; }
     }
 
     /// <summary>

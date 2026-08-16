@@ -1,3 +1,4 @@
+using Microsoft.Extensions.FileProviders;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
@@ -254,6 +255,27 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseCors("KhelaClient");
+
+// Reward/UI artwork the ADMIN names by url (pass ladder icons, shop art). Read-only by construction — the static
+// files middleware answers GET/HEAD only — scoped to this one folder, and public on purpose: the client fetches
+// these before it has a token, and there is nothing private in them. Anything not on disk 404s rather than falling
+// through to a controller.
+var artworkRoot = Path.Combine(app.Environment.ContentRootPath, "filesystem", "Icons");
+if (Directory.Exists(artworkRoot))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(artworkRoot),
+        RequestPath = "/icons",
+        ServeUnknownFileTypes = false,   // images only; an unknown extension is not served at all
+        OnPrepareResponse = ctx =>
+            ctx.Context.Response.Headers.CacheControl = "public,max-age=604800",   // a week; filenames are stable
+    });
+}
+else
+{
+    app.Logger.LogWarning("Artwork folder {Path} is missing — reward image urls will 404.", artworkRoot);
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

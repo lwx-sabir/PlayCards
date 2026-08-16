@@ -85,10 +85,13 @@
     <div class="panel">
         <div class="panel-head">
             <h3>Ladder</h3>
-            <span class="dim" style="font-size:12.5px">@p.Nodes.Count days · format: <code>Chips 2000, Kash 15, XP 100, Chest CK_Chest:Rare</code></span>
+            <span class="dim" style="font-size:12.5px">
+                @p.Nodes.Count days · format: <code>Chips 2000, Kash 15, XP 100, Chest CK_Chest:Rare</code> ·
+                artwork (up to 3, back layer first): <code>Chips 2000 @@icons/card.png|icons/chip.png</code>
+            </span>
         </div>
         <table class="data-table">
-            <thead><tr><th style="width:60px">Day</th><th style="width:70px">★</th><th>Free</th><th>Golden</th></tr></thead>
+            <thead><tr><th style="width:60px">Day</th><th style="width:70px">★</th><th>Free rewards</th><th style="width:130px">Free card text</th><th>Golden rewards</th><th style="width:130px">Golden card text</th></tr></thead>
             <tbody>
                 @for (int i = 0; i < p.Nodes.Count; i++)
                 {
@@ -104,7 +107,9 @@
                         </td>
                         <td><input type="checkbox" name="Milestone" value="@node.Index" checked="@node.IsMilestone" /></td>
                         <td><input name="Free" value="@PassRewardText.Format(node.Free)" class="vip-select" style="width:100%" /></td>
+                        <td><input name="FreeText" value="@node.FreeText" placeholder="@PassCatalog.AutoLabel(node.Free)" class="vip-select" style="width:100%" /></td>
                         <td><input name="Golden" value="@PassRewardText.Format(node.Golden)" class="vip-select" style="width:100%" /></td>
+                        <td><input name="GoldenText" value="@node.GoldenText" placeholder="@PassCatalog.AutoLabel(node.Golden)" class="vip-select" style="width:100%" /></td>
                     </tr>
                 }
             </tbody>

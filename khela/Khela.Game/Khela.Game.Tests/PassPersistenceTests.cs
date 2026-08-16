@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Khela.Common.Rewards;
@@ -171,6 +172,30 @@ namespace Khela.Game.Tests
             var afterSecond = await stack.Db.PlayerRewards.AsNoTracking()
                 .CountAsync(r => r.UserId == user && r.Source == RewardSource.Pass);
             Assert.Equal(enqueued.Count, afterSecond);
+        }
+
+        [Fact]
+        public async Task RetroRewardsKeepTheLaddersArtworkAllTheWayToCollection()
+        {
+            // Art is captured when the reward is ENQUEUED: a pass reward collected weeks later must show the same
+            // card it showed on the ladder, even if the config has moved on since.
+            var user = NewUser();
+            using var stack = _fx.NewStack();
+            var now = DateTime.UtcNow;
+
+            var line = RewardGrant.Currency("Chips", 1234m);
+            line.Images = new List<string> { "icons/card.png", "icons/chip.png" };
+            await stack.Rewards.GrantLineAsync(user, RewardSource.Pass, line, "Day 1 (Golden)", $"pass-retro:test:{Guid.NewGuid():N}");
+
+            var pending = await stack.Rewards.GetPendingAsync(user);
+            var reward = Assert.Single(pending);
+            Assert.Equal(new[] { "icons/card.png", "icons/chip.png" }, reward.Images);   // survives the round trip through MySQL
+
+            var claimed = await stack.Rewards.ClaimAsync(user, Guid.Parse(reward.Id));
+            Assert.True(claimed.Ok);
+            var granted = Assert.Single(claimed.Granted);
+            Assert.Equal(new[] { "icons/card.png", "icons/chip.png" }, granted.Images);  // …and reaches the collect animation
+            Assert.Equal(1234m, await stack.Wallet.GetBalanceAsync(user.ToString(), CurrencyType.Chips));
         }
 
         [Fact]

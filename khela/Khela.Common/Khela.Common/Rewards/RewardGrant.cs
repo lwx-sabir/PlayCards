@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Khela.Common.Rewards
 {
     /// <summary>
@@ -22,6 +24,9 @@ namespace Khela.Common.Rewards
     /// </summary>
     public sealed class RewardGrant
     {
+        /// <summary>Most images a single reward may carry (see <see cref="Images"/>).</summary>
+        public const int MaxImages = 3;
+
         public RewardKind Kind { get; set; }
 
         /// <summary>Identifies WHAT within the kind — meaning depends on <see cref="Kind"/> (see the enum). Null for XP.</summary>
@@ -29,6 +34,16 @@ namespace Khela.Common.Rewards
 
         /// <summary>How much / how many. 1 for a unique item.</summary>
         public decimal Amount { get; set; }
+
+        /// <summary>
+        /// Up to <see cref="MaxImages"/> artwork URLs for this reward, ordered **back to front** — index 0 is the
+        /// bottom layer (card art / frame), later entries stack on top (the item, a badge). One is the common case.
+        ///
+        /// Empty means the client falls back to its own icon for the kind+id, so art is optional and can be added
+        /// per reward from the admin panel without a client build. Values may be absolute URLs or paths relative to
+        /// the server's static content.
+        /// </summary>
+        public List<string> Images { get; set; }
 
         public static RewardGrant Currency(string currency, decimal amount) => new RewardGrant { Kind = RewardKind.Currency, Id = currency, Amount = amount };
         public static RewardGrant Xp(long amount) => new RewardGrant { Kind = RewardKind.Xp, Amount = amount };
@@ -44,5 +59,9 @@ namespace Khela.Common.Rewards
         public int Kind { get; set; }        // RewardKind as int
         public string Id { get; set; }
         public decimal Amount { get; set; }  // the applied amount (may differ from requested, e.g. a rolled chest)
+
+        /// <summary>The reward's artwork, back-to-front — same meaning as <see cref="RewardGrant.Images"/>. Lets the
+        /// collect animation show the exact art the ladder showed, without a second lookup.</summary>
+        public List<string> Images { get; set; }
     }
 }

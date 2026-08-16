@@ -89,6 +89,47 @@ namespace Khela.Game.Tests
             Assert.Contains("Bitcoin", Bad("Bitcoin 5"));                   // not a currency
         }
 
+        // ---- artwork ----
+
+        [Fact]
+        public void ParsesUpToThreeImagesPerReward()
+        {
+            var lines = Ok("Chips 2000 @icons/card.png|icons/chip.png|icons/glow.png, XP 50");
+            Assert.Equal(3, lines[0].Images.Count);
+            Assert.Equal("icons/card.png", lines[0].Images[0]);      // back layer first
+            Assert.Equal("icons/glow.png", lines[0].Images[2]);
+            Assert.Null(lines[1].Images);                            // art is optional
+        }
+
+        [Fact]
+        public void TheArtworkIsPeeledBeforeTheRewardIsParsed()
+        {
+            // A url carries digits, colons and slashes — none of it may be mistaken for an amount or a chest tier.
+            var chest = Ok("Chest CK_Chest:Rare @https://cdn.khela.app/i/chest_512.png")[0];
+            Assert.Equal(RewardKind.Chest, chest.Kind);
+            Assert.Equal("CK_Chest:Rare", chest.Id);
+            Assert.Equal(1m, chest.Amount);
+            Assert.Equal("https://cdn.khela.app/i/chest_512.png", chest.Images[0]);
+
+            var item = Ok("Item lottery_ticket x3 @icons/ticket_2.png")[0];
+            Assert.Equal(3m, item.Amount);
+            Assert.Single(item.Images);
+        }
+
+        [Fact]
+        public void ImagesRoundTripExactly()
+        {
+            const string text = "Chips 2000 @icons/card.png|icons/chip.png, Chest CK_Chest:Rare @icons/chest.png";
+            Assert.Equal(text, PassRewardText.Format(Ok(text)));
+        }
+
+        [Fact]
+        public void RefusesTooManyImagesOrArtworkWithNoReward()
+        {
+            Assert.Contains("at most 3 images", Bad("Chips 100 @a.png|b.png|c.png|d.png"));
+            Assert.Contains("need a reward in front", Bad("@a.png"));
+        }
+
         [Fact]
         public void FormatRoundTripsSoAnUneditedSaveChangesNothing()
         {

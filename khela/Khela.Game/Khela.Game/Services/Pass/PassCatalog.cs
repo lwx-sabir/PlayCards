@@ -43,8 +43,18 @@ namespace Khela.Game.Services.Pass
     {
         public int Index { get; set; }
         public bool IsMilestone { get; set; }           // UI emphasis only — no payout meaning
+
         public List<RewardGrant> Free { get; set; } = new List<RewardGrant>();
         public List<RewardGrant> Golden { get; set; } = new List<RewardGrant>();
+
+        /// <summary>
+        /// What the card SAYS, per track — "10,000", "2M + 10", "Mystery". Authored, because the headline on a card
+        /// is a design decision, not a sum: a day can pay three things and read as one, or advertise a surprise.
+        /// The rewards behind it are still whatever <see cref="Free"/>/<see cref="Golden"/> list, and they're what
+        /// actually gets paid on collect. Blank falls back to <see cref="PassCatalog.AutoLabel"/>.
+        /// </summary>
+        public string FreeText { get; set; }
+        public string GoldenText { get; set; }
     }
 
     /// <summary>A ladder that replaces the recurring one for exactly one cycle (a themed December).</summary>
@@ -200,6 +210,12 @@ namespace Khela.Game.Services.Pass
 
         /// <summary>Sanity ceiling on the ad price of one catch-up (an admin typo shouldn't demand 50 videos).</summary>
         public const int MaxAdsPerCatchUp = 10;
+
+        /// <summary>Ceiling on one reward image url, so a pasted data: blob can't bloat the config the client downloads.</summary>
+        public const int MaxImageUrlLength = 512;
+
+        /// <summary>Ceiling on a card's headline text — it has one line on a small card.</summary>
+        public const int MaxCardLabelLength = 32;
 
         public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
@@ -481,6 +497,11 @@ namespace Khela.Game.Services.Pass
                 if (free == 0 && golden == 0) return $"{label} node {n.Index}: give it a Free or Golden reward (or remove it).";
                 if (golden > 0) paysGolden = true;
 
+                if (n.FreeText != null && n.FreeText.Length > MaxCardLabelLength)
+                    return $"{label} node {n.Index}: the free card's text is longer than {MaxCardLabelLength} characters.";
+                if (n.GoldenText != null && n.GoldenText.Length > MaxCardLabelLength)
+                    return $"{label} node {n.Index}: the golden card's text is longer than {MaxCardLabelLength} characters.";
+
                 // A milestone above day 28 is unreachable in February — that's a design mistake, not a preference.
                 if (n.IsMilestone && program.Cadence == PassCadence.Monthly && n.Index > GuaranteedDays)
                     return $"{label} node {n.Index}: a milestone above day {GuaranteedDays} can't be reached in February — move it down.";
@@ -511,6 +532,16 @@ namespace Khela.Game.Services.Pass
                 if (payableKinds != null && !payableKinds.Contains(line.Kind))
                     return Where($"{line.Kind} rewards can't be paid out by this build yet.");
 
+                if (line.Images != null)
+                {
+                    if (line.Images.Count > RewardGrant.MaxImages)
+                        return Where($"at most {RewardGrant.MaxImages} images per reward (got {line.Images.Count}).");
+                    if (line.Images.Any(string.IsNullOrWhiteSpace))
+                        return Where("an image url is blank — remove it or fill it in.");
+                    if (line.Images.Any(u => u.Length > MaxImageUrlLength))
+                        return Where($"an image url is longer than {MaxImageUrlLength} characters.");
+                }
+
                 switch (line.Kind)
                 {
                     case RewardKind.Currency:
@@ -537,6 +568,33 @@ namespace Khela.Game.Services.Pass
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// The headline a card falls back to when no text was authored: the visible rewards' amounts, compacted and
+        /// joined ("3,000 + 10"). XP is left out — it has no icon on a card and would read as a second reward.
+        /// Computed HERE, not on the client, so every platform shows the same string.
+        /// </summary>
+        public static string AutoLabel(IEnumerable<RewardGrant> lines)
+        {
+            var visible = (lines ?? Enumerable.Empty<RewardGrant>())
+                .Where(l => l != null && l.Kind != RewardKind.Xp && l.Amount > 0m).ToList();
+            return visible.Count == 0 ? string.Empty : string.Join(" + ", visible.Select(l => Compact(l.Amount)));
+        }
+
+        private static string Compact(decimal amount)
+        {
+            if (amount >= 1_000_000m) return TrimDecimal(amount / 1_000_000m) + "M";
+            if (amount >= 10_000m) return TrimDecimal(amount / 1_000m) + "K";
+            return amount.ToString("#,0", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string TrimDecimal(decimal value)
+        {
+            var rounded = Math.Round(value, 1);
+            return rounded == Math.Truncate(rounded)
+                ? ((long)rounded).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : rounded.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         /// <summary>Ladder payout totals for one track, keyed by a display label ("Chips", "Kash", "XP",
