@@ -129,6 +129,17 @@ namespace Khela.Game.Services.Stats
                     profile.LastPlayedAt = now;
                     profile.UpdatedAt = now;
                 }
+                else
+                {
+                    // INVARIANT: auth (register/login) bootstraps the UserProfile before a player can be seated,
+                    // so this branch should never run. When it did — historically, for accounts that played
+                    // before the profile-bootstrap shipped — the cross-game aggregate silently fell behind
+                    // UserGameStats (that's the GamesPlayed 537-vs-1101 skew). Make it LOUD instead of dropping
+                    // it, so any future occurrence (a bootstrap race/failure) is caught rather than hidden.
+                    Console.Error.WriteLine(
+                        $"[PlayerStatsService] No UserProfile for user {r.UserId} at settle — cross-game stats " +
+                        $"NOT recorded for this round (UserGameStats still updated). Profile bootstrap missing?");
+                }
 
                 // ---- windowed rollup (PlayerDailyStat) — today's UTC bucket; source for daily/weekly/monthly boards ----
                 var today = now.Date;
