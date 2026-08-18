@@ -140,6 +140,39 @@ namespace PlayCard.Game.Table
         [Tooltip("Delay between each PLAYER/DEALER's cards being collected — a seat's cards leave TOGETHER, seats one " +
                  "after another. 0 = all collect at once.")]
         [SerializeField] private float collectStagger = 0.1f;
+
+        [Header("Sweep flourish — cards lift, turn face-down, then leave")]
+        [Tooltip("ON: a face-up card lifts off the felt, turns onto its back, and only then sweeps away — the gesture " +
+                 "a dealer actually makes. OFF: it slides away still showing its face, which is the old behaviour.")]
+        [SerializeField] private bool sweepTurnsFaceDown = true;
+
+        [Tooltip("How far the card rises off the felt before turning, in local units. It needs enough clearance to " +
+                 "turn without cutting through the cards under it.")]
+        [SerializeField] private float sweepLift = 0.03f;
+
+        [Tooltip("Seconds for the lift.")]
+        [SerializeField] private float sweepLiftSeconds = 0.14f;
+
+        [Tooltip("How far the lift springs PAST its target before settling back, as a fraction (0.35 = 35% over). " +
+                 "This is the elasticity in the pull: a card that eases straight to its height reads as being " +
+                 "positioned, one that overshoots and settles reads as being picked up.")]
+        [SerializeField, Range(0f, 1f)] private float sweepLiftOvershoot = 0.35f;
+
+        [Tooltip("Seconds for the lift to settle back from its overshoot. Shorter than the lift itself — the spring " +
+                 "back is always quicker than the throw out.")]
+        [SerializeField] private float sweepSettleSeconds = 0.09f;
+
+        [Tooltip("Seconds for the turn onto its back. The art swaps at the apex, while the card is edge-on.")]
+        [SerializeField] private float sweepFlipSeconds = 0.22f;
+
+        [Tooltip("Elasticity of the TURN itself — lift and scale-pop through the apex, and Overshoot, which is the " +
+                 "ease-out-back spring as it lands flat. Raise Overshoot past 1.7 for a springier turn. Independent " +
+                 "of the dealer's reveal juice, so making the sweep bouncier can't affect the hole-card reveal.")]
+        [SerializeField] private CardFlipTuning sweepFlipJuice = new CardFlipTuning();
+
+        [Tooltip("Local euler the card turns through to go edge-on — pick the axis that turns its face away. Same " +
+                 "meaning as the dealer reveal's flip axis.")]
+        [SerializeField] private Vector3 sweepFlipEdgeEuler = new Vector3(0f, 0f, 90f);
         [Tooltip("After the round's LAST card lands (e.g. a bust), hold this long before sweeping the felt — so the " +
                  "final hand is readable and the round doesn't clear the instant the server resolves. 0 = clear immediately.")]
         [SerializeField] private float roundEndHold = 0.7f;
@@ -969,6 +1002,11 @@ namespace PlayCard.Game.Table
         /// </summary>
         public event System.Action<Vector3> CardsSwept;
 
+        // Armed when a sweep begins, consumed by the first card that starts travelling — so one sweep still makes
+        // exactly one sound, but at the moment the cards actually move rather than when the gesture was decided.
+        private bool _sweepAnnouncePending;
+        private Vector3 _sweepAnnouncePoint;
+
         // At least one card in the sweep was actually on screen. A parked, never-revealed card is reclaimed silently.
         private static bool AnyVisible(Dictionary<int, List<CardVisual>> groups)
         {
@@ -1001,11 +1039,19 @@ namespace PlayCard.Game.Table
             // seats go one after another on collectStagger and the sound covers the lot. Only fires if a card was
             // actually VISIBLE: entering a table whose last round is still lingering releases hidden, never-dealt
             // cards, and a sweep sound for a felt the player never saw is a sound from nowhere.
-            if (CardsSwept != null && AnyVisible(groups))
-                CardsSwept.Invoke(discardTarget != null ? discardTarget.position : transform.position);
+            //
+            // ARMED here, FIRED by the first card that actually starts travelling (see CollectRoutine). It used to
+            // fire right here, which was the same instant back when a card's whole sweep was the flight. Now the
+            // flourish puts a lift and a turn in front of that, so firing here plays a sweep over a card that has not
+            // begun to move — the sound describes the wrong gesture. The sound belongs to the travel, so the travel
+            // starts it.
+            _sweepAnnouncePending = CardsSwept != null && AnyVisible(groups);
+            _sweepAnnouncePoint = discardTarget != null ? discardTarget.position : transform.position;
 
             if (discardTarget == null || collectSeconds <= 0f)
             {
+                // No flight at all — the cards just vanish, so there is no later moment to wait for.
+                if (_sweepAnnouncePending) { _sweepAnnouncePending = false; CardsSwept.Invoke(_sweepAnnouncePoint); }
                 foreach (var g in groups.Values) foreach (var c in g) _pool.Release(c);
                 return;
             }
@@ -1025,6 +1071,56 @@ namespace PlayCard.Game.Table
             if (card == null) yield break;
             if (!card.gameObject.activeSelf) { _pool.Release(card); yield break; }   // a hidden, undealt card — just reclaim
             var tr = card.transform;
+
+            // LIFT, then TURN FACE-DOWN, then leave. A card sliding off the felt still showing its face reads as the
+            // table deleting it; a dealer picks it up, turns it over, and only then sweeps it — the turn is what says
+            // the hand is finished. Skipped for a card that is already face-down (the dealer's unrevealed hole on a
+            // round that ended early): there is nothing to turn, and turning it would flash the face.
+            if (sweepTurnsFaceDown && card.Current.FaceUp)
+            {
+                if (sweepLift > 0f && sweepLiftSeconds > 0f)
+                {
+                    // Overshoot, then settle. CardMover eases OUT of every move, so a single Target glides to the
+                    // height and stops dead — precise, and completely inert. Throwing it past and letting it drop
+                    // back is what makes the card feel picked up rather than repositioned, and it costs one extra
+                    // short move rather than a new easing system.
+                    Vector3 rest = tr.localPosition;
+                    Vector3 top = rest + Vector3.up * (sweepLift * (1f + sweepLiftOvershoot));
+
+                    EnsureMover(card).Target(top, tr.localRotation, tr.localScale, sweepLiftSeconds);
+                    yield return new WaitForSecondsRealtime(sweepLiftSeconds);
+                    if (card == null) yield break;
+
+                    if (sweepLiftOvershoot > 0f && sweepSettleSeconds > 0f)
+                    {
+                        EnsureMover(card).Target(rest + Vector3.up * sweepLift, tr.localRotation, tr.localScale,
+                                                 sweepSettleSeconds);
+                        yield return new WaitForSecondsRealtime(sweepSettleSeconds);
+                        if (card == null) yield break;
+                    }
+                }
+
+                // The SAME flip the hole-card reveal uses, run the other way: the art swaps at the apex while the card
+                // is edge-on, so the face is never seen mid-turn. Its own juice, not the dealer's — the sweep wants a
+                // springier turn than a reveal, and a reveal must stay exactly as authored.
+                if (sweepFlipSeconds > 0f)
+                {
+                    yield return CardFlip.On(card.gameObject)
+                                         .Reveal(() => { if (card != null) card.SetFaceUp(false); },
+                                                 sweepFlipSeconds, sweepFlipEdgeEuler, sweepFlipJuice);
+                    if (card == null) yield break;
+                }
+            }
+
+            // THE TRAVEL STARTS HERE — so the sweep sound starts here, on whichever card gets moving first. Fired from
+            // the card rather than on a computed delay because a face-down card skips the lift and turn entirely: it
+            // leaves immediately, and a timer sized for the flourish would play its sound long after it had gone.
+            if (_sweepAnnouncePending)
+            {
+                _sweepAnnouncePending = false;
+                CardsSwept?.Invoke(_sweepAnnouncePoint);
+            }
+
             var parent = tr.parent;   // still its anchor — convert the world discard point into that local frame
             Vector3 local = parent != null ? parent.InverseTransformPoint(discardTarget.position) : tr.localPosition;
             EnsureMover(card).Target(local, tr.localRotation, tr.localScale * (1f - collectShrink), collectSeconds);

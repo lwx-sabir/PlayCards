@@ -477,6 +477,31 @@ namespace PlayCard.Game.Betting
                 }
             }
 
+            // A REAL amount that no denomination can represent still has to be visible. The decomposition above is
+            // largest-first and only ever places a chip when `remaining >= v`, so an amount smaller than the SMALLEST
+            // chip on the ladder places nothing at all and the wager silently does not exist on the felt.
+            //
+            // A bet can never do that — it is at least the table minimum, which is what the ladder is built from. But
+            // INSURANCE is half a bet, so at the low tiers it lands under the smallest chip every time. That is what
+            // made an accepted insurance bet show no stack: not a missing call, an empty decomposition.
+            //
+            // One chip of the smallest denomination stands in for it. That is not a lie about the value — the top
+            // chip below is relabelled with the true total, which is already how every stack reports itself.
+            if (placed == 0 && amount > 0)
+            {
+                for (int vi = 0; vi < values.Count && vi < prefabs.Count; vi++)
+                {
+                    if (prefabs[vi] == null || values[vi] <= 0) continue;
+                    var go = Instantiate(prefabs[vi], parent);
+                    go.transform.localPosition = baseLocalPos;
+                    go.transform.localRotation = Quaternion.identity;
+                    go.transform.localScale = Vector3.one * chipScale;
+                    foreach (var c in go.GetComponentsInChildren<Collider>(true)) c.enabled = false;
+                    outList.Add(go);
+                    break;
+                }
+            }
+
             // The TOP chip (last placed, the visible one) shows the stack's TOTAL value instead of its own denomination.
             if (outList.Count > 0)
             {
@@ -503,12 +528,28 @@ namespace PlayCard.Game.Betting
         private Vector3 InsuranceOffsetFor(int seatNumber) => HandOffset(seatNumber, 0, 1) + insuranceOffset;
 
         /// <summary>WORLD position of a seat's insurance stack — where its chips are paid TO and collected FROM.</summary>
-        public Vector3 InsuranceWorldPoint(int seatNumber)
+        public Vector3 InsuranceWorldPoint(int seatNumber) => InsuranceWorldPoint(seatNumber, 0);
+
+        /// <summary>
+        /// Where chip number <paramref name="chipIndex"/> of an insurance payout lands: ON TOP of the stake already
+        /// standing there, climbing by <c>stackStep</c> exactly as a built stack does.
+        ///
+        /// Two separate reasons this cannot just be the stack's base point. Every paid chip flying to one point
+        /// arrives perfectly coincident, and their faces z-fight — the same defect that made a hand's payout look
+        /// like a single chip with broken lettering. And the insurance STAKE is still standing there, so landing at
+        /// the base drives the winnings through it: chips inside chips. The winnings belong above the bet they won on.
+        /// </summary>
+        public Vector3 InsuranceWorldPoint(int seatNumber, int chipIndex)
         {
             int idx = seatNumber - 1;
             if (anchorsBySeat == null || idx < 0 || idx >= anchorsBySeat.Length || anchorsBySeat[idx] == null)
                 return transform.position;
-            return anchorsBySeat[idx].TransformPoint(InsuranceOffsetFor(seatNumber));
+
+            // Start above whatever the stake already occupies, then climb per chip.
+            int standing = (_insStacks != null && idx < _insStacks.Length && _insStacks[idx] != null)
+                ? _insStacks[idx].Count : 0;
+            float y = stackStep * (standing + Mathf.Max(0, chipIndex));
+            return anchorsBySeat[idx].TransformPoint(InsuranceOffsetFor(seatNumber) + new Vector3(0f, y, 0f));
         }
 
         private void BuildInsurance(int seatIdx, long amount, IReadOnlyList<long> values, IReadOnlyList<GameObject> prefabs)
@@ -855,6 +896,15 @@ namespace PlayCard.Game.Betting
             // Winnings leave WITH the wager, in one gesture — a payout lingering after the bet vanished reads as a
             // bug. A push has no payout, so this is simply empty there.
             CollectPayout(seatNumber, detached);
+
+            // ...and so does the INSURANCE stake, for exactly the same reason. It lives in its own parallel array, so
+            // neither call above can see it: on a won insurance the stake is still standing (it was returned, not
+            // taken), and it would sit on the felt while every other chip peeled away, then vanish in one frame later
+            // when the board render noticed the server had zeroed it. Detaching it here also stops that render
+            // rebuilding it mid-peel. Already empty when the bet lost — the dealer took it at the peek.
+            var insurance = DetachInsurance(seatNumber);
+            if (insurance != null) detached.AddRange(insurance);
+
             if (detached.Count == 0) return 0f;
 
             // Stacks are built bottom-up, so the last entry is the top chip — take from the top, as a hand would.
@@ -1014,6 +1064,12 @@ namespace PlayCard.Game.Betting
                 for (int i = 0; i < list.Count; i++) if (list[i] != null) Destroy(list[i]);
                 list.Clear();
             }
+
+            // Same for any insurance stake still standing — a remote seat's, or a local one whose peel never ran. It is
+            // in its own array, so the stack loop above does not reach it, and the next round would open with last
+            // round's insurance still on the felt.
+            if (_insStacks != null)
+                for (int i = 0; i < _insStacks.Length; i++) { ClearInsuranceStack(i); _lastIns[i] = -1; }
         }
     }
 }

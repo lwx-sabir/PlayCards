@@ -2659,8 +2659,20 @@ namespace Khela.Game.Managers
         }
 
         // A player who may still take insurance: in-round, main hand untouched (its 2 dealt cards, not done).
+        // A player who may still take insurance: in-round, main hand untouched (its 2 dealt cards, not done), AND
+        // able to pay for it.
+        //
+        // The affordability half matters because this predicate decides who the table WAITS FOR. The stake for this
+        // round is already debited, so a player who bet most of their balance cannot cover half of it — PlaceInsurance
+        // would refuse them, and their client does not even offer it. Without this the table sat through the whole
+        // insurance window waiting on a decision nobody was able to make, and the dealer's peek was held behind it.
+        //
+        // Balance here is the engine's mirror, not the wallet, and that is fine for this use: it only decides whether
+        // we WAIT for someone, never whether their bet is accepted. PlaceInsuranceAsync still validates wallet-first,
+        // so a stale mirror can at worst make us stop waiting for a player who would have been refused anyway.
         private static bool InsuranceEligible(Player p)
-            => p.InRound && p.Hands.Count > 0 && p.Hands[0].Hand.Cards.Count == 2 && !p.Hands[0].Done;
+            => p.InRound && p.Hands.Count > 0 && p.Hands[0].Hand.Cards.Count == 2 && !p.Hands[0].Done
+               && p.Balance >= p.Hands[0].Bet / 2m;
 
         private static bool AnyInsuranceEligible(BlackjackTable table) => table.Game.Players.Any(InsuranceEligible);
 

@@ -58,6 +58,31 @@ namespace PlayCard.EditorTools
             Debug.Log($"[VWBake] Done — {guids.Length} scene(s) now own their baked lighting under {Root}.");
         }
 
+        /// <summary>
+        /// Bake ONLY the currently-open scene (e.g. the Blackjack table, which lives OUTSIDE
+        /// <see cref="Root"/> so <see cref="BakeAll"/> won't touch it). Same <c>Lightmapping.Bake()</c>
+        /// as Unity's Lighting ▸ Generate Lighting, plus it gives the scene its own self-contained
+        /// <c>.lighting</c> in its folder. Run <c>World Prep ▸ 2 - Prep Open Scene</c> first.
+        /// </summary>
+        [MenuItem("Khela/Bake Open Scene Lighting")]
+        public static void BakeOpenScene()
+        {
+            var scene = SceneManager.GetActiveScene();
+            if (string.IsNullOrEmpty(scene.path))
+            {
+                Debug.LogWarning("[VWBake] Save the open scene first — an unsaved scene has no folder to write baked data into.");
+                return;
+            }
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+
+            EnsureLocalLightingSettings(scene.path);   // scene owns its .lighting in its own folder
+            Debug.Log($"[VWBake] Baking OPEN scene {scene.path} …");
+            Lightmapping.Bake();                        // identical to Lighting ▸ Generate Lighting
+            EditorSceneManager.SaveScene(scene);
+            AssetDatabase.Refresh();
+            Debug.Log($"[VWBake] Baked + saved {scene.path}");
+        }
+
         // Give the scene its OWN LightingSettings (.lighting) in its folder — copied from whatever it
         // currently uses (the Synty demo's), or a fresh default — so the folder is fully self-contained.
         // The baked-data folder (LightingData + reflection probes) is produced by Bake() itself.

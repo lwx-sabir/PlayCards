@@ -217,6 +217,14 @@ namespace Khela.Game.Services.Pass
         /// <summary>Ceiling on a card's headline text — it has one line on a small card.</summary>
         public const int MaxCardLabelLength = 32;
 
+        /// <summary>
+        /// ⚠️ TESTING — currently <see cref="CatchUpPolicy.All"/> so every missed day is collectible and the collect
+        /// flow can be exercised without waiting a day per claim. The PRODUCT decision is
+        /// <see cref="CatchUpPolicy.GoldenOrAds"/>; put it back before launch.
+        /// Only the built-in default: an admin config in Redis sets its own policy and overrides this.
+        /// </summary>
+        public const CatchUpPolicy DefaultCatchUp = CatchUpPolicy.All;
+
         public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -243,7 +251,7 @@ namespace Khela.Game.Services.Pass
             Title = "Monthly Pass",
             Enabled = true,
             Cadence = PassCadence.Monthly,
-            CatchUp = CatchUpPolicy.GoldenOrAds,
+            CatchUp = DefaultCatchUp,
             AdsPerCatchUp = 2,
             MaxAdCatchUpsPerCycle = 5,
             GoldenProductIdApple = "khela.pass.golden.monthly",

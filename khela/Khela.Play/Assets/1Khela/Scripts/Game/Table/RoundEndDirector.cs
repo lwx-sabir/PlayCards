@@ -302,62 +302,51 @@ namespace PlayCard.Game.Table
             Kick();
             if (holdSeconds > 0f) yield return new WaitForSecondsRealtime(holdSeconds);
 
-            // 3b) INSURANCE — paid FIRST, before any hand is settled, exactly as at a real table: she showed
-            // blackjack, so the side bet on that is decided before the hands it was placed alongside.
+            // Materialise BOTH sides up front, because the seat's chips may only be cleared once every movement it is
+            // owed has happened — pays AND collects. _payPending is that count.
             //
-            // Only ever reached on a dealer natural. A LOST insurance bet was already taken mid-round, right after the
-            // peek that decided it (DealerPeek.TakeLostInsurance), and marks itself settled — so the guard below is
-            // what keeps these two paths from ever both paying out the same stake.
-            foreach (var ins in WinningInsurance())
+            // It used to count pays alone, which was correct while pays always came last. Paying insurance BEFORE the
+            // collect breaks that: on a dealer blackjack the seat's only PAY is the insurance, so the counter would
+            // reach zero on its landing and peel away the very wager the dealer is about to collect. Counting both
+            // also fixes a case that was always latent — a split that wins one hand and loses the other peeled on the
+            // win landing, which could arrive before the losing hand had been taken.
+            var winners = new List<HandRef>(WinnerHands());
+            var losers = new List<HandRef>();
+            foreach (var h in LoserHands())
             {
-                if (betStacks != null && betStacks.InsuranceSettled(ins.Seat)) continue;   // taken at the peek → lost
-                Kick();
-                var won = ins;
-                if (dealer != null) yield return dealer.PayToSeat(won.Seat, () => PayInsurance(won));
-                else PayInsurance(won);
-                yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
+                // A BUST was already taken mid-round by BustHandCleaner — chips gone, cards swept. Replaying the
+                // scoop here would be a gesture over an empty spot. Never skips an INSURANCE entry on that basis: it
+                // carries its hand's index for position only, and its stake is a separate stack the bust never touched.
+                if (!h.Insurance && view != null && view.IsHandCleared(h.Seat, h.HandIndex)) continue;
+                losers.Add(h);
             }
-            if (dealer != null) dealer.ReturnToIdle();
+
+            _payPending.Clear();
+            for (int i = 0; i < winners.Count; i++) BumpPending(winners[i].Seat);
+            for (int i = 0; i < losers.Count; i++) BumpPending(losers[i].Seat);
+
+            // 3b) PAY INSURANCE — before anything is taken. She showed blackjack; the side bet on that is settled
+            // first, and only then does she collect the hands it was placed beside. That is the real-table order, and
+            // it reads as cause and effect: the card that pays the insurance is the same card that takes the wager.
+            yield return PayEntries(winners, insuranceOnly: true);
 
             // 4) COLLECT — ONE losing HAND at a time: the dealer plays that seat's collect gesture and its event flies
             // THAT hand's chips to her (a split's hands are collected separately, so a winning hand keeps its bet).
             // Same one-at-a-time, event-coupled model as the deal throws.
-            foreach (var h in LoserHands())
+            foreach (var h in losers)
             {
-                // A BUST was already taken mid-round by BustHandCleaner — chips gone, cards swept. Replaying the
-                // scoop here would be a gesture over an empty spot.
-                if (view != null && view.IsHandCleared(h.Seat, h.HandIndex)) continue;
-
                 Kick();
                 var hand = h;   // capture per iteration — the closure must not see the loop's last value
                 if (dealer != null) yield return dealer.CollectFromSeat(hand.Seat, () => CollectHand(hand));
                 else CollectHand(hand);
                 yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
+                StartCoroutine(SeatMovementDone(hand.Seat));   // a collect settles the seat too
             }
             if (dealer != null) dealer.ReturnToIdle();
 
-            // 5) PAY — ONE winning HAND at a time: the dealer plays that seat's pay gesture and its event flies the
-            // winnings out to that HAND's chip spot (a split's two hands are paid separately, like two single hands).
-            // Count each seat's winning hands up front. A split pays two, one after another, and a seat may only be
-            // cleared once the LAST of its hands has landed — clearing after the first strands the second hand's
-            // wager and payout on the felt. Per seat, not just mine, so every paid player's chips leave on their own
-            // landing instead of waiting for the sweep. Materialised because it is walked twice.
-            var winners = new List<HandRef>(WinnerHands());
-            _payPending.Clear();
-            for (int i = 0; i < winners.Count; i++)
-            {
-                int s = winners[i].Seat;
-                _payPending[s] = _payPending.TryGetValue(s, out var n) ? n + 1 : 1;
-            }
-
-            foreach (var h in winners)
-            {
-                Kick();
-                var hand = h;
-                if (dealer != null) yield return dealer.PayToSeat(hand.Seat, () => PayHand(hand));
-                else PayHand(hand);
-                yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
-            }
+            // 5) PAY the HANDS — one winning hand at a time, its winnings flying to THAT hand's chip spot (a split's
+            // two hands are paid separately, like two single hands).
+            yield return PayEntries(winners, insuranceOnly: false);
             if (dealer != null) dealer.ReturnToIdle();
 
             // The winnings have landed → NOW reveal the credited balances (seat plates + win juice). Held until
@@ -455,8 +444,11 @@ namespace PlayCard.Game.Table
         {
             public readonly int Seat, HandIndex, HandCount;
             public readonly decimal Delta;
-            public HandRef(int seat, int handIndex, int handCount, decimal delta)
-            { Seat = seat; HandIndex = handIndex; HandCount = handCount; Delta = delta; }
+            /// <summary>This entry is the seat's INSURANCE payout, not its hand's — the chips land on the insurance
+            /// stack instead of beside the wager. Everything else about paying it is identical.</summary>
+            public readonly bool Insurance;
+            public HandRef(int seat, int handIndex, int handCount, decimal delta, bool insurance = false)
+            { Seat = seat; HandIndex = handIndex; HandCount = handCount; Delta = delta; Insurance = insurance; }
         }
 
         // Losers / winners PER HAND, in seat order (players only; the dealer is seat 0). A split is settled hand by
@@ -487,6 +479,29 @@ namespace PlayCard.Game.Table
                         long d = (long)h.HandDelta;
                         if (winners ? d > 0 : d < 0)
                             yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.HandDelta);
+
+                        // INSURANCE is a SECOND settlement on the same hand, and it moves its own chips. A dealer
+                        // blackjack pays it while taking the wager beside it — two gestures that happen to cancel —
+                        // so it is emitted as its own entry rather than folded into the hand's net. That is the same
+                        // reason the per-hand list exists at all: a net moves no chips and shows the player nothing.
+                        //
+                        // Deliberately routed through the EXISTING pay loop instead of a beat of its own. That loop
+                        // already owns the dealer rig one gesture at a time, paces them, and clears the seat on its
+                        // last landing; a parallel beat had to re-earn all of that and broke the collect doing it.
+                        if (winners && h.InsuranceDelta > 0m)
+                            yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.InsuranceDelta, insurance: true);
+
+                        // ...and the same on the losing side: she showed no blackjack, so she takes the insurance
+                        // stake with the same gesture she takes any other lost wager. Symmetry is the point — one
+                        // loop owns collecting, one owns paying, and insurance is just another entry in each rather
+                        // than a special case that needs its own beat and its own claim on the dealer.
+                        // A LOST insurance bet is normally taken the moment the peek decides it (DealerPeek), which
+                        // is the beat it belongs to — this is the fallback for a round that never got that window
+                        // (the peek timed out, or the round settled before it ran). InsuranceSettled is what stops
+                        // the two paths from both collecting the same stake.
+                        if (!winners && h.InsuranceDelta < 0m
+                            && (betStacks == null || !betStacks.InsuranceSettled(r.SeatNumber)))
+                            yield return new HandRef(r.SeatNumber, h.HandIndex, hands.Count, h.InsuranceDelta, insurance: true);
                     }
                 }
                 else
@@ -516,10 +531,18 @@ namespace PlayCard.Game.Table
                 var hands = r.Hands;
                 if (hands != null && hands.Count > 0)
                 {
+                    // HandDelta, not Delta — the SAME distinction the collect/pay classification makes, and this is
+                    // the third place the netting has bitten. A hand that lost to a dealer blackjack while its
+                    // insurance won nets to exactly zero (that is what insurance is FOR), so on the raw Delta the seat
+                    // reads as a PUSH. It then gets the push treatment: its chips peel away on the push timer, seconds
+                    // after the badge and well before the dealer has collected the wager or paid the insurance — the
+                    // stack vanishing during the reveal instead of leaving with everything else at the payout.
+                    //
+                    // A real push is the HAND tying the dealer, which is what HandDelta answers.
                     pushed = false;
-                    foreach (var h in hands) if (h != null && (long)h.Delta == 0) { pushed = true; break; }
+                    foreach (var h in hands) if (h != null && (long)h.HandDelta == 0) { pushed = true; break; }
                 }
-                else pushed = (long)r.Delta == 0;
+                else pushed = (long)r.Delta == 0;   // legacy per-seat fallback: no per-hand list, so no insurance split
 
                 if (pushed) yield return r.SeatNumber;
             }
@@ -554,7 +577,11 @@ namespace PlayCard.Game.Table
         {
             var hub = ChipHub;
             if (betStacks == null || hub == null) return;
-            var chips = betStacks.DetachHandStack(h.Seat, h.HandIndex);
+            // The insurance stack is its own pile beside the wager, so a lost insurance bet is taken from there —
+            // otherwise she reaches for the hand's chips twice and the insurance stake is never collected at all.
+            var chips = h.Insurance ? betStacks.DetachInsurance(h.Seat)
+                                    : betStacks.DetachHandStack(h.Seat, h.HandIndex);
+            if (chips == null) return;
             for (int i = 0; i < chips.Count; i++)
                 FlyChip(chips[i], hub.position, chipFlightSeconds);
         }
@@ -587,10 +614,13 @@ namespace PlayCard.Game.Table
             // on top of each other: the payout read as a single chip no matter how much was won, and the coincident
             // faces z-fought so the printed value looked broken — right up until the peel separated them again.
             for (int i = 0; i < chips.Count; i++)
-                FlyChip(chips[i], betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount, i),
+                FlyChip(chips[i],
+                        h.Insurance ? betStacks.InsuranceWorldPoint(h.Seat, i)   // per-chip slot, above the stake
+                                    : betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount, i),
                         chipFlightSeconds, keepOnArrival: true);
 
-            Vector3 worldTarget = betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount);
+            Vector3 worldTarget = h.Insurance ? betStacks.InsuranceWorldPoint(h.Seat)
+                                              : betStacks.HandPayoutPoint(h.Seat, h.HandIndex, h.HandCount);
 
             // Hand the landed winnings to BetStacks so they PERSIST as a second stack and later shrink away together
             // with the wager. They used to be destroyed 0.05s after landing, so the payout flashed and vanished.
@@ -608,63 +638,58 @@ namespace PlayCard.Game.Table
             }
         }
 
-        private readonly struct InsuranceWin
-        {
-            public readonly int Seat;
-            public readonly decimal Winnings;   // gross return minus the stake — the stake itself stays on the felt
-            public InsuranceWin(int seat, decimal winnings) { Seat = seat; Winnings = winnings; }
-        }
+        private void BumpPending(int seat)
+            => _payPending[seat] = _payPending.TryGetValue(seat, out var n) ? n + 1 : 1;
 
         /// <summary>
-        /// Seats whose insurance WON, read from the settle result rather than from the live board.
-        ///
-        /// It has to be the result: the server ZEROES <c>InsuranceBet</c> on the hand as it settles, so by the time
-        /// this ceremony runs the board shows nobody as insured. The result is also the only place that says what the
-        /// bet returned, which keeps the 2:1 rule where it belongs — on the server — instead of as a constant here
-        /// that could quietly disagree with what was actually paid.
+        /// Pay one partition of the winners — the INSURANCE entries or the HAND entries. One body, run twice, so the
+        /// two passes cannot drift apart in pacing, rig handling or bookkeeping; the only difference between them is
+        /// which entries they take and when the sequence calls them.
         /// </summary>
-        private IEnumerable<InsuranceWin> WinningInsurance()
+        private IEnumerator PayEntries(List<HandRef> winners, bool insuranceOnly)
         {
-            if (_board?.LastResults == null) yield break;
-            foreach (var r in _board.LastResults)
+            for (int i = 0; i < winners.Count; i++)
             {
-                var hands = r?.Hands;
-                if (hands == null) continue;
-                foreach (var h in hands)
-                {
-                    if (h == null || h.InsuranceBet <= 0m) continue;
-                    if (h.InsuranceDelta <= 0m) continue;            // lost — taken at the peek, nothing to pay
-                    yield return new InsuranceWin(r.SeatNumber, h.InsuranceDelta);
-                }
+                var hand = winners[i];
+                if (hand.Insurance != insuranceOnly) continue;
+
+                Kick();
+                if (dealer != null) yield return dealer.PayToSeat(hand.Seat, () => PayHand(hand));
+                else PayHand(hand);
+                yield return new WaitForSecondsRealtime(chipFlightSeconds + payGap);
             }
         }
 
         /// <summary>
-        /// Pay a winning insurance bet, landing the winnings ON the insurance stack the player built — the stake stays
-        /// where it is and the payout arrives beside it, the same way a hand's winnings land beside its wager.
+        /// One of a seat's owed chip movements has finished. When the LAST one has, the seat's chips leave together.
+        ///
+        /// Shared by the pay landing and the collect, because either can be the last thing a seat is owed: a hand that
+        /// loses while its insurance wins is paid first and collected second, so the collect is what finishes it —
+        /// while an ordinary winner is finished by its payout landing. Whichever arrives last clears the seat.
         /// </summary>
-        private void PayInsurance(InsuranceWin win)
+        private IEnumerator SeatMovementDone(int seat)
         {
-            var hub = ChipHub;
-            if (betStacks == null || hub == null) return;
+            int left = _payPending.TryGetValue(seat, out var n) ? n - 1 : 0;
+            _payPending[seat] = left;
+            if (left > 0) yield break;
 
-            long amount = (long)win.Winnings;
-            if (amount <= 0) return;
+            // Let the payout be READ where it landed, beside the wager.
+            if (payoutReadSeconds > 0f) yield return new WaitForSecondsRealtime(payoutReadSeconds);
 
-            var target = betStacks.ChipAnchor(win.Seat);
-            if (target == null) return;
+            // Clear the seat in ONE gesture: every hand's wager AND every hand's winnings shrink together, on that
+            // seat's own settlement rather than at the sweep.
+            if (betStacks != null) betStacks.PlayPeelAway(seat);
 
-            Vector3 startLocal = target.InverseTransformPoint(hub.position);
-            var chips = betStacks.BuildLooseStack(target, startLocal, amount);
-            Vector3 worldTarget = betStacks.InsuranceWorldPoint(win.Seat);
+            if (!IsMySeat(seat)) yield break;   // remote seats want the clear and nothing else
 
-            for (int i = 0; i < chips.Count; i++)
-                FlyChip(chips[i], worldTarget, chipFlightSeconds, keepOnArrival: true);
-
-            betStacks.HoldPayoutChips(win.Seat, chips);   // persist + peel away with the rest of the seat's chips
-
-            if (chips.Count > 0 && IsMySeat(win.Seat))
-                StartCoroutine(PayLandAfter(chipFlightSeconds, worldTarget, win.Seat));
+            // The burst fires WITH the peel, not after it. Waiting out the full peel first read as two disconnected
+            // events — the stack vanished, then unrelated chips flew to the balance. It stays gated on a WIN;
+            // PlayForLocalWin checks the seat's own outcome, so a seat settled by a COLLECT simply gets no burst.
+            if (!_winFlyShown && winChipFly != null)
+            {
+                _winFlyShown = true;
+                winChipFly.PlayForLocalWin(_board);
+            }
         }
 
         private bool IsMySeat(int seat) => table != null && table.MySeat > 0 && seat == table.MySeat;
@@ -681,38 +706,13 @@ namespace PlayCard.Game.Table
         {
             if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
 
-            bool mine = IsMySeat(seat);
             // Local seat only: a payout landing across the table is somebody else's news, and the pay loop is already
             // the busiest moment of the round.
-            if (mine && tableAudio != null) tableAudio.PlayChipsPayLand(worldTarget);
+            if (IsMySeat(seat) && tableAudio != null) tableAudio.PlayChipsPayLand(worldTarget);
 
-            // Every one of THIS SEAT's hands must be paid and landed before its chips are cleared. On a split the
-            // second hand is still in the dealer's hands when the first lands, so acting here would leave that hand's
-            // wager and winnings on the felt with nothing left to remove them until the sweep.
-            int left = _payPending.TryGetValue(seat, out var n) ? n - 1 : 0;
-            _payPending[seat] = left;
-            if (left > 0) yield break;
-
-            // Let the payout be READ where it landed, beside the wager.
-            if (payoutReadSeconds > 0f) yield return new WaitForSecondsRealtime(payoutReadSeconds);
-
-            // Clear the seat in ONE gesture: every hand's wager AND every hand's winnings shrink together, on that
-            // seat's own landing rather than at the sweep. The director owns this rather than WinChipFly, so it also
-            // happens when the seat's NET is not a win — a split that wins one hand and loses the other nets a push,
-            // and the old burst-driven path skipped it entirely, leaving chips on the felt.
-            if (betStacks != null) betStacks.PlayPeelAway(seat);
-            if (!mine) yield break;   // remote seats want the clear and nothing else
-
-            // The burst fires WITH the peel, not after it. Waiting out the full peel first (~0.6s with a few chips)
-            // read as two disconnected events — the stack vanished, then unrelated chips flew to the balance. Firing
-            // together, the chips lifting off the felt and the chips arriving at the balance are one motion.
-
-            // The burst is a WIN celebration and stays gated on one — WinChipFly checks the seat's outcome itself.
-            if (!_winFlyShown && winChipFly != null)
-            {
-                _winFlyShown = true;
-                winChipFly.PlayForLocalWin(_board);
-            }
+            // The landing is ONE of the movements this seat is owed — the collect is another. Whichever finishes last
+            // clears the seat, so both go through the same place rather than each keeping its own idea of "done".
+            yield return SeatMovementDone(seat);
         }
 
         [Tooltip("Pause after YOUR winnings land, before the felt is cleared — the beat where you read what you won " +
@@ -839,6 +839,11 @@ namespace PlayCard.Game.Table
 
         private void ForceFinish()
         {
+            // TEMPORARY DIAGNOSTIC. This is the ONE path that cuts a clip mid-gesture and then completes every
+            // remaining money move instantly with no animation — exactly the reported symptom — so it needs to say so
+            // rather than being inferred. If this does not appear, the sequence ran normally and a beat returned early.
+            Debug.LogWarning($"[INS-DIAG] ForceFinish — a beat exceeded {maxHoldSeconds}s without progress. Everything " +
+                             "left in the sequence now happens with no animation.");
             _running = false;
             ClearWinFx();   // a torn-down sequence must not leave particles running over a swept felt
             if (_seq != null) { StopCoroutine(_seq); _seq = null; }

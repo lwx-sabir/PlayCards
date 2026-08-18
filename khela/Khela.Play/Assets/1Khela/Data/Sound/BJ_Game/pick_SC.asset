@@ -652,6 +652,8 @@ MonoBehaviour:
     audioClips:
     - {fileID: 8300000, guid: d8617842906a142799319aae23e4d1f9, type: 3}
     - {fileID: 8300000, guid: 4016916b36f7849008eec16bb8cd5d71, type: 3}
+    - {fileID: 8300000, guid: d433cad6d6097490892b373e0d884179, type: 3}
+    - {fileID: 8300000, guid: 74b788b7b9a0a40a3bd879b7ab7a72f7, type: 3}
     notes: Notes
   assetGuid: c22dec3f3629a61438e5960d55dab2c6
   assetGuidHash: -1790990553644342991

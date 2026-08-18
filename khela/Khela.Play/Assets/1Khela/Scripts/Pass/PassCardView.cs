@@ -1,4 +1,5 @@
 using System;
+using DG.Tweening;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -52,6 +53,16 @@ namespace PlayCard.Pass
 
         [Header("Interaction")]
         [SerializeField] private Button button;
+
+        [Header("Juice")]
+        [Tooltip("What moves for the tap feedback. Empty = this card's own transform.")]
+        [SerializeField] private RectTransform juiceRoot;
+        [Tooltip("Horizontal shake distance when a card can't be taken yet.")]
+        [SerializeField] private float denyShake = 14f;
+        [SerializeField] private float denyDuration = 0.28f;
+        [Tooltip("Scale punch when tapping a day already collected — an acknowledgement, not a refusal.")]
+        [SerializeField] private float collectedPunch = 0.06f;
+        [SerializeField] private float collectedDuration = 0.22f;
 
         /// <summary>Raised when the card is tapped. The screen decides what a tap means for the current state —
         /// claim, watch ads, or open the subscribe sheet.</summary>
@@ -174,5 +185,53 @@ namespace PlayCard.Pass
         {
             if (target != null && target.activeSelf != on) target.SetActive(on);
         }
+
+        // ---------------- tap feedback ----------------
+
+        /// <summary>
+        /// "You can't take this yet" — a sharp horizontal shake, deliberately SILENT: a refusal that also makes noise
+        /// reads as a malfunction, and this project keeps denied actions quiet.
+        /// </summary>
+        public void PlayDenied()
+        {
+            var target = Reset();
+            if (target == null) return;
+            _juice = target.DOShakeAnchorPos(denyDuration, new Vector2(denyShake, 0f), 12, 90f, false, true)
+                           .SetUpdate(true).SetLink(gameObject);
+        }
+
+        /// <summary>"You already have this" — a soft punch, distinct from the refusal shake so the two dead-end taps
+        /// don't feel like the same mistake.</summary>
+        public void PlayAlreadyCollected() => Punch(collectedPunch, collectedDuration);
+
+        /// <summary>A claim landed — a bigger, springier punch, played just before the rewards burst out of the card.</summary>
+        public void PlayClaimed() => Punch(collectedPunch * 2.5f, collectedDuration * 1.2f);
+
+        private Tween _juice;
+
+        private void Punch(float strength, float duration)
+        {
+            var target = Reset();
+            if (target == null) return;
+            _juice = target.DOPunchScale(Vector3.one * strength, duration, 8, 0.9f)
+                           .SetUpdate(true).SetLink(gameObject);
+        }
+
+        /// <summary>Kill any tween in flight and put the card back where it belongs, so rapid taps can't accumulate
+        /// offsets or leave a card half-scaled.</summary>
+        private RectTransform Reset()
+        {
+            if (!isActiveAndEnabled) return null;
+
+            var target = juiceRoot != null ? juiceRoot : (RectTransform)transform;
+            if (_juice != null && _juice.IsActive()) _juice.Kill();
+
+            if (_restPosition == null) _restPosition = target.anchoredPosition;
+            target.anchoredPosition = _restPosition.Value;
+            target.localScale = Vector3.one;
+            return target;
+        }
+
+        private Vector2? _restPosition;
     }
 }

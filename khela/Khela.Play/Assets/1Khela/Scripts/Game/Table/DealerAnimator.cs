@@ -214,13 +214,16 @@ namespace PlayCard.Game.Table
 
         private IEnumerator Pump()
         {
+            // Captured after each of OUR OWN throws — see ThrowDealerDraws for why it cannot be taken up front.
+            int gen = 0;
             while (_throwQueue.Count > 0)
             {
                 yield return ThrowOne(_throwQueue.Dequeue());   // plays the throw AND waits for it to release its card
+                gen = _rigGen;
                 if (perCardStagger > 0f) yield return new WaitForSecondsRealtime(perCardStagger);
             }
             _pumping = false;
-            PlayIdle();   // queue drained → back to idle (throws no longer set OnEnd, so we return here)
+            if (gen == _rigGen) PlayIdle();   // queue drained → back to idle (throws no longer set OnEnd, so we return here)
         }
 
         // ---- Round-end director hooks (driven by RoundEndDirector, NOT the board — its settle tally is empty) ----
@@ -262,12 +265,17 @@ namespace PlayCard.Game.Table
         public IEnumerator ThrowDealerDraws(int count)
         {
             if (count <= 0) yield break;
+            // Captured AFTER each of OUR OWN throws, never before: ThrowOne bumps the generation itself, so a value
+            // taken up front would never match and she would simply never return to idle. What this asks is "has
+            // anything OTHER than me taken the rig since my last throw" — which is the only case worth standing down for.
+            int gen = 0;
             for (int i = 0; i < count; i++)
             {
                 yield return ThrowOne(0);   // plays seat 0's throw AND waits for it to release its one parked card
+                gen = _rigGen;
                 if (perCardStagger > 0f) yield return new WaitForSecondsRealtime(perCardStagger);
             }
-            PlayIdle();
+            if (gen == _rigGen) PlayIdle();
         }
 
         /// <summary>
@@ -280,12 +288,23 @@ namespace PlayCard.Game.Table
         {
             if (animancer == null || clip == null || clip.Clip == null) yield break;
             var state = animancer.Play(clip);        // the clip's serialized events (bound to the director) fire as it plays
+            int gen = ++_rigGen;                     // this clip now owns the rig
             state.Speed = Mathf.Max(0.01f, clip.Speed);   // honour the clip's authored Speed field
             float timeout = clip.Clip.length + 0.5f;
             float t = 0f;
             while (state.NormalizedTime < 1f && t < timeout) { t += Time.unscaledDeltaTime; yield return null; }
-            PlayIdle();
+
+            // Return to idle ONLY if nothing else has taken the rig since. This runs DETACHED for the finale, whose
+            // tail deliberately outlives the round-end sequence — and a blackjack settles the next round instantly, so
+            // that tail can elapse after the next round's collect gesture has already started. Idling then cuts a
+            // live gesture at its first frame, which is exactly the "collect breaks on start" case. A generation
+            // counter answers "am I still the one playing?" without depending on how a clip was started.
+            if (gen == _rigGen) PlayIdle();
         }
+
+        // Bumped by everything that takes the animation rig. A coroutine that outlives its own clip compares the value
+        // it captured against this before touching the rig again — see PlayBodyClip.
+        private int _rigGen;
 
         /// <summary>
         /// Play LOSER seat N's COLLECT gesture; its ReleaseChip event fires <paramref name="onGrab"/> (that seat's chips
@@ -324,12 +343,19 @@ namespace PlayCard.Game.Table
         {
             if (animancer == null || peek == null || peek.Clip == null) { PeekHoleCard(); yield break; }
             var state = animancer.Play(peek);
+            int gen = ++_rigGen;                       // this peek now owns the rig
             state.Speed = Mathf.Max(0.01f, peek.Speed);
             state.NormalizedTime = float.IsNaN(peek.NormalizedStartTime) ? 0f : peek.NormalizedStartTime;
             float timeout = peek.Clip.length + 0.5f;
             float t = 0f;
             while (state.NormalizedTime < 1f && t < timeout) { t += Time.unscaledDeltaTime; yield return null; }
-            PlayIdle();
+
+            // Same guard as PlayBodyClip, and the peek is the case that actually bites: a DEALER BLACKJACK settles the
+            // round the instant it is dealt, so the MID-ROUND peek (DealerPeek.RunHeld) can already be playing when the
+            // round-end director takes over. Nobody owns that coroutine — the director's own PeekIfMissed no-ops
+            // because the peek flag is already set — so it runs to completion and idles seconds later, on top of
+            // whatever the director has reached by then. That is the collect gesture being cut at its first frame.
+            if (gen == _rigGen) PlayIdle();
         }
 
         /// <summary>Bind on the peek clip's 'reads it' frame: tilt/lift the hole card up TOWARD THE DEALER (card-owned
@@ -356,28 +382,41 @@ namespace PlayCard.Game.Table
         // timeout). Returns on release — the clip's tail plays on until the next Play/idle, exactly like ThrowOne.
         private IEnumerator PlaySeatChip(ClipTransition clip, System.Action onRelease, bool showChips)
         {
+            // ARM this gesture and disown the previous one. Anything still owed by an earlier clip is dropped here
+            // rather than being allowed to fire against this gesture's callback.
+            // NEVER Stop() the previous state here. It was tried, to stop a fading clip raising a stray release, and it
+            // breaks the rig: Stop() zeroes that state's weight, and between gestures it is the ONLY weighted state —
+            // so the graph outputs nothing for a frame, the Humanoid falls back to its bind pose at the root, and the
+            // next clip fades in from there. That is the dealer sinking through the floor and rising back out of it.
+            // The armed/disarmed guard below is the correct tool: it costs the rig nothing.
             _chipRelease = onRelease;
             _chipReleased = false;
+            _chipArmed = true;
 
             // Chips-in-hand prop for the PAY (give) gesture: show it for the WHOLE gesture so it no longer depends on a
             // ShowDealHandChips event being authored on THIS clip. It hides at ReleaseChip. Diagnostic tells us if the
             // prop is unassigned / can't activate / is scaled to nothing (the reasons it wouldn't be visible).
             if (showChips)
             {
-                if (dealHandChips != null)
-                {
-                    dealHandChips.SetActive(true);
-                    var pt = dealHandChips.transform;
-                    Debug.Log($"[CHIPS-DIAG] dealHandChips shown → activeInHierarchy={dealHandChips.activeInHierarchy} " +
-                              $"worldPos={pt.position} lossyScale={pt.lossyScale} (if activeInHierarchy=False a PARENT is off; " +
-                              $"if lossyScale is tiny it's parented under a scaled bone)");
-                }
-                else Debug.LogWarning("[CHIPS-DIAG] 'Deal Hand Chips' is NOT assigned on the DealerAnimator — assign a chips model under her hand.");
+                if (dealHandChips != null) dealHandChips.SetActive(true);
+                // Still worth saying when it is MISSING — that one fires once, on a misconfiguration, instead of on
+                // every gesture of every round.
+                else Debug.LogWarning("'Deal Hand Chips' is NOT assigned on the DealerAnimator — assign a chips model under her hand.");
             }
 
-            if (animancer == null || clip == null || clip.Clip == null) { ReleaseChip(); yield break; }   // no clip → fly now
+            // No clip → fly now. Disarm on the way out just like the normal path, or the rig would be left armed with
+            // no gesture running and the next stray event would be charged to it.
+            if (animancer == null || clip == null || clip.Clip == null)
+            {
+                ReleaseChip();
+                _chipArmed = false;
+                _chipRelease = null;
+                yield break;
+            }
 
             var state = animancer.Play(clip);              // the clip's own ReleaseChip event (set on its preview) fires
+            _chipState = state;                            // WHOSE release we will accept — see ReleaseChip
+            _rigGen++;                                     // this gesture owns the rig — no stale tail may idle over it
             state.Speed = Mathf.Max(0.01f, clip.Speed);    // honour the clip's authored Speed field
             // Restart, same reason as ThrowOne: replaying a clip that's already at its end (Start Time = "continue from
             // current time") would skip its release event entirely.
@@ -389,7 +428,22 @@ namespace PlayCard.Game.Table
             float t = 0f;
             while (!_chipReleased && state.NormalizedTime < 1f && t < timeout) { t += Time.unscaledDeltaTime; yield return null; }
             if (!_chipReleased) ReleaseChip();             // event missing → fly anyway
+
+            // DISARM. From here until the next gesture arms, this rig owes nobody any chips — so a release event that
+            // arrives late from the clip just played (or from one still fading out) is discarded instead of being
+            // charged to whatever comes next.
+            _chipArmed = false;
+            _chipRelease = null;
+            _chipState = null;   // don't hold a reference to a state we no longer care about
         }
+
+        // True only while a chip gesture is in flight and its release is still owed. See ReleaseChip.
+        private bool _chipArmed;
+
+        // The state playing THIS gesture's clip. Compared against the state Animancer names as the one raising a
+        // release, so a straggler from a superseded clip cannot be charged to the gesture that followed it. Only ever
+        // read — never Stop()ed, which zeroes its weight and collapses the rig.
+        private AnimancerState _chipState;
 
         private static ClipTransition SeatClipFrom(ClipTransition[] arr, int seat)
         {
@@ -401,6 +455,36 @@ namespace PlayCard.Game.Table
         /// exactly once. Also fires as a safety-net for a missing clip/event so a settle can never stall.</summary>
         public void ReleaseChip()
         {
+            // OWNERSHIP: only the gesture currently in flight may release, and only from ITS OWN clip.
+            //
+            // This is one shared entry point with no idea which clip called it, and clip events keep firing while a
+            // superseded clip fades out. So a late event from the PREVIOUS seat's gesture would land just after the
+            // next gesture armed, consume that gesture's callback, and fly its chips instantly — while its clip had
+            // barely started. That is the "collect hangs and then the chips fly on their own" case exactly, and it
+            // got worse the moment the round gained an extra chip gesture (insurance), because every added gesture is
+            // another chance for the seam to be crossed.
+            //
+            // The token is what makes it unambiguous: PlaySeatChip stamps one per gesture and captures it in the
+            // closure it binds here, so a release belonging to a finished gesture has nothing valid to invoke.
+            if (!_chipArmed) return;                                     // nothing in flight → a stray late event
+
+            // IDENTITY — the half the armed flag cannot cover. A clip that is fading out keeps raising its events, so
+            // once the NEXT gesture has armed, a straggler from the previous one is indistinguishable from this
+            // gesture's own release: it fires these chips immediately and leaves the running clip with nothing left to
+            // wait for. That is the "gesture hangs, chips arrive on their own" case, and it gets likelier with every
+            // extra seat, because every seam between gestures is another chance for it.
+            //
+            // Animancer names the state raising the event for the duration of the callback, so the question can be
+            // asked directly: is this MY clip talking? Nothing is re-authored — the clips still bind the same
+            // parameterless method — and nothing touches the rig, which is what made Stop() unusable here.
+            //
+            // Deliberately permissive when it CANNOT tell: a null raiser means we were called directly rather than by
+            // a clip event (the missing-event fallback, the no-clip path, ForceFinish), and a null _chipState means
+            // this gesture has no clip of its own. Both must still release, or a legitimate payout would be dropped —
+            // this may only ever reject a release it can positively attribute to somebody else.
+            var raiser = AnimancerEvent.Invocation.Current.State;
+            if (raiser != null && _chipState != null && raiser != _chipState) return;
+
             if (dealHandChips != null) dealHandChips.SetActive(false);   // she let the chips go → hide the in-hand prop
             if (_chipReleased) return;
             _chipReleased = true;
@@ -456,6 +540,7 @@ namespace PlayCard.Game.Table
             }
 
             var state = animancer.Play(clip);              // the clip's own Pick/Throw events (set on its preview) fire
+            _rigGen++;                                     // a throw owns the rig too — keeps the generation honest
             // Honour the clip's AUTHORED Speed (the transition's Speed field) × the global dealSpeed multiplier — so
             // editing Speed on a deal clip actually takes effect instead of being overwritten. dealSpeed default 1 = no-op.
             state.Speed = Mathf.Max(0.01f, clip.Speed) * Mathf.Max(0.01f, dealSpeed);

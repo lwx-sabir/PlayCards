@@ -168,6 +168,15 @@ namespace PlayCard.UI
 
             // Only while the hand is untouched: its 2 dealt cards, not yet acted, not yet insured.
             if (hand.Cards == null || hand.Cards.Count != 2 || hand.Done || hand.Insurance != 0m) return null;
+
+            // AFFORDABLE? Insurance costs half the wager, and the stake for this round has ALREADY been debited — so
+            // a player who bet most of their balance cannot cover it. The server refuses ("Insufficient Chips funds")
+            // and is right to, but by then the offer has been made: the player takes a decision they were never
+            // allowed to take, and the only feedback is an error. Not offering it is the honest version of the same
+            // answer. Balance is the server's, off this same snapshot, so it cannot disagree with what the server
+            // will check.
+            if (me.Balance < hand.Bet / 2m) return null;
+
             return hand;
         }
 

@@ -164,19 +164,19 @@ MonoBehaviour:
         m_PostInfinity: 2
         m_RotationOrder: 4
       pitchExpand: 1
-      pitchSemitone: 7
-      pitchRatio: 1.4983076
+      pitchSemitone: 6
+      pitchRatio: 1.4142139
       pitchRandomEnable: 0
       pitchRandomRangeSemitoneBipolar: 0.25
       pitchIntensityEnable: 1
-      pitchIntensityLowSemitone: 6.64
-      pitchIntensityLowRatio: 1.4674728
-      pitchIntensityHighSemitone: 12
-      pitchIntensityHighRatio: 2
-      pitchIntensityBaseRatio: 1.4674728
-      pitchIntensityBaseSemitone: 6.64
-      pitchIntensityRangeSemitone: 5.36
-      pitchIntensityRangeRatio: 1.362888
+      pitchIntensityLowSemitone: 6
+      pitchIntensityLowRatio: 1.4142139
+      pitchIntensityHighSemitone: 10
+      pitchIntensityHighRatio: 1.7817982
+      pitchIntensityBaseRatio: 1.4142139
+      pitchIntensityBaseSemitone: 6
+      pitchIntensityRangeSemitone: 4
+      pitchIntensityRangeRatio: 1.2599213
       pitchIntensityRolloff: 0
       pitchIntensityCurve:
         serializedVersion: 2
@@ -650,6 +650,8 @@ MonoBehaviour:
         m_PostInfinity: 2
         m_RotationOrder: 4
     audioClips:
+    - {fileID: 8300000, guid: 81a12e63a03834843b0bf8d3031beb5e, type: 3}
+    - {fileID: 8300000, guid: cb8d94da15fafb741a383f7e97e7b2f3, type: 3}
     - {fileID: 8300000, guid: 81a12e63a03834843b0bf8d3031beb5e, type: 3}
     notes: Notes
   assetGuid: a34d125cb807f294a82763f88c94770a

@@ -55,10 +55,12 @@ namespace Khela.Game.Services.Pass
             ILogger<PassAdService> logger)
         {
             _db = db; _pass = pass; _verifier = verifier; _logger = logger;
-            // Falls back to the JWT secret so a deployment can't accidentally run with an empty signing key.
-            _secret = config.GetValue<string>("Ads:IntentSecret")
-                   ?? config.GetValue<string>("Jwt:Key")
-                   ?? config.GetValue<string>("JwtSettings:Secret");
+            // Falls back to the JWT secret so a deployment can't accidentally run with an empty signing key — the
+            // token only has to be unforgeable by the client, and that key already is.
+            _secret = FirstNonEmpty(
+                config.GetValue<string>("Ads:IntentSecret"),
+                config.GetValue<string>("JwtSettings:SecretKey"),
+                config.GetValue<string>("Jwt:Key"));
         }
 
         public async Task<PassAdIntentDto> CreateIntentAsync(Guid userId, string passKey, int node)
@@ -161,5 +163,12 @@ namespace Khela.Game.Services.Pass
                 a.UserId == userId && a.PassKey == cycle.PassKey && a.CycleKey == cycle.CycleKey && a.SpentOnNode == null);
 
         private static PassAdIntentDto Fail(string error) => new PassAdIntentDto { Ok = false, Error = error };
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            return null;
+        }
     }
 }

@@ -12,7 +12,7 @@ EditorBuildSettings:
     path: Assets/1Khela/_Scenes/Onboarding.unity
     guid: 11be73bd180c9bc479c3b91aaf8e36ea
   - enabled: 1
-    path: Assets/1Khela/_Scenes/Home.unity
+    path: Assets/1Khela/_Scenes/Home/Home.unity
     guid: d0e1f20314253647586979808a9b0c21
   - enabled: 1
     path: Assets/1Khela/_Scenes/Lobby.unity

@@ -138,7 +138,7 @@ namespace PlayCard.EditorTools
 
             EditorSceneManager.MarkSceneDirty(scene);
             Debug.Log($"[WorldPrep] {scene.name}: {marked} object(s) marked static, {lights} light(s) -> Baked " +
-                      $"(shadow settings untouched by design), {refl} reflection probe(s) -> Baked, " +
+                      $"(Directional + Light_Spot children KEPT Realtime; shadow settings untouched), {refl} reflection probe(s) -> Baked, " +
                       $"{probes} light probe(s) placed.\n" +
                       "Next: Tools ▸ Khela ▸ Bake Virtual-World Lighting, then World Prep ▸ 3 - Bake Occlusion Culling.");
         }
@@ -245,7 +245,25 @@ namespace PlayCard.EditorTools
             int n = 0;
             foreach (var l in Object.FindObjectsByType<Light>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
-                if (l.gameObject.scene != scene || l.lightmapBakeType == LightmapBakeType.Baked) continue;
+                if (l.gameObject.scene != scene) continue;
+
+                // Table key lights (Directional + Light_Spot children) MUST stay Realtime — they light the
+                // DYNAMIC cards/chips/dealer and cast their realtime shadows. FORCE them back to Realtime if a
+                // prior all-bake left them Baked: a Baked light contributes ONLY through the lightmap, so once
+                // a real bake runs the dynamics get zero direct light and the whole table goes black.
+                if (KeepRealtime(l))
+                {
+                    if (l.lightmapBakeType != LightmapBakeType.Realtime)
+                    {
+                        Undo.RecordObject(l, "World Prep: key light -> Realtime");
+                        l.lightmapBakeType = LightmapBakeType.Realtime;
+                        EditorUtility.SetDirty(l);
+                        n++;
+                    }
+                    continue;
+                }
+
+                if (l.lightmapBakeType == LightmapBakeType.Baked) continue;
                 Undo.RecordObject(l, "World Prep: light -> Baked");
                 l.lightmapBakeType = LightmapBakeType.Baked;
                 // Shadow settings intentionally NOT touched — see class docs.
@@ -253,6 +271,17 @@ namespace PlayCard.EditorTools
                 n++;
             }
             return n;
+        }
+
+        /// <summary>Lights the bake must LEAVE Realtime: the main Directional (its shadow grounds the dynamic
+        /// cards/chips/dealer), and any light parented under a "Light_Spot" group (the table's realtime key spots).
+        /// Everything else — the decorative point lights — is baked.</summary>
+        private static bool KeepRealtime(Light l)
+        {
+            if (l.type == LightType.Directional) return true;
+            for (var t = l.transform; t != null; t = t.parent)
+                if (t.name == "Light_Spot") return true;
+            return false;
         }
 
         private static int BakeReflectionProbes(Scene scene)

@@ -149,3 +149,6 @@ mono_crash.*
 # --- Secrets: Firebase Admin service-account key (server-side token verification) — treat like a password ---
 **/firebase-service-account*.json
 **/*firebase-adminsdk*.json
+
+# Runtime config snapshots written by ConfigBackupService (server state, not source)
+khela/Khela.Game/Khela.Game/App_Data/

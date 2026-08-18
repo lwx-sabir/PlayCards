@@ -232,7 +232,7 @@ namespace PlayCard.UI
         /// </summary>
         private static int VisibleTotal(List<CardView> cards, int upTo, bool maskHole)
         {
-            int total = 0, aces = 0;
+            int total = 0, aces = 0, counted = 0, biggest = 0;
             for (int i = 0; i <= upTo && i < cards.Count; i++)
             {
                 var c = cards[i];
@@ -240,8 +240,31 @@ namespace PlayCard.UI
                 if (maskHole && i == 1) continue;            // dealer hole: revealed in data, not yet on screen
                 if (c.Value == 11) aces++;
                 total += c.Value;
+                counted++;
+                if (c.Value > biggest) biggest = c.Value;
             }
             while (total > 21 && aces > 0) { total -= 10; aces--; }   // soft ace → hard
+
+            // TEMPORARY DIAGNOSTIC — remove once the "dealer showed 1 for a face-up 7" case is caught.
+            //
+            // A total can never be SMALLER than the largest single card counted into it: every value is positive, and
+            // the only subtraction is the soft-ace step, which cannot fire below 22. So this condition is unreachable
+            // by arithmetic — if it logs, an INPUT was wrong, and the dump says which (a Value that isn't the card, an
+            // IsCardUp that disagrees with the screen, or a card list that isn't the hand being drawn). Reasoning
+            // about the code could not distinguish those three; this can.
+            if (counted > 0 && total < biggest)
+            {
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < cards.Count; i++)
+                {
+                    var c = cards[i];
+                    sb.Append(i == 0 ? "" : ", ")
+                      .Append(c == null ? "null" : $"[{i}] face={c.FaceVal} suit={c.Suit} val={c.Value} up={c.IsCardUp}");
+                }
+                Debug.LogError($"[HandValueLabels] IMPOSSIBLE TOTAL {total} (largest counted {biggest}, counted " +
+                               $"{counted}, aces {aces}, upTo {upTo}, maskHole {maskHole}) — cards: {sb}");
+            }
+
             return total;
         }
 

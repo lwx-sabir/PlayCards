@@ -62,7 +62,7 @@ namespace Khela.Game.Tests
             var program = cfg.Default();
             Assert.Equal(PassCatalog.MonthlyKey, program.Key);
             Assert.Equal(PassCadence.Monthly, program.Cadence);
-            Assert.Equal(CatchUpPolicy.GoldenOrAds, program.CatchUp);   // free players buy a missed day back with ads
+            Assert.Equal(PassCatalog.DefaultCatchUp, program.CatchUp);   // see DefaultCatchUp — currently All, for testing
             Assert.True(program.SellsGolden);
         }
 

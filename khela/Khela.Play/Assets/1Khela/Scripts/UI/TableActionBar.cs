@@ -192,8 +192,14 @@ namespace PlayCard.UI
                        && (view == null || view.ActionReady(table.MySeat));
             Set(hitButton, act);
             Set(standButton, act);
-            Set(doubleButton, act && hand != null && hand.Cards.Count == 2);
-            Set(splitButton, act && CanSplit(hand));
+            // DOUBLE and SPLIT each put a SECOND wager down, matching this hand's bet — so both need the balance to
+            // cover it. The stake is already debited by the time you can press them, so a player who bet most of
+            // their balance can afford neither, and the server refuses with "Insufficient funds". Offering a button
+            // that can only fail is worse than not offering it: the player spends their decision, and their turn
+            // clock, on an action that was never available.
+            bool canRaise = hand != null && CanAfford(board, hand.Bet);
+            Set(doubleButton, act && hand != null && hand.Cards.Count == 2 && canRaise);
+            Set(splitButton, act && CanSplit(hand) && canRaise);
             Set(insuranceButton, act && hand != null && hand.Insurance == 0 && DealerShowsAce(board));
 
             // The server round-driver auto-settles ~2s after everyone has acted (and auto-stands a player whose
@@ -306,6 +312,18 @@ namespace PlayCard.UI
             if (me?.Hands == null || me.Hands.Count == 0) return null;
             int idx = Mathf.Clamp(board.CurrentHandIndex, 0, me.Hands.Count - 1);
             return me.Hands[idx];
+        }
+
+        /// <summary>
+        /// Can this player put another <paramref name="amount"/> down right now? Read off the BOARD's balance, not the
+        /// wallet HUD: it is the server's own number from the same snapshot the server will validate against, so the
+        /// button can never disagree with the answer the request would get.
+        /// </summary>
+        private bool CanAfford(BoardSnapshot board, decimal amount)
+        {
+            if (board?.Seats == null || table == null || table.MySeat <= 0) return true;   // unknown → don't block
+            var me = board.Seats.Find(s => s != null && s.SeatNumber == table.MySeat)?.Player;
+            return me == null || me.Balance >= amount;
         }
 
         // Mirror the server's CanSplitPair (Player.cs): a pair splits on equal BLACKJACK value — 10/J/Q/K all = 10,

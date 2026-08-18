@@ -86,41 +86,129 @@
         <div class="panel-head">
             <h3>Ladder</h3>
             <span class="dim" style="font-size:12.5px">
-                @p.Nodes.Count days · format: <code>Chips 2000, Kash 15, XP 100, Chest CK_Chest:Rare</code> ·
-                artwork (up to 3, back layer first): <code>Chips 2000 @@icons/card.png|icons/chip.png</code>
+                @p.Nodes.Count days · click a day to edit it
             </span>
         </div>
-        <table class="data-table">
-            <thead><tr><th style="width:60px">Day</th><th style="width:70px">★</th><th>Free rewards</th><th style="width:130px">Free card text</th><th>Golden rewards</th><th style="width:130px">Golden card text</th></tr></thead>
-            <tbody>
-                @for (int i = 0; i < p.Nodes.Count; i++)
-                {
-                    var node = p.Nodes[i];
-                    var beyondFeb = node.Index > PassCatalog.GuaranteedDays;
-                    <tr>
-                        <td>
-                            <b>@node.Index</b>
+
+        @* The inputs the controller binds are HIDDEN inside each card and stay in day order — Save() reads
+           Free[]/FreeText[]/Golden[]/GoldenText[] positionally, so the DOM order IS the day order. The modal only
+           writes into them; nothing about the post shape changed. *@
+        <div class="day-grid">
+            @for (int i = 0; i < p.Nodes.Count; i++)
+            {
+                var node = p.Nodes[i];
+                var beyondFeb = node.Index > PassCatalog.GuaranteedDays;
+                var freeLine = PassRewardText.Format(node.Free);
+                var goldenLine = PassRewardText.Format(node.Golden);
+                var freeAuto = PassCatalog.AutoLabel(node.Free);
+                var goldenAuto = PassCatalog.AutoLabel(node.Golden);
+
+                <div class="day-card@(node.IsMilestone ? " is-milestone" : "")" data-i="@i" data-day="@node.Index"
+                     data-free-auto="@freeAuto" data-golden-auto="@goldenAuto" tabindex="0" role="button"
+                     title="Edit day @node.Index">
+
+                    <input type="hidden" name="Free" value="@freeLine" />
+                    <input type="hidden" name="FreeText" value="@node.FreeText" />
+                    <input type="hidden" name="Golden" value="@goldenLine" />
+                    <input type="hidden" name="GoldenText" value="@node.GoldenText" />
+                    <input type="checkbox" name="Milestone" value="@node.Index" checked="@node.IsMilestone" hidden />
+
+                    <div class="day-head">
+                        <span class="day-no">@node.Index</span>
+                        <span class="day-flags">
+                            <span class="star" title="Milestone">★</span>
                             @if (beyondFeb)
                             {
-                                <span class="dim" title="This day doesn't exist in every month" style="font-size:11px"> ✱</span>
+                                <span class="dim" title="This day doesn't exist in every month">✱</span>
                             }
-                        </td>
-                        <td><input type="checkbox" name="Milestone" value="@node.Index" checked="@node.IsMilestone" /></td>
-                        <td><input name="Free" value="@PassRewardText.Format(node.Free)" class="vip-select" style="width:100%" /></td>
-                        <td><input name="FreeText" value="@node.FreeText" placeholder="@PassCatalog.AutoLabel(node.Free)" class="vip-select" style="width:100%" /></td>
-                        <td><input name="Golden" value="@PassRewardText.Format(node.Golden)" class="vip-select" style="width:100%" /></td>
-                        <td><input name="GoldenText" value="@node.GoldenText" placeholder="@PassCatalog.AutoLabel(node.Golden)" class="vip-select" style="width:100%" /></td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+                        </span>
+                    </div>
+
+                    <div class="track track-free">
+                        <span class="track-tag">FREE</span>
+                        <b class="v-text" data-auto="@freeAuto">@(string.IsNullOrWhiteSpace(node.FreeText) ? freeAuto : node.FreeText)</b>
+                        <span class="v-line">@freeLine</span>
+                    </div>
+
+                    <div class="track track-golden">
+                        <span class="track-tag">GOLDEN</span>
+                        <b class="v-text" data-auto="@goldenAuto">@(string.IsNullOrWhiteSpace(node.GoldenText) ? goldenAuto : node.GoldenText)</b>
+                        <span class="v-line">@(string.IsNullOrWhiteSpace(goldenLine) ? "—" : goldenLine)</span>
+                    </div>
+                </div>
+            }
+        </div>
+
         <div style="display:flex; gap:10px; padding:14px 16px; align-items:center; flex-wrap:wrap">
             <button type="submit" class="btn btn-primary">Save ladder</button>
             <span class="dim" style="font-size:12px">
-                ✱ = only exists in longer months. A <b>★ milestone</b> above day @PassCatalog.GuaranteedDays is refused —
-                February players could never reach it. Chests available:
-                <code>@string.Join("</code>, <code>", Model.ChestIds)</code>.
+                Edits are held in the page until you save. ✱ = only exists in longer months; a <b>★ milestone</b> above
+                day @PassCatalog.GuaranteedDays is refused, because February players could never reach it.
             </span>
+        </div>
+    </div>
+
+    @* ONE modal, reused for every day. It edits the hidden inputs of whichever card was opened. *@
+    <div class="modal-back" id="dayModal" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dayModalTitle">
+            <div class="modal-head">
+                <h3 id="dayModalTitle">Day</h3>
+                <button type="button" class="btn btn-outline modal-x" data-close>✕</button>
+            </div>
+
+            <div class="modal-body">
+                <section class="rw-sec">
+                    <div class="rw-head">
+                        <span class="track-tag" style="color:#6fb3f2">FREE</span>
+                        <button type="button" class="btn btn-outline btn-sm" data-add="free">+ reward</button>
+                    </div>
+                    <div class="rw-list" id="rwFree"></div>
+                    <label class="fld">
+                        <span>Card text <em class="dim">— blank uses the derived label</em></span>
+                        <input id="mFreeText" class="vip-select" />
+                    </label>
+                </section>
+
+                <section class="rw-sec">
+                    <div class="rw-head">
+                        <span class="track-tag" style="color:#d8a12a">GOLDEN</span>
+                        <button type="button" class="btn btn-outline btn-sm" data-add="golden">+ reward</button>
+                    </div>
+                    <div class="rw-list" id="rwGolden"></div>
+                    <label class="fld">
+                        <span>Card text <em class="dim">— blank uses the derived label</em></span>
+                        <input id="mGoldenText" class="vip-select" />
+                    </label>
+                </section>
+
+                <label class="fld fld-check">
+                    <input type="checkbox" id="mMilestone" /> <span>★ Milestone</span>
+                </label>
+
+                <details class="rw-raw">
+                    <summary class="dim">Raw text (advanced)</summary>
+                    <label class="fld"><span>Free</span><input id="mFree" class="vip-select" readonly /></label>
+                    <label class="fld"><span>Golden</span><input id="mGolden" class="vip-select" readonly /></label>
+                    <div class="dim modal-help">
+                        This is what gets saved, rebuilt from the rows above.
+                        Artwork is appended as <code>@@back.png|front.png</code> — back layer first, up to 3.
+                    </div>
+                </details>
+            </div>
+
+            @* Chest ids offered as a datalist, so a chest row is picked rather than remembered. *@
+            <datalist id="chestIds">
+                @foreach (var id in Model.ChestIds)
+                {
+                    <option value="@id"></option>
+                }
+            </datalist>
+
+            <div class="modal-foot">
+                <button type="button" class="btn btn-outline" data-close>Cancel</button>
+                <button type="button" class="btn btn-primary" id="mApply">Apply</button>
+                <span class="dim" style="font-size:12px">Applied to the page — press <b>Save ladder</b> to write it.</span>
+            </div>
         </div>
     </div>
 </form>
@@ -157,4 +245,288 @@
         border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 6px 8px; font-size: 13px;
     }
     label { font-size: 12.5px; color: var(--dim, #93a0b5); }
+
+    /* ---- ladder cards ---- */
+    .day-grid {
+        display: grid; gap: 10px; padding: 14px 16px;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    }
+    .day-card {
+        background: var(--panel-2, #1a2030); border: 1px solid var(--border, #2a3344);
+        border-radius: 8px; padding: 10px 11px; cursor: pointer; outline: none;
+        display: flex; flex-direction: column; gap: 8px;
+    }
+    .day-card:hover, .day-card:focus { border-color: var(--accent, #6b8afd); }
+    .day-card.is-milestone { border-color: #d8a12a; }
+
+    .day-head { display: flex; align-items: center; justify-content: space-between; }
+    .day-no { font-weight: 700; font-size: 15px; color: var(--text, #e6e9ef); }
+    .day-flags { font-size: 12px; color: var(--dim, #93a0b5); }
+    /* The star is only drawn on milestone days — toggled by the class, so the modal can flip it live. */
+    .day-flags .star { color: #d8a12a; display: none; }
+    .day-card.is-milestone .day-flags .star { display: inline; }
+
+    .track { display: flex; flex-direction: column; gap: 2px; }
+    .track-tag { font-size: 9.5px; letter-spacing: .09em; color: var(--dim, #93a0b5); }
+    .track-free .track-tag { color: #6fb3f2; }
+    .track-golden .track-tag { color: #d8a12a; }
+    .track .v-text { font-size: 13.5px; color: var(--text, #e6e9ef); }
+    .track .v-line {
+        font-size: 11px; color: var(--dim, #93a0b5);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* ---- modal ---- */
+    .modal-back {
+        position: fixed; inset: 0; background: rgba(0,0,0,.55);
+        display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+    }
+    .modal-back[hidden] { display: none; }
+    .modal {
+        background: var(--panel, #141a27); border: 1px solid var(--border, #2a3344);
+        border-radius: 10px; width: 100%; max-width: 560px; max-height: 90vh; overflow: auto;
+    }
+    .modal-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 13px 16px; border-bottom: 1px solid var(--border, #2a3344);
+    }
+    .modal-head h3 { margin: 0; font-size: 15px; }
+    .modal-x { padding: 2px 9px; }
+    .modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    .fld { display: flex; flex-direction: column; gap: 4px; }
+    .fld > span { font-size: 12px; }
+    .fld em { font-style: normal; font-size: 11px; }
+    .fld-check { flex-direction: row; align-items: center; gap: 8px; }
+    .modal-help { font-size: 11.5px; line-height: 1.7; }
+
+    /* ---- reward rows ---- */
+    .rw-sec {
+        border: 1px solid var(--border, #2a3344); border-radius: 8px; padding: 10px 11px;
+        display: flex; flex-direction: column; gap: 10px;
+    }
+    .rw-head { display: flex; align-items: center; justify-content: space-between; }
+    .btn-sm { padding: 2px 9px; font-size: 12px; }
+    .rw-list { display: flex; flex-direction: column; gap: 9px; }
+    .rw {
+        border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 8px;
+        display: flex; flex-direction: column; gap: 6px; background: var(--panel-2, #1a2030);
+    }
+    .rw-main { display: flex; gap: 6px; align-items: center; }
+    .rw-main .rw-kind { width: 110px; }
+    .rw-main .rw-id { flex: 1; min-width: 0; }
+    .rw-main .rw-amount { width: 110px; }
+    .rw-imgs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .rw-imgs input { min-width: 0; font-size: 11.5px; }
+    .rw-raw { font-size: 12px; }
+    .rw-raw summary { cursor: pointer; }
+    .rw-raw .fld { margin-top: 8px; }
+    .modal-foot {
+        display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+        padding: 13px 16px; border-top: 1px solid var(--border, #2a3344);
+    }
 </style>
+
+<script>
+    (function () {
+        var modal = document.getElementById('dayModal');
+        if (!modal) return;
+
+        var title = document.getElementById('dayModalTitle');
+        var mFree = document.getElementById('mFree');
+        var mFreeText = document.getElementById('mFreeText');
+        var mGolden = document.getElementById('mGolden');
+        var mGoldenText = document.getElementById('mGoldenText');
+        var mMilestone = document.getElementById('mMilestone');
+        var card = null;   // the card currently being edited
+
+        function fields(c) {
+            return {
+                free: c.querySelector('input[name="Free"]'),
+                freeText: c.querySelector('input[name="FreeText"]'),
+                golden: c.querySelector('input[name="Golden"]'),
+                goldenText: c.querySelector('input[name="GoldenText"]'),
+                milestone: c.querySelector('input[name="Milestone"]')
+            };
+        }
+
+        // ---- reward rows ----
+        //
+        // The stored value is PassRewardText's one-line form ("Chips 1000, Kash 3, XP 50 @@a.png|b.png"). These two
+        // functions are its mirror in the browser: parse it into rows to edit, rebuild it to save. The server still
+        // parses and validates the string, so this only has to round-trip faithfully — it is not the authority.
+        var CURRENCIES = ['Chips', 'Coins', 'Gems', 'Kash'];
+        var ITEMISH = ['Chest', 'Item', 'Cosmetic'];
+
+        function parseLine(text) {
+            var rows = [];
+            (text || '').split(',').forEach(function (raw) {
+                var token = raw.trim();
+                if (!token) return;
+
+                var images = [];
+                var at = token.indexOf('@@');
+                if (at >= 0) {
+                    images = token.substring(at + 1).split('|').map(function (u) { return u.trim(); }).filter(Boolean);
+                    token = token.substring(0, at).trim();
+                }
+                if (!token) return;
+
+                var parts = token.split(/\s+/);
+                var head = parts[0];
+
+                if (head.toUpperCase() === 'XP') {
+                    rows.push({ kind: 'XP', id: '', amount: parts[1] || '', images: images });
+                } else if (ITEMISH.some(function (k) { return k.toLowerCase() === head.toLowerCase(); })) {
+                    var count = parts[2] ? parts[2].replace(/^x/i, '') : '1';
+                    rows.push({ kind: head, id: parts[1] || '', amount: count, images: images });
+                } else {
+                    rows.push({ kind: head, id: '', amount: parts[1] || '', images: images });
+                }
+            });
+            return rows;
+        }
+
+        function buildLine(list) {
+            var out = [];
+            list.querySelectorAll('.rw').forEach(function (r) {
+                var kind = r.querySelector('.rw-kind').value;
+                var id = r.querySelector('.rw-id').value.trim();
+                var amount = r.querySelector('.rw-amount').value.trim();
+                var imgs = Array.prototype.map.call(r.querySelectorAll('.rw-img'), function (i) { return i.value.trim(); })
+                                             .filter(Boolean).slice(0, 3);
+
+                var body;
+                if (kind === 'XP') {
+                    if (!amount) return;
+                    body = 'XP ' + amount;
+                } else if (ITEMISH.indexOf(kind) >= 0) {
+                    if (!id) return;
+                    body = kind + ' ' + id + (amount && amount !== '1' ? ' x' + amount : '');
+                } else {
+                    if (!amount) return;
+                    body = kind + ' ' + amount;
+                }
+                out.push(imgs.length ? body + ' @@' + imgs.join('|') : body);
+            });
+            return out.join(', ');
+        }
+
+        function addRow(list, row) {
+            row = row || { kind: 'Chips', id: '', amount: '', images: [] };
+            var el = document.createElement('div');
+            el.className = 'rw';
+
+            var opts = CURRENCIES.concat(['XP']).concat(ITEMISH).map(function (k) {
+                return '<option value="' + k + '"' + (k === row.kind ? ' selected' : '') + '>' + k + '</option>';
+            }).join('');
+
+            el.innerHTML =
+                '<div class="rw-main">' +
+                '  <select class="vip-select rw-kind">' + opts + '</select>' +
+                '  <input class="vip-select rw-id" list="chestIds" placeholder="id (e.g. CK_Chest:Rare)" />' +
+                '  <input class="vip-select rw-amount" type="text" placeholder="amount" />' +
+                '  <button type="button" class="btn btn-outline btn-sm rw-del" title="Remove">✕</button>' +
+                '</div>' +
+                '<div class="rw-imgs">' +
+                '  <input class="vip-select rw-img" placeholder="image 1 (back layer)" />' +
+                '  <input class="vip-select rw-img" placeholder="image 2" />' +
+                '  <input class="vip-select rw-img" placeholder="image 3 (front)" />' +
+                '</div>';
+
+            el.querySelector('.rw-id').value = row.id || '';
+            el.querySelector('.rw-amount').value = row.amount || '';
+            var imgInputs = el.querySelectorAll('.rw-img');
+            for (var i = 0; i < 3; i++) imgInputs[i].value = (row.images && row.images[i]) || '';
+
+            el.querySelector('.rw-del').addEventListener('click', function () { el.remove(); refreshRaw(); });
+            el.querySelector('.rw-kind').addEventListener('change', function () { kindChanged(el); refreshRaw(); });
+            el.addEventListener('input', refreshRaw);
+
+            list.appendChild(el);
+            kindChanged(el);
+            return el;
+        }
+
+        // A currency carries no id (the kind IS the id) and XP carries neither id nor count — hiding the fields that
+        // don't apply is what stops the form asking for things the format has no place for.
+        function kindChanged(el) {
+            var kind = el.querySelector('.rw-kind').value;
+            var isItem = ITEMISH.indexOf(kind) >= 0;
+            el.querySelector('.rw-id').style.display = isItem ? '' : 'none';
+            el.querySelector('.rw-amount').placeholder = isItem ? 'count (blank = 1)' : 'amount';
+        }
+
+        function fill(list, text) {
+            list.innerHTML = '';
+            parseLine(text).forEach(function (r) { addRow(list, r); });
+        }
+
+        function refreshRaw() {
+            mFree.value = buildLine(rwFree);
+            mGolden.value = buildLine(rwGolden);
+        }
+
+        var rwFree = document.getElementById('rwFree');
+        var rwGolden = document.getElementById('rwGolden');
+        modal.querySelectorAll('[data-add]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                addRow(b.dataset.add === 'free' ? rwFree : rwGolden);
+                refreshRaw();
+            });
+        });
+
+        function open(c) {
+            card = c;
+            var f = fields(c);
+            title.textContent = 'Day ' + c.dataset.day;
+            fill(rwFree, f.free.value);
+            fill(rwGolden, f.golden.value);
+            refreshRaw();
+            mFreeText.value = f.freeText.value;
+            mGoldenText.value = f.goldenText.value;
+            mMilestone.checked = f.milestone.checked;
+            // Show what the card WOULD say if the text is left blank, so the placeholder is the real fallback.
+            mFreeText.placeholder = c.dataset.freeAuto || '';
+            mGoldenText.placeholder = c.dataset.goldenAuto || '';
+            modal.hidden = false;
+        }
+
+        function close() { modal.hidden = true; card = null; }
+
+        function apply() {
+            if (!card) return close();
+            refreshRaw();   // rebuild from the rows, so nothing typed since the last input event is lost
+            var f = fields(card);
+            f.free.value = mFree.value;
+            f.freeText.value = mFreeText.value;
+            f.golden.value = mGolden.value;
+            f.goldenText.value = mGoldenText.value;
+            f.milestone.checked = mMilestone.checked;
+
+            // Repaint the card so the grid reflects the edit before the form is posted.
+            var tracks = card.querySelectorAll('.track');
+            var freeShown = mFreeText.value.trim() || (card.dataset.freeAuto || '');
+            var goldShown = mGoldenText.value.trim() || (card.dataset.goldenAuto || '');
+            tracks[0].querySelector('.v-text').textContent = freeShown;
+            tracks[0].querySelector('.v-line').textContent = mFree.value;
+            tracks[1].querySelector('.v-text').textContent = goldShown;
+            tracks[1].querySelector('.v-line').textContent = mGolden.value || '—';
+            card.classList.toggle('is-milestone', mMilestone.checked);
+
+            close();
+        }
+
+        document.querySelectorAll('.day-card').forEach(function (c) {
+            c.addEventListener('click', function () { open(c); });
+            c.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(c); }
+            });
+        });
+
+        modal.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', close); });
+        document.getElementById('mApply').addEventListener('click', apply);
+        // Click the backdrop (not the dialog) to dismiss.
+        modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+        document.addEventListener('keydown', function (e) { if (!modal.hidden && e.key === 'Escape') close(); });
+    })();
+</script>

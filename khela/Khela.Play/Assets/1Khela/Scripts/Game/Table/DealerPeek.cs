@@ -33,9 +33,10 @@ namespace PlayCard.Game.Table
         [Tooltip("Chip stacks she takes the LOST insurance bets from. Auto-found.")]
         [SerializeField] private BetStacks betStacks;
 
-        [Tooltip("Seconds for a taken insurance stake to fly to the dealer. Costs the player nothing: the whole " +
-                 "settle runs inside the peek's decision hold, so the turn clock has not started yet.")]
+        [Tooltip("Seconds for a taken insurance stake to fly to the dealer. Costs the player nothing: the settle runs " +
+                 "inside the peek hold, so the turn clock has not started yet.")]
         [SerializeField] private float insuranceFlightSeconds = 0.45f;
+
 
         private bool _peeked;                 // once per round — survives the settle so the director can see it
         private bool _prevInRound;
@@ -163,13 +164,13 @@ namespace PlayCard.Game.Table
 
             yield return dealer.PlayPeek();
 
-            // Insurance is decided by what she just looked at, so it settles HERE — before the gate is released and
+            // Insurance is decided by what she just looked at, so it settles HERE — before the gate is released, and
             // therefore before the turn clock starts. That ordering is the whole reason this lives inside the hold:
             // /presented is withheld while the gate is up, so the server's deadline stays on its generous ceiling and
-            // the dealer taking the lost insurance costs the first player none of their decision time.
+            // taking the lost stake costs the player none of their decision time.
             //
-            // Only the LOSS is settled here. A dealer natural ends the round on the spot, so a winning insurance bet
-            // is paid by the RoundEndDirector as part of the ceremony, beside the stack it was placed on.
+            // Only the LOSS. A dealer natural ends the round on the spot, so a WINNING insurance bet is paid by the
+            // RoundEndDirector's pay loop, onto the stack it was placed on.
             yield return TakeLostInsurance();
 
             if (view != null) view.EndPeek();
@@ -177,25 +178,25 @@ namespace PlayCard.Game.Table
         }
 
         /// <summary>
-        /// She checked, she does not have blackjack: every insurance bet on the table is lost, and she takes them one
-        /// seat at a time with the same gesture she uses for any other collect.
+        /// She checked, she has no blackjack: every insurance bet on the table is lost, and she takes them one seat at
+        /// a time with the same gesture she uses for any other collect.
         ///
-        /// Real-table order, and it matters for readability: the insurance question is asked and answered before play
-        /// begins. Leaving the losing stakes on the felt until the round ends would leave a dead wager sitting beside
-        /// every live bet for the whole hand, and settle it long after the moment that decided it.
+        /// Real-table order, and it is what the player is owed: the insurance question was asked a moment ago and this
+        /// is its answer. Leaving the dead stake beside a live bet until the round ends settles it long after the
+        /// moment that decided it, and for a whole hand the felt shows a wager that no longer exists.
         /// </summary>
         private IEnumerator TakeLostInsurance()
         {
             var board = table != null ? table.Board : null;
             if (board?.Seats == null || betStacks == null) yield break;
-            if (DealerHasNatural(board)) yield break;        // insurance WON — the director pays it at settle
+            if (DealerHasNatural(board)) yield break;         // insurance WON — the director pays it at settle
 
             foreach (var seat in board.Seats)
             {
                 var hands = seat?.Player?.Hands;
                 if (hands == null || hands.Count == 0) continue;
                 if (hands[0].Insurance <= 0m) continue;
-                if (betStacks.InsuranceSettled(seat.SeatNumber)) continue;   // already taken (a repeated push)
+                if (betStacks.InsuranceSettled(seat.SeatNumber)) continue;   // a repeated push must not take it twice
 
                 int s = seat.SeatNumber;
                 if (dealer != null) yield return dealer.CollectFromSeat(s, () => TakeInsuranceChips(s));
