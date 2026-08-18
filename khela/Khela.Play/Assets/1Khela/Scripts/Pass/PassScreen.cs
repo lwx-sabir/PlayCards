@@ -456,11 +456,7 @@ namespace PlayCard.Pass
             // ladder, so there is nothing to hang the deferred pass off — refresh this one card's labels directly.
             var labels = card.GetComponentsInChildren<TMP_Text>(true);
             for (int j = 0; j < labels.Length; j++)
-            {
-                if (labels[j] == null) continue;
-                IsolateFontMaterial(labels[j]);   // a card swapped in later needs the same isolation
-                labels[j].ForceMeshUpdate();
-            }
+                if (labels[j] != null) labels[j].ForceMeshUpdate();
 
             cards[index] = card;
             if (index < prefabs.Count) prefabs[index] = wanted;
@@ -740,11 +736,7 @@ namespace PlayCard.Pass
 
             var labels = content.GetComponentsInChildren<TMP_Text>(true);
             for (int i = 0; i < labels.Length; i++)
-            {
-                if (labels[i] == null) continue;
-                IsolateFontMaterial(labels[i]);
-                labels[i].ForceMeshUpdate();
-            }
+                if (labels[i] != null) labels[i].ForceMeshUpdate();
 
             ReportTextState(labels);
         }
@@ -771,98 +763,6 @@ namespace PlayCard.Pass
                       $"{nodesWithText}/{_state?.Nodes?.Count ?? 0} nodes have FreeText from the server " +
                       $"(e.g. day 1 = '{_state?.Nodes?.FirstOrDefault()?.FreeText}'). " +
                       "Blank cards WITH strings here means it's rendering, not data.");
-
-            DumpRenderState(labels);
-        }
-
-        /// <summary>
-        /// Dump everything that can make a TMP label invisible while its string is correct, for ONE representative
-        /// card label — and for a header label as the control, since that one demonstrably works on the same device.
-        ///
-        /// Comparing the two answers the question no amount of reasoning has: what is different about the label that
-        /// doesn't draw. Font asset, material, shader, atlas texture, cull flag, alpha and mesh are the entire list of
-        /// things that can be wrong once the text is known to be present.
-        /// </summary>
-        private void DumpRenderState(TMP_Text[] labels)
-        {
-            TMP_Text sample = null;
-            for (int i = 0; i < labels.Length && sample == null; i++)
-                if (labels[i] != null && !string.IsNullOrEmpty(labels[i].text)) sample = labels[i];
-
-            Debug.Log("[Pass] CARD   " + Describe(sample));
-            Debug.Log("[Pass] HEADER " + Describe(titleText));
-        }
-
-        private static string Describe(TMP_Text t)
-        {
-            if (t == null) return "(none)";
-
-            var mat = t.fontSharedMaterial;
-            var shader = mat != null ? mat.shader : null;
-            var atlas = t.font != null ? t.font.atlasTexture : null;
-            var cr = t.canvasRenderer;
-
-            // The MASK is the other half of the question: which clipper, if any, is over this label.
-            var rectMask = t.GetComponentInParent<RectMask2D>(true);
-            var stencilMask = t.GetComponentInParent<Mask>(true);
-
-            return $"'{t.name}' text='{t.text}' enabled={t.isActiveAndEnabled} " +
-                   $"font='{(t.font != null ? t.font.name : "NULL")}' atlas={(atlas != null ? atlas.name + " " + atlas.width + "x" + atlas.height : "NULL")} " +
-                   $"mat='{(mat != null ? mat.name : "NULL")}' shader='{(shader != null ? shader.name : "NULL")}' " +
-                   $"shaderSupported={(shader != null && shader.isSupported)} " +
-                   $"cull={(cr != null && cr.cull)} crAlpha={(cr != null ? cr.GetAlpha() : -1f):0.##} colorA={t.color.a:0.##} " +
-                   $"chars={t.textInfo?.characterCount ?? -1} verts={(t.mesh != null ? t.mesh.vertexCount : -1)} " +
-                   $"size={t.rectTransform.rect.width:0}x{t.rectTransform.rect.height:0} " +
-                   $"rectMask={(rectMask != null ? rectMask.name : "none")} stencilMask={(stencilMask != null ? stencilMask.name : "none")} " +
-                   // WHERE the label is versus WHERE the mask clips. Everything else is eliminated, so if the label's
-                   // world rect sits inside the mask's and it still doesn't draw, clipping is exonerated too.
-                   $"labelRect={Fmt(WorldRect(t.rectTransform))} " +
-                   $"maskRect={(rectMask != null ? Fmt(WorldRect(rectMask.rectTransform)) : "n/a")} " +
-                   // The material TMP actually RENDERS with. Masking makes it create an instance, and a difference
-                   // between this and fontSharedMaterial is exactly what we're hunting.
-                   $"renderMat='{(t.canvasRenderer.GetMaterial() != null ? t.canvasRenderer.GetMaterial().name : "NULL")}' " +
-                   $"matCount={t.canvasRenderer.materialCount}";
-        }
-
-        private static string Fmt(Rect r) => $"x[{r.xMin:0}..{r.xMax:0}]y[{r.yMin:0}..{r.yMax:0}]";
-
-        /// <summary>
-        /// Give the labels INSIDE the scroll view their own copy of the font material.
-        ///
-        /// A RectMask2D writes its clip rect onto the material of everything it clips. These fonts render through
-        /// TMP's BITMAP shader, where the label uses the shared material asset directly rather than a per-mask
-        /// instance (the device log confirmed it: matCount=1, renderMat == the shared asset). The very same material
-        /// is on the header, which no mask clips — so two clippers write one piece of state and the masked text loses
-        /// it. That is why every card was blank on device while the header, on the identical material, drew fine.
-        ///
-        /// ONE copy per source material, shared by every label in the ladder: the isolation is between masked and
-        /// unmasked text, not between individual labels, so batching is preserved. Doing it here rather than as a
-        /// Material Preset asset keeps it working for any prefab that gets added later, with nothing to remember.
-        /// </summary>
-        private void IsolateFontMaterial(TMP_Text label)
-        {
-            var shared = label.fontSharedMaterial;
-            if (shared == null) return;
-
-            foreach (var mine in _maskedFontMaterials)
-                if (mine.Value == shared) return;   // already one of ours
-
-            if (!_maskedFontMaterials.TryGetValue(shared, out var copy) || copy == null)
-            {
-                copy = new Material(shared) { name = shared.name + " (Pass, masked)" };
-                _maskedFontMaterials[shared] = copy;
-            }
-            label.fontSharedMaterial = copy;
-        }
-
-        private readonly Dictionary<Material, Material> _maskedFontMaterials = new Dictionary<Material, Material>();
-
-        private void OnDestroy()
-        {
-            // Runtime-created materials are not collected with the object that referenced them.
-            foreach (var copy in _maskedFontMaterials.Values)
-                if (copy != null) Destroy(copy);
-            _maskedFontMaterials.Clear();
         }
 
         private static void ForceRebuild(RectTransform target)
