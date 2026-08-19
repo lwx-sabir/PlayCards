@@ -4,6 +4,7 @@ using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Services.Chat;
 using Khela.Game.Services.Friends;
+using Khela.Game.Services.Identity;
 using Khela.Game.Services.Presence;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,10 @@ namespace Khela.Game.Services.Profile
 
         /// <summary>Another player's PUBLIC profile. Null if not found OR blocked in either direction.</summary>
         Task<PublicProfileDto> GetPublicProfileAsync(Guid viewerId, Guid targetId);
+
+        /// <summary>Find a player by their case-insensitive Player ID and return their PUBLIC profile. Null if no
+        /// such id, or blocked. Reuses the same block-aware public view as <see cref="GetPublicProfileAsync"/>.</summary>
+        Task<PublicProfileDto> GetByPlayerIdAsync(Guid viewerId, string playerId);
 
         /// <summary>Edit the caller's profile (moderated names/blurbs, unique name, owned-cosmetics gate).</summary>
         Task<(bool ok, string error)> UpdateAsync(Guid userId, UpdateProfileRequest req);
@@ -59,6 +64,7 @@ namespace Khela.Game.Services.Profile
             return new MyProfileDto
             {
                 UserId = userId.ToString(),
+                PlayerId = p.PublicId,
                 DisplayName = p.DisplayName,
                 AvatarId = p.AvatarId,
                 AvatarFrameId = p.AvatarFrameId,
@@ -107,6 +113,7 @@ namespace Khela.Game.Services.Profile
             return new PublicProfileDto
             {
                 UserId = targetId.ToString(),
+                PlayerId = p.PublicId,
                 DisplayName = p.DisplayName,
                 AvatarId = p.AvatarId,
                 AvatarFrameId = p.AvatarFrameId,
@@ -127,6 +134,18 @@ namespace Khela.Game.Services.Profile
                 PerGame = perGame,
                 LinkedSocials = await PublicSocialsAsync(targetId),
             };
+        }
+
+        public async Task<PublicProfileDto> GetByPlayerIdAsync(Guid viewerId, string playerId)
+        {
+            var code = PublicPlayerId.Normalize(playerId);
+            if (code == null) return null;
+            var targetId = await _db.UserProfiles.AsNoTracking()
+                .Where(p => p.PublicId == code)
+                .Select(p => (Guid?)p.UserId)
+                .FirstOrDefaultAsync();
+            if (targetId == null) return null;
+            return await GetPublicProfileAsync(viewerId, targetId.Value);   // reuse the block-aware public view
         }
 
         public async Task<(bool ok, string error)> UpdateAsync(Guid userId, UpdateProfileRequest req)
@@ -150,6 +169,7 @@ namespace Khela.Game.Services.Profile
                 p = new UserProfile
                 {
                     UserId = userId,
+                    PublicId = await PublicPlayerId.AllocateAsync(_db),   // permanent player id, unique
                     DisplayName = seed,
                     DisplayNameNormalized = seed.ToUpperInvariant(),
                     Region = region

@@ -16,6 +16,7 @@ namespace Khela.Game.Database.Models
     [Index(nameof(DisplayNameNormalized), IsUnique = true)] // unique case-folded display name
     [Index(nameof(Region))]                                 // regional board membership scans
     [Index(nameof(VipTier))]                                // VIP filters / ops dashboards
+    [Index(nameof(PublicId), IsUnique = true)]              // public "Player ID" — permanent + globally unique + searchable
     public class UserProfile
     {
         [Key]
@@ -26,6 +27,16 @@ namespace Khela.Game.Database.Models
         public Guid UserId { get; set; }
 
         // ---- In-game identity (distinct from ApplicationUser contact fields) ----
+
+        /// <summary>
+        /// The public, player-facing "Player ID": 8-char case-insensitive alphanumeric (stored UPPERCASE),
+        /// assigned once at creation and IMMUTABLE — there is deliberately no write path for it. Players use it
+        /// to find each other; unique across all profiles (see the unique index). Nullable only so the column can
+        /// be added to an already-populated table; the app always sets it and a startup backfill fills legacy rows.
+        /// </summary>
+        [MaxLength(8)]
+        public string PublicId { get; set; }
+
         [Required, MaxLength(32)]
         public string DisplayName { get; set; }
 

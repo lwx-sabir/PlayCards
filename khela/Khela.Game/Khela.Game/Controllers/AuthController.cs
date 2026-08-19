@@ -3,6 +3,7 @@ using Khela.Game.Database.Models;
 using Khela.Game.Dtos;
 using Khela.Game.Services.Auth;
 using Khela.Game.Services.Chat;
+using Khela.Game.Services.Identity;
 using Khela.Game.Services.Wallet;
 using Khela.Common.Auth;
 using FirebaseAdmin.Auth;
@@ -393,6 +394,7 @@ namespace Khela.Game.Controllers
                     _dbContext.UserProfiles.Add(new UserProfile
                     {
                         UserId = userGuid,
+                        PublicId = await PublicPlayerId.AllocateAsync(_dbContext),   // permanent player id, unique
                         DisplayName = displayName,
                         DisplayNameNormalized = displayName.ToUpperInvariant(),
                         Region = region

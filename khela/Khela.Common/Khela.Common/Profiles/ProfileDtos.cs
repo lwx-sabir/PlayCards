@@ -59,6 +59,8 @@ namespace Khela.Common.Profiles
     public class MyProfileDto
     {
         public string UserId { get; set; } = string.Empty;
+        /// <summary>Public, permanent, searchable "Player ID" (8-char alphanumeric). Never changes.</summary>
+        public string PlayerId { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public string AvatarId { get; set; }
         public string AvatarFrameId { get; set; }
@@ -83,6 +85,8 @@ namespace Khela.Common.Profiles
     public class PublicProfileDto
     {
         public string UserId { get; set; } = string.Empty;
+        /// <summary>Public, permanent, searchable "Player ID" (8-char alphanumeric). Never changes.</summary>
+        public string PlayerId { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public string AvatarId { get; set; }
         public string AvatarFrameId { get; set; }

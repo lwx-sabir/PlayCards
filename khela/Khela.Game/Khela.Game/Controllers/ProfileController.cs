@@ -41,6 +41,16 @@ namespace Khela.Game.Controllers
             return dto == null ? NotFound() : Ok(dto);
         }
 
+        /// <summary>Find a player by their public Player ID (case-insensitive) → their public profile. 404 if none/blocked.</summary>
+        [HttpGet("by-player-id/{playerId}")]
+        public async Task<IActionResult> ByPlayerId(string playerId)
+        {
+            var me = GetUserGuid();
+            if (me == null) return Unauthorized();
+            var dto = await _profiles.GetByPlayerIdAsync(me.Value, playerId);
+            return dto == null ? NotFound() : Ok(dto);
+        }
+
         /// <summary>Edit the caller's profile (DisplayName/Avatar/Frame/Flag/Bio/StatusMessage).</summary>
         [HttpPatch("me")]
         public async Task<IActionResult> Update([FromBody] UpdateProfileRequest req)

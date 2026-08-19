@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Khela.Common.Avatar;
 using Khela.Game.Database;
 using Khela.Game.Services.Avatar;
+using Khela.Game.Services.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -108,6 +109,7 @@ namespace Khela.Game.Controllers
                 var prof = new Database.Models.UserProfile
                 {
                     UserId = userId,
+                    PublicId = await PublicPlayerId.AllocateAsync(_db),   // permanent player id, unique
                     DisplayName = name,
                     DisplayNameNormalized = name.ToUpperInvariant(),
                     Region = region
