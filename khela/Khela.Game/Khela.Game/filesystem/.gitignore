@@ -1,0 +1,4 @@
+# Runtime file store (generated/uploaded assets — icons, avatars, etc.). NOT source.
+# Keep the folder itself in the repo (via this tracked .gitignore) but ignore ALL contents.
+*
+!.gitignore
