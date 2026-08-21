@@ -55,6 +55,7 @@ namespace Khela.Game.Services.Rewards
                     Kind = (int)RewardKind.Currency,
                     Id = currency.ToString(),
                     Amount = txn?.Amount ?? line.Amount,   // the APPLIED delta, not the requested one
+                    Balance = txn?.BalanceAfter ?? 0m,     // computed under the row lock — saves the caller a re-read
                     Images = line.Images,                  // so the collect animation shows the ladder's own art
                 },
             };

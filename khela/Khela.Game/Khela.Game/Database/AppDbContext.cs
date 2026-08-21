@@ -67,5 +67,12 @@ namespace Khela.Game.Database
         public DbSet<PlayerPassClaim> PlayerPassClaims { get; set; }             // the only record of pass progress
         public DbSet<PlayerPassEntitlement> PlayerPassEntitlements { get; set; } // subscription windows (append-only)
         public DbSet<PlayerPassAdUnlock> PlayerPassAdUnlocks { get; set; }       // verified rewarded-ad catch-up credits
+
+        public DbSet<PlayerDailyCycle> PlayerDailyCycles { get; set; }           // which run of the daily ladder a player is on
+        public DbSet<PlayerDailyClaim> PlayerDailyClaims { get; set; }           // the only record of daily-login progress
+        public DbSet<PlayerDailyAdUnlock> PlayerDailyAdUnlocks { get; set; }     // verified rewarded-ad catch-up credits
+
+        public DbSet<PlayerPiggyBank> PlayerPiggyBanks { get; set; }             // the chip pack that fills as you play
+        public DbSet<PiggyBreak> PiggyBreaks { get; set; }                       // every purchased bank — the money audit
     }
 }

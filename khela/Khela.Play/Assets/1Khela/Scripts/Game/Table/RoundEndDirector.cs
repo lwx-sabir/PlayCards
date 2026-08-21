@@ -839,6 +839,13 @@ namespace PlayCard.Game.Table
 
         private void ForceFinish()
         {
+            // Not debug spam — a permanent production warning for a genuine anomaly. Reaching here means a single beat
+            // made no progress for maxHoldSeconds, and the rescue completes every remaining money move INSTANTLY with
+            // no animation. From the outside that is indistinguishable from "the dealer just took a long time", which
+            // is why a stall here has been mistaken for slowness more than once. If this line is absent, the sequence
+            // ran to completion and the delay is inside a beat; if it is present, a beat wedged and this says so.
+            Debug.LogWarning($"[RoundEndDirector] FORCE-FINISHED — a beat made no progress for {maxHoldSeconds}s. " +
+                             "The rest of the round-end completes with no animation.");
             // TEMPORARY DIAGNOSTIC. This is the ONE path that cuts a clip mid-gesture and then completes every
             // remaining money move instantly with no animation — exactly the reported symptom — so it needs to say so
             // rather than being inferred. If this does not appear, the sequence ran normally and a beat returned early.

@@ -5,13 +5,35 @@ architecture decisions and the rules most likely to be violated by a well-meanin
 refactor. When in doubt, prefer these rules over convenience.
 
 ## What we're building
-A free-to-play **social casino** game (blackjack first; poker/roulette later) with
-non-cashable in-game chips. Real money comes from in-app purchases. A **separate,
-tradeable token** will later capture a slice of that revenue via buy-and-burn — it
-is NOT the wager chip. The game must be fun and earn on its own; the token comes
-much later. Sequencing: Phase 0 = fun + first paying players; Phase 1 = grow
-revenue; Phase 2 = token. **Write no blockchain/token code until the game earns
-real, growing revenue.** Full strategy + the "why": `docs/PROJECT_PLAN.md`.
+A free-to-play **social casino** with non-cashable in-game chips, built **global from day
+one**. Real money comes from in-app purchases. A **separate, tradeable token** may later
+capture a slice of that revenue via buy-and-burn — it is NOT the wager chip, and **no
+blockchain/token code gets written until the game earns real, growing revenue.**
+
+**The product is the catalog + the live-ops, not any one game.** In this category the
+install decision is made on the game list and the retention systems, not on the card
+engine — the comparison set is Zynga Poker / Huuuge / Pokerist / Slotomania, not small
+single-game blackjack apps. A Home that offers one live table is a broken promise, and
+*"ship blackjack alone and measure"* is **retired** as a plan: nobody installs a large
+single-game blackjack app when small free ones exist and none of it is real money.
+Breadth of catalog and depth of live-ops (pass, daily, piggy, VIP, loyalty, missions,
+chests, social) are the competitive surface.
+
+**Global, not region-first.** Blackjack has no regional pull, and a small single-market
+cohort can't answer the questions that matter. Default English; never hardcode a locale set.
+
+**Download size is a product metric** — the category's entry cost. Watch it per build, not
+as a late optimisation.
+
+**Second trajectory:** the engine is intended to be **licensed to gambling houses (B2B)**,
+so money paths are built to be *certifiable*. Khela itself stays a social casino. That is
+why the wallet/ledger is deliberately over-built for an F2P title — it is not gold-plating.
+
+**The current constraint is finish rate, not scope.** Many systems sit at 85–95%, and an
+unfinished system can't be charged for, shipped, or measured. Close a lane end to end
+before opening the next.
+
+Full strategy + the "why": `docs/PROJECT_PLAN.md`.
 
 ## Architecture
 - `khela/Khela.Game` — ASP.NET Core .NET 8 backend: JWT + Identity,
@@ -74,8 +96,9 @@ real, growing revenue.** Full strategy + the "why": `docs/PROJECT_PLAN.md`.
 - **Games are config-driven.** `GameDefinition` ScriptableObjects (key / displayName / category /
   `available` / branding) + a `GameCatalog` registry, all under `Assets/1Khela/Game/Definitions`. Adding a
   game is a config asset, not code. Only `available` games route; coming-soon games auto-disable Play Now /
-  Lobby. Blackjack is the only built game; the rest (poker, holdem, teenpatti, callbreak, roulette, slots,
-  craps, bingo, sports) are coming-soon placeholders.
+  Lobby. Blackjack, **three-card poker** and **video poker** have engines (the latter two have scaffolded,
+  unfinished clients); the rest (poker, holdem, teenpatti, callbreak, roulette, slots, craps, bingo, sports)
+  are coming-soon placeholders.
 - **Flow:** Home → (**Play Now** = server auto-match by level + open seat | **Lobby** = table browser) →
   Table. The chosen game is carried in `GameSession.SelectedGame`; the Lobby + auto-match filter by it.
 - **Device-guest auth:** email + password are BOTH derived deterministically from
@@ -84,23 +107,26 @@ real, growing revenue.** Full strategy + the "why": `docs/PROJECT_PLAN.md`.
   account then collides ("Email already exists") and the device is permanently locked out.
 
 ## Current state / next steps
-*Updated 2026-06-19. Full status: `docs/PROJECT_PLAN.md` §6; money audit: `docs/DB_AUDIT_2026-06-19.md`.*
-- **Done (server, live + DB-audited):** blackjack engine (hit/stand/double/split/insurance, dealer logic,
-  **3:2 naturals**, casino-standard split — any two 10-value cards split, split aces get one card). SignalR
-  push; JWT/device auth; Redis table state. **Wallet wired end-to-end:** `WalletService` drives
-  **debit-on-bet + credit-gross-on-settle** (idempotent on `CorrelationId`, `SELECT … FOR UPDATE`); players
-  are seated from their real wallet; a **`BlackjackRoundDriver`** (2s tick) auto-stands expired turns +
-  auto-settles. Per-hand settle audit (`GameHandParticipant.HandIndex`), move-by-move `GameHandActions`, and
-  the provably-fair shuffle all persist. Phase-1 **leaderboards / profiles / social / gifts / chat / presence**
-  also built.
-- **Done (client):** blackjack vertical slice **assembled + playable** — Boot → Home (config-driven
-  carousel) → Lobby (table browser) → Table, with device-guest auth, REST action channel + SignalR/polling
-  transport, server-authoritative card rendering, action bar, result banner, and balance HUD.
-- **Next (Phase-0 gate):** **IAP purchase flow + Apple/Google receipt validation → credit Chips** (the
-  "take money" step). Then client polish: **seat-pick** (add `int? SeatNumber` to `JoinTableRequest`),
-  split-hand UI, bet validation, dealing animations, dealer/avatar models, mobile-readable cards, swap
-  polling → Best SignalR. Then ship to a small Bengali/South-Asian audience and measure retention + whether
-  strangers pay.
+*Updated 2026-08-21. Full status: `docs/PROJECT_PLAN.md` §6; money audit: `docs/DB_AUDIT_2026-06-19.md`.*
+- **Server, live:** three engines — **blackjack** (hit/stand/double/split/insurance, 3:2 naturals,
+  casino-standard split, dealer peek, provably-fair shoe + cut card), **three-card poker** (deployed,
+  live-money-smoked), **video poker** (6 variants, `/verify`, hash chain). Money path is real-money-grade:
+  `WalletService` debit-on-bet + credit-gross-on-settle, idempotent on `CorrelationId`, `SELECT … FOR UPDATE`,
+  signed-delta audit, gifted/clean split; ~500 tests. Live-ops built end to end: XP/levels, VIP, loyalty,
+  daily missions, chests, monthly **pass**, **daily-login ladder**, **piggy bank** (accrual + state + admin),
+  reward inbox, leaderboards, profiles, social/gifts/chat/presence. Auth: deterministic device-guest +
+  Firebase social. Admin dashboard (`Khela.Web`) incl. a Testing page and a config export→Redis seed path.
+- **Client:** blackjack assembled + playable (Boot → Home → Lobby → Table) with dealer deal animation,
+  per-seat cameras, card skins, betting/chips, Sonity audio, avatars/wardrobe, post-FX tiers. Pass / daily /
+  piggy screens built on the shared **RewardFly** collect juice.
+- **The backlog is the last mile, not new systems.** Each of these is one lane from being chargeable or
+  shippable: three-card poker client, video poker client, piggy **break endpoint + SKUs**, cosmetics
+  **shop UI**, rewarded-ad **SDK**, the **Kash sink** (1M chips = 1 Kash exchange, unbuilt), VIP IAP spend,
+  world-scene lightmaps (too heavy for mobile), Invector controller (live prefab won't fire).
+- **IAP is integration, not a gate.** The seams exist already (`PlayerPass.Paid`, `PiggyConfig.PriceSku`,
+  dormant VIP spend, `PiggyPanel.BreakRequested`). Four pieces: store + Apple/Google receipt validation →
+  credit Chips; the chip-bundle shop screen; the piggy break SKUs; the rewarded-ad SDK. Item ids follow the
+  SO/Mono id pattern already used in the WGWB project.
 - **Smaller fixes:** remove the doubled `namespace CardGames.Blackjack` in `BlackjackGame.cs`; wire
   `GameHandSnapshot` persistence (schema exists, unwired); `PrevHandHash` round-chaining is unused.
 

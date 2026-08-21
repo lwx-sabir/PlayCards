@@ -63,5 +63,13 @@ namespace Khela.Common.Rewards
         /// <summary>The reward's artwork, back-to-front — same meaning as <see cref="RewardGrant.Images"/>. Lets the
         /// collect animation show the exact art the ladder showed, without a second lookup.</summary>
         public List<string> Images { get; set; }
+
+        /// <summary>
+        /// For a CURRENCY line, the wallet's balance after this credit — the ledger's own BalanceAfter, not a re-read.
+        ///
+        /// The wallet already computed it under the row lock, so carrying it back saves the caller a round trip that
+        /// would only ask the database what it just wrote. 0 for kinds that don't move a wallet.
+        /// </summary>
+        public decimal Balance { get; set; }
     }
 }

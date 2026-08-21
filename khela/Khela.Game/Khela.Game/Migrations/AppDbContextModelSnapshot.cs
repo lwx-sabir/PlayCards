@@ -978,6 +978,204 @@ namespace Khela.Game.Migrations
                     b.ToTable("LoyaltyRedemptions");
                 });
 
+            modelBuilder.Entity("Khela.Game.Database.Models.PiggyBreak", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("BankedAmount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("Granted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<decimal>("Multiplier")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<string>("Option")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("PriceSku")
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<string>("PurchaseId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("varchar(256)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int>("Tier")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PurchaseId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("PiggyBreaks");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyAdUnlock", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("AdTransactionId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CycleKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("Network")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime?>("SpentAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("SpentOnNode")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdTransactionId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "CycleKey");
+
+                    b.ToTable("PlayerDailyAdUnlocks");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyClaim", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("ClaimedOnLocalDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ClaimedOnUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CycleKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<bool>("Granted")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int>("Node")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<bool>("WasAdUnlock")
+                        .HasColumnType("tinyint(1)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CycleKey");
+
+                    b.HasIndex("UserId", "CycleKey", "Node")
+                        .IsUnique();
+
+                    b.ToTable("PlayerDailyClaims");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyCycle", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("CycleIndex")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<DateTime>("StartLocalDate")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("TimeZoneId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("PlayerDailyCycles");
+                });
+
             modelBuilder.Entity("Khela.Game.Database.Models.PlayerDailyMission", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1273,6 +1471,76 @@ namespace Khela.Game.Migrations
                         .IsUnique();
 
                     b.ToTable("PlayerPassEntitlements");
+                });
+
+            modelBuilder.Entity("Khela.Game.Database.Models.PlayerPiggyBank", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime?>("AccrualDateUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<decimal>("AccruedToday")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<int>("BreaksCount")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("CelebratedAmount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("ExpiredCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ExpiresAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<decimal>("LastExpiredAmount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime?>("LastExpiredAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<decimal>("LifetimeAccrued")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<decimal>("MaxAmount")
+                        .HasColumnType("decimal(18,4)");
+
+                    b.Property<DateTime?>("ReadyAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("timestamp(6)");
+
+                    b.Property<DateTime?>("SeenAtUtc")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Tier")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("PlayerPiggyBanks");
                 });
 
             modelBuilder.Entity("Khela.Game.Database.Models.PlayerReward", b =>
@@ -1819,6 +2087,10 @@ namespace Khela.Game.Migrations
                         .HasPrecision(28, 4)
                         .HasColumnType("decimal(28,4)");
 
+                    b.Property<string>("PublicId")
+                        .HasMaxLength(8)
+                        .HasColumnType("varchar(8)");
+
                     b.Property<int>("ReferralCount")
                         .HasColumnType("int");
 
@@ -1869,6 +2141,9 @@ namespace Khela.Game.Migrations
                     b.HasKey("ProfileId");
 
                     b.HasIndex("DisplayNameNormalized")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
                         .IsUnique();
 
                     b.HasIndex("Region");

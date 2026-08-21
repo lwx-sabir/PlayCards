@@ -519,6 +519,7 @@ namespace Khela.Game.Games.ThreeCardPoker
                         await AccrueLoyaltyAsync(uid, cleanWager, roundId);
                         await AccrueMissionsAsync(uid, statCounters, cleanWager, roundId);
                     }
+                    await AccruePiggyAsync(uid, cleanWager, net, roundId);   // own switch — see Piggy:Enabled
                 }
             }
 
@@ -753,6 +754,19 @@ namespace Khela.Game.Games.ThreeCardPoker
                 await loyalty.AccrueForRoundAsync(userId, cleanWager, roundId);
             }
             catch (Exception ex) { _logger.LogError(ex, "3CP loyalty accrual failed for user {UserId} round {RoundId}", userId, roundId); }
+        }
+
+        /// <summary>Banks a share of the round's CLEAN wager into the piggy bank. Idempotent per (round, user).
+        /// Not gated on the progression flag — the piggy has its own switch. Best-effort; never breaks settle.</summary>
+        private async Task AccruePiggyAsync(Guid userId, decimal cleanWager, decimal net, string roundId)
+        {
+            try
+            {
+                using var scope = _scopes.CreateScope();
+                var piggy = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Piggy.IPiggyService>();
+                await piggy.AccrueForRoundAsync(userId, cleanWager, net < 0m ? -net : 0m, roundId);
+            }
+            catch (Exception ex) { _logger.LogError(ex, "3CP piggy accrual failed for user {UserId} round {RoundId}", userId, roundId); }
         }
 
         /// <summary>Advances daily-mission progress from the round's events (round count, clean wager, win). Idempotent

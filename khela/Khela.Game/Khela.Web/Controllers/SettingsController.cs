@@ -53,6 +53,18 @@ namespace Khela.Web.Controllers
             new("Table:DisconnectGraceSeconds", "Disconnect grace (seconds)", "No heartbeat this long ⇒ shown as disconnected.", "1"),
         };
 
+        // The piggy bank (docs/PIGGY_BANK_SPEC.md). Percentages, so Min 0 throughout — every one of these is a knob
+        // that can legitimately be turned off, and the default Min of 1 would make them switches that only turn on.
+        private static readonly SettingDef[] PiggyDefs =
+        {
+            new("Piggy:WagerRatePercent", "Wager banked (%)", "Percent of CLEAN (non-gifted) wager banked per settled round. This is a PACING knob, not an economic one — nothing is minted until a bank is bought — so it sets how often a full piggy appears, not what it costs you.", "1", Min: 0),
+            new("Piggy:LossRatePercent", "Loss banked (%)", "Percent of a losing round's net loss banked. Only used when the mode includes Loss.", "1", Min: 0),
+            new("Piggy:MaxAccrualPerDayPercent", "Daily cap (% of capacity)", "The floor on how fast a bank can fill: 25 means four days minimum whatever the stake. Without it a high roller fills it in one sitting and the offer stops being an event. 0 = uncapped.", "1", Min: 0),
+            new("Piggy:MinBreakPercent", "Buyable at (% full)", "How full the bank must be before it can be bought. 100 = completely full.", "1", Min: 0),
+            new("Piggy:MinFlyAmount", "Celebrate from (chips)", "How much must have gone into the bank since the last celebration before chips FLY into it on the player's return. Below it the bar just fills quietly. Purely presentational — a celebration that fires for every trivial amount stops being one. 0 = always fly.", "1000", Min: 0),
+            new("Piggy:CycleHours", "Window (hours)", "Hours the player has to buy a full bank AFTER they have been shown it. The clock does NOT start when the bank fills — a window that ran while they were offline would take away an offer they were never given. 72 = three days, 168 = a week. 0 = never expires.", "1", Min: 0),
+        };
+
         // Read-only (no live consumer yet).
         private static readonly (string Key, string Label)[] GameReadOnlyDefs =
         {
@@ -114,6 +126,211 @@ namespace Khela.Web.Controllers
             return RedirectToAction(nameof(Index));
         }
 
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SavePiggy()
+        {
+            try
+            {
+                var entries = new List<HashEntry>();
+                foreach (var def in PiggyDefs)
+                {
+                    var raw = Request.Form[def.Key].ToString().Trim();
+                    if (string.IsNullOrEmpty(raw)) continue;
+                    if (!int.TryParse(raw, out var n) || n < def.Min) continue;
+                    entries.Add(new HashEntry(def.Key, n.ToString()));
+                }
+
+                // The two flags and the mode are written unconditionally: an unchecked checkbox posts nothing, so
+                // "absent" has to mean false here or a switch could never be turned back off.
+                entries.Add(new HashEntry("Piggy:Enabled", Request.Form["Piggy:Enabled"].Count > 0 ? "true" : "false"));
+                entries.Add(new HashEntry("Piggy:BypassPurchase", Request.Form["Piggy:BypassPurchase"].Count > 0 ? "true" : "false"));
+
+                var mode = Request.Form["Piggy:Mode"].ToString().Trim();
+                if (mode is "Wager" or "Loss" or "Both") entries.Add(new HashEntry("Piggy:Mode", mode));
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, entries.ToArray());
+
+                TempData["Saved"] = Request.Form["Piggy:BypassPurchase"].Count > 0
+                    ? "Piggy settings saved — ⚠️ BREAK WITHOUT PURCHASE IS ON. Every full bank is free chips; turn it off before this reaches players."
+                    : "Piggy settings saved — live on the next round.";
+            }
+            catch
+            {
+                TempData["Error"] = "Could not reach Redis to save settings.";
+            }
+            return RedirectToAction(nameof(Index));
+        }
+
+        /// <summary>
+        /// Save the piggy tier ladder — add, remove or retune the rungs.
+        ///
+        /// Stored as JSON in the settings hash under <c>Piggy:Tiers</c>, so it travels with the piggy group in an
+        /// export like every other <c>Piggy:</c> key. Rows with no capacity are dropped rather than saved: a bank of
+        /// zero can never fill and never pays, and to a player that reads as broken rather than as mistuned.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SavePiggyTiers()
+        {
+            try
+            {
+                var levels = Request.Form["tierMinLevel"];
+                var amounts = Request.Form["tierMaxAmount"];
+                var skus = Request.Form["tierSku"];
+
+                var tiers = new List<Khela.Game.Services.Piggy.PiggyTier>();
+                for (int i = 0; i < levels.Count && i < amounts.Count; i++)
+                {
+                    if (!decimal.TryParse(amounts[i], NumberStyles.Any, CultureInfo.InvariantCulture, out var max) || max <= 0m)
+                        continue;   // a blank or zero row is how a tier is DELETED
+
+                    int.TryParse(levels[i], out var level);
+                    tiers.Add(new Khela.Game.Services.Piggy.PiggyTier
+                    {
+                        MinLevel = level < 1 ? 1 : level,
+                        MaxAmount = max,
+                        PriceSku = i < skus.Count ? (skus[i] ?? "").Trim() : "",
+                    });
+                }
+
+                if (tiers.Count == 0)
+                {
+                    TempData["Error"] = "Refused: that would leave no tiers at all, and a player with no bank capacity " +
+                                        "sees a feature that looks broken. Keep at least one rung, or clear " +
+                                        "Piggy:Tiers from Redis to fall back to the built-in ladder.";
+                    return RedirectToAction(nameof(Index));
+                }
+
+                tiers.Sort((a, b) => a.MinLevel.CompareTo(b.MinLevel));
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Piggy:Tiers",
+                    Khela.Game.Services.Piggy.PiggyConfig.SerializeTiers(tiers));
+
+                TempData["Saved"] = $"Saved {tiers.Count} tier(s). Note: a player's capacity is SNAPSHOTTED on their " +
+                                    "bank — existing banks keep the size they were opened with until they reset or are " +
+                                    "bought. Use Testing → Empty it to re-read a tier on a test account.";
+            }
+            catch (Exception ex)
+            {
+                TempData["Error"] = $"Could not save tiers: {ex.Message}";
+            }
+
+            return RedirectToAction(nameof(Index));
+        }
+
+        /// <summary>
+        /// Download the selected tuning as a seed file for another environment.
+        ///
+        /// Only what is TICKED goes in, and the receiving server merges rather than replaces — so a partial export can
+        /// never wipe the groups it didn't carry. The game/table knobs are their own group and default OFF: table
+        /// timing is usually environment-specific, and copying it across is how a dev server's shortened timers end up
+        /// somewhere they shouldn't.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> Export()
+        {
+            var groups = Request.Form["groups"].ToString();
+            bool Want(string g) => groups.Contains(g, StringComparison.OrdinalIgnoreCase);
+
+            var settings = new Dictionary<string, string>(StringComparer.Ordinal);
+            var documents = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            try
+            {
+                var db = _redis.GetDatabase();
+
+                // Scalars: read the live hash and keep only the prefixes asked for. Read from REDIS rather than from
+                // config, because what a receiving server needs is what this one is actually running — an appsettings
+                // default it already has is not worth carrying.
+                var all = await db.HashGetAllAsync(SettingsHashKey);
+                foreach (var e in all)
+                {
+                    var key = (string)e.Name;
+                    if (string.IsNullOrEmpty(key)) continue;
+
+                    bool take =
+                        (Want("piggy")       && key.StartsWith("Piggy:", StringComparison.OrdinalIgnoreCase)) ||
+                        (Want("progression") && (key.StartsWith("Progression:", StringComparison.OrdinalIgnoreCase)
+                                              || key.StartsWith("Loyalty:", StringComparison.OrdinalIgnoreCase)
+                                              || key.StartsWith("Vip:", StringComparison.OrdinalIgnoreCase))) ||
+                        (Want("rewards")     && key.StartsWith("Rewards:", StringComparison.OrdinalIgnoreCase)) ||
+                        (Want("game")        && (key.StartsWith("Blackjack:", StringComparison.OrdinalIgnoreCase)
+                                              || key.StartsWith("Table:", StringComparison.OrdinalIgnoreCase)));
+
+                    if (take) settings[key] = (string)e.Value;
+                }
+
+                // Documents: the hand-authored ladders and catalogs, exactly as their catalogs store them.
+                async Task TakeDoc(string group, string redisKey)
+                {
+                    if (!Want(group)) return;
+                    var value = await db.StringGetAsync(redisKey);
+                    if (value.HasValue) documents[redisKey] = (string)value;
+                }
+
+                await TakeDoc("pass", "khela:pass");
+                await TakeDoc("daily", "khela:daily");
+                await TakeDoc("missions", "khela:missions");
+                await TakeDoc("chests", "khela:chests");
+            }
+            catch
+            {
+                TempData["Error"] = "Could not reach Redis to export settings.";
+                return RedirectToAction(nameof(Index));
+            }
+
+            if (settings.Count == 0 && documents.Count == 0)
+            {
+                TempData["Error"] = "Nothing to export — those groups have no live overrides yet. " +
+                                    "A knob only enters Redis once it has been SAVED here; until then the server is " +
+                                    "running its appsettings default, which the target already has.";
+                return RedirectToAction(nameof(Index));
+            }
+
+            var file = new
+            {
+                khelaConfig = 1,
+                exportedAtUtc = DateTime.UtcNow,
+                note = Request.Form["note"].ToString(),
+                settings,
+                documents,
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(file, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+            // SAVE TO DISK, not a download. The admin runs on the same machine as the person using it, so writing the
+            // file straight out sidesteps the browser entirely — and browser downloads from a localhost dev-certificate
+            // site are exactly the kind of thing that fails for reasons that have nothing to do with this feature.
+            if (string.Equals(Request.Form["mode"].ToString(), "save", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var dir = _config["Config:ExportDir"];
+                    if (string.IsNullOrWhiteSpace(dir))
+                        dir = Path.Combine(Directory.GetCurrentDirectory(), "exports");
+
+                    Directory.CreateDirectory(dir);
+                    var full = Path.Combine(dir, "khela-settings.json");
+                    await System.IO.File.WriteAllTextAsync(full, json);
+
+                    TempData["Saved"] = $"Wrote {settings.Count} setting(s) and {documents.Count} document(s) to {full}";
+                }
+                catch (Exception ex)
+                {
+                    TempData["Error"] = $"Could not write the export file: {ex.Message}";
+                }
+                return RedirectToAction(nameof(Index));
+            }
+
+            return File(System.Text.Encoding.UTF8.GetBytes(json), "application/json", "khela-settings.json");
+        }
+
         private SettingsVm BuildModel()
         {
             // Effective value = Redis override (khela:settings) ?? appsettings default — exactly what the engine reads.
@@ -125,6 +342,10 @@ namespace Khela.Web.Controllers
             }
             string Cfg(string key) => string.IsNullOrEmpty(_config[key]) ? "—" : _config[key]!;
 
+            // appsettings writes true/false, a checkbox posts "on". Accept both so a value set by hand — in Redis or
+            // in the config file — round-trips through this page unchanged instead of silently reading as off.
+            static bool Flag(string v) => v is "true" or "True" or "1" or "on";
+
             return new SettingsVm
             {
                 Saved = TempData["Saved"] as string,
@@ -132,6 +353,14 @@ namespace Khela.Web.Controllers
                 Casino = CasinoDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key))).ToList(),
                 Game = GameDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key), d.Min)).ToList(),
                 GameReadOnly = GameReadOnlyDefs.Select(g => new ReadOnlySetting(g.Label, Cfg(g.Key))).ToList(),
+                Piggy = PiggyDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key), d.Min)).ToList(),
+                PiggyEnabled = Flag(Eff("Piggy:Enabled")),
+                PiggyBypassPurchase = Flag(Eff("Piggy:BypassPurchase")),
+                PiggyMode = string.IsNullOrWhiteSpace(Eff("Piggy:Mode")) ? "Wager" : Eff("Piggy:Mode"),
+                // The EFFECTIVE ladder: what the admin authored if it parses, else the built-in one — so the editor
+                // always shows what the server is actually running rather than an empty table.
+                PiggyTiers = Khela.Game.Services.Piggy.PiggyConfig.ParseTiers(
+                    Eff("Piggy:Tiers"), new Khela.Game.Services.Piggy.PiggyConfig().Tiers).ToList(),
             };
         }
     }
@@ -146,6 +375,11 @@ namespace Khela.Web.Controllers
         public List<EditableSetting> Casino { get; set; } = new();
         public List<EditableSetting> Game { get; set; } = new();
         public List<ReadOnlySetting> GameReadOnly { get; set; } = new();
+        public List<EditableSetting> Piggy { get; set; } = new();
+        public bool PiggyEnabled { get; set; }
+        public bool PiggyBypassPurchase { get; set; }
+        public string PiggyMode { get; set; } = "Wager";
+        public List<Khela.Game.Services.Piggy.PiggyTier> PiggyTiers { get; set; } = new();
         public string? Saved { get; set; }
         public string? Error { get; set; }
     }

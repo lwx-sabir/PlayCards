@@ -40,7 +40,7 @@ MonoBehaviour:
       baseExpand: 1
       volumeDecibel: 0
       volumeRatio: 1
-      polyphony: 1
+      polyphony: 6
       soundEventModifier:
         volumeDecibel: 0
         volumeRatio: 1
@@ -91,7 +91,7 @@ MonoBehaviour:
       audioMixerGroup: {fileID: 0}
       soundVolumeGroup: {fileID: 0}
       soundMix: {fileID: 11400000, guid: 99d4bca31e0700343be34c1020b429cb, type: 2}
-      soundPolyGroup: {fileID: 11400000, guid: edb572b7d2d244f49821621541f0f987, type: 2}
+      soundPolyGroup: {fileID: 11400000, guid: 0e5c7a2a449d49f438b9b2c44bbef5c1, type: 2}
       soundPolyGroupPriority: 1
       cooldownTime: 0
       probability: 100

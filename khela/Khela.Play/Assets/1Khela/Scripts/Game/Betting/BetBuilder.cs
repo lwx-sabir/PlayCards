@@ -85,16 +85,61 @@ namespace PlayCard.Game.Betting
 
         public decimal MinBet => table != null && table.Board != null ? table.Board.MinBet : 0m;
         public decimal MaxBet => table != null && table.Board != null ? table.Board.MaxBet : 0m;
-        public decimal Balance => WalletManager.Instance != null ? WalletManager.Instance.Chips : 0m;
 
-        /// <summary>The most a bet may reach: the table max, capped by what the player can afford.</summary>
+        /// <summary>
+        /// Our seat's balance as the SERVER last reported it, or null if the board hasn't seated us yet. This is the
+        /// same number <see cref="PlayCard.UI.TableActionBar"/> gates Double/Split on — reading a different one here
+        /// let the chip rail and the action bar disagree about what the player could afford, and the board's is the
+        /// authoritative one (it is already net of this round's debits).
+        /// </summary>
+        private decimal? BoardBalance
+        {
+            get
+            {
+                var board = table != null ? table.Board : null;
+                int seat = table != null ? table.MySeat : -1;
+                if (board?.Seats == null || seat <= 0) return null;
+                foreach (var s in board.Seats)
+                    if (s != null && s.SeatNumber == seat && s.Player != null) return s.Player.Balance;
+                return null;
+            }
+        }
+
+        public decimal Balance => BoardBalance
+                                  ?? (WalletManager.Instance != null ? WalletManager.Instance.Chips : 0m);
+
+        /// <summary>
+        /// Whether <see cref="Balance"/> is a real figure rather than a stand-in zero. <c>WalletManager.Chips</c> is
+        /// <c>Balances?.Chips ?? 0</c>, so before the first wallet fetch lands it reads 0 — indistinguishable from
+        /// being broke. See <see cref="CanPlace"/> for why that distinction matters.
+        /// </summary>
+        public bool BalanceKnown => BoardBalance.HasValue
+                                    || (WalletManager.Instance != null && WalletManager.Instance.Balances != null);
+
+        /// <summary>The most a bet may reach: the table max, capped by what the player can afford. Reported for
+        /// diagnostics; <see cref="CanPlace"/> does NOT read it, because it cannot express "balance not known yet".</summary>
         public decimal Cap => MaxBet > 0m ? Math.Min(MaxBet, Balance) : Balance;
 
         /// <summary>True once the bet meets the table minimum, so DEAL is allowed.</summary>
         public bool MeetsMinimum => Total > 0m && (MinBet <= 0m || Total >= MinBet);
 
-        /// <summary>True if a chip of this value can still be placed without exceeding the cap.</summary>
-        public bool CanPlace(long chipValue) => chipValue > 0 && Total + chipValue <= Cap;
+        /// <summary>
+        /// True if a chip of this value can still be placed. The table max always applies; the BALANCE check only
+        /// applies once we actually know the balance.
+        ///
+        /// That second clause is the fix for a dead chip rail at the top of a session: until the wallet fetch lands,
+        /// <c>Balance</c> reads 0, so the old <c>Total + chip &lt;= Cap</c> refused EVERY chip — and refused it
+        /// silently, since the chip still animates onto the felt while the total stays 0 and DEAL then does nothing.
+        /// Letting it through costs nothing: the server validates every bet and rejects an unaffordable one, and a
+        /// rejected deal already releases the betting UI.
+        /// </summary>
+        public bool CanPlace(long chipValue)
+        {
+            if (chipValue <= 0) return false;
+            if (MaxBet > 0m && Total + chipValue > MaxBet) return false;
+            if (!BalanceKnown) return true;                       // unknown ⇒ let the server be the judge
+            return Total + chipValue <= Balance;
+        }
 
         // ---- bet mutations (Add is called by ChipDragController on a valid drop; the rest are UnityEvent-friendly) ----
 

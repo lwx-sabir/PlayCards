@@ -14,6 +14,8 @@
 <div class="tabs">
     <button type="button" class="tab active" data-tab="casino">Casino Settings</button>
     <button type="button" class="tab" data-tab="game">Game Settings</button>
+    <button type="button" class="tab" data-tab="piggy">Piggy Bank</button>
+    <button type="button" class="tab" data-tab="transfer">Transfer</button>
 </div>
 
 <div class="tab-panel" data-panel="casino">
@@ -78,8 +80,270 @@
     </div>
 </div>
 
+<div class="tab-panel hidden" data-panel="piggy">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Piggy bank</h3>
+            <span class="badge badge-live">Live · applies next round</span>
+        </div>
+
+        <p class="page-sub" style="margin-top:0">
+            A chip pack whose <strong>unlock is paced by play</strong>: it fills as the player wagers and is released
+            only by paying. Accruing mints nothing, so these rates decide how often a full bank appears — not what it
+            costs you. The bank ladder (capacity per level) lives in code; see <code>docs/PIGGY_BANK_SPEC.md</code>.
+        </p>
+
+        <form asp-controller="Settings" asp-action="SavePiggy" method="post">
+            <div class="setting-list">
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Enabled</div>
+                        <div class="setting-help">Off hides the bank and stops all accrual. Ships off.</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="Piggy:Enabled" value="on" @(Model.PiggyEnabled ? "checked" : "") />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Fills from</div>
+                        <div class="setting-help">
+                            <strong>Wager</strong> banks a share of every stake — predictable, and independent of luck.
+                            <strong>Loss</strong> banks a share of losing rounds, which fills far faster than the house
+                            actually wins and makes fill time a lottery. Wager unless you have a reason.
+                        </div>
+                    </div>
+                    <select class="input setting-input" name="Piggy:Mode">
+                        <option value="Wager" selected="@(Model.PiggyMode == "Wager")">Wager</option>
+                        <option value="Loss" selected="@(Model.PiggyMode == "Loss")">Loss</option>
+                        <option value="Both" selected="@(Model.PiggyMode == "Both")">Both</option>
+                    </select>
+                </div>
+
+                @foreach (var s in Model.Piggy)
+                {
+                    <div class="setting-edit-row2">
+                        <div class="setting-meta">
+                            <div class="setting-label">@s.Label</div>
+                            <div class="setting-help">@s.Help</div>
+                        </div>
+                        <input class="input setting-input" type="number" step="@s.Step" min="@s.Min" name="@s.Key" value="@s.Value" />
+                    </div>
+                }
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">⚠️ Break without purchase (dev)</div>
+                        <div class="setting-help">
+                            Lets a full bank be opened with no verified purchase. <strong>Must be off in production</strong> —
+                            a free break is the one thing that turns this feature into a chip faucet. Same rule as
+                            <code>Rewards:BypassAdForMissedDays</code>.
+                        </div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="Piggy:BypassPurchase" value="on" @(Model.PiggyBypassPurchase ? "checked" : "") />
+                </div>
+            </div>
+
+            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save piggy settings</button></div>
+        </form>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+        <div class="panel-head">
+            <h3>Bank tiers</h3>
+            <span class="badge badge-live">Live · next bank</span>
+        </div>
+
+        <p class="page-sub" style="margin-top:0">
+            How big the bank is, by player level. A player gets the highest rung they qualify for — so higher tiers
+            give a <strong>bigger</strong> bank, never a faster one; speed is the wager rate and the daily cap above.
+        </p>
+        <p class="page-sub">
+            ⚠️ Capacity is <strong>snapshotted onto each player's bank</strong> when it opens. Changing a tier does not
+            resize a bank that already exists — otherwise lowering one would strand players mid-fill and raising one
+            would un-fill banks that were full a second earlier. On a test account use
+            <strong>Testing → Empty it</strong> to pick up a new size.
+        </p>
+
+        <form asp-controller="Settings" asp-action="SavePiggyTiers" method="post">
+            <table class="table" id="tierTable" style="width:100%; margin-top:8px">
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Min level</th>
+                        <th style="text-align:left">Max amount (chips)</th>
+                        <th style="text-align:left">Price SKU (optional)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var tier in Model.PiggyTiers)
+                    {
+                        <tr>
+                            <td><input class="input" type="number" min="1" step="1" name="tierMinLevel" value="@tier.MinLevel" style="width:120px" /></td>
+                            <td><input class="input" type="number" min="0" step="1000" name="tierMaxAmount" value="@tier.MaxAmount" style="width:200px" /></td>
+                            <td><input class="input" type="text" name="tierSku" value="@tier.PriceSku" placeholder="piggy_tier1" style="width:220px" /></td>
+                            <td><button type="button" class="btn" onclick="this.closest('tr').remove()">Remove</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+                <button type="button" class="btn" id="addTier">+ Add tier</button>
+                <button class="btn btn-primary" type="submit">Save tiers</button>
+            </div>
+        </form>
+
+        <p class="page-sub" style="margin-top:14px">
+            A row saved with <strong>no amount</strong> is dropped, which is also how you delete one. Saving an empty
+            table is refused — a bank with no capacity can never fill and reads as broken. To go back to the built-in
+            ladder, delete <code>Piggy:Tiers</code> from Redis.
+        </p>
+    </div>
+</div>
+
+<div class="tab-panel hidden" data-panel="transfer">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Export tuning to another server</h3>
+            <span class="badge badge-plan">file · applied on next start</span>
+        </div>
+
+        <p class="page-sub" style="margin-top:0">
+            Tuning lives in Redis, so none of it travels with a build. Export what you want, drop the file at
+            <code>config/khela-settings.json</code> beside the published API, and the server writes it into its own
+            Redis the next time it starts.
+        </p>
+        <p class="page-sub">
+            It applies <strong>once per file</strong>, not once per boot — the content is hashed and remembered, so a
+            later restart never undoes tuning done live on that server since. It <strong>merges</strong>: only the keys
+            in the file are written, nothing is deleted.
+        </p>
+
+        <form asp-controller="Settings" asp-action="Export" method="post">
+            <div class="setting-list">
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Piggy bank</div>
+                        <div class="setting-help">Rates, daily cap, window, thresholds — every <code>Piggy:</code> knob.</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="piggy" checked />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Monthly pass ladder</div>
+                        <div class="setting-help">The whole authored program — days, rewards, artwork, texts (<code>khela:pass</code>).</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="pass" checked />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Daily login ladder</div>
+                        <div class="setting-help">The 28-day ladder and its rewards (<code>khela:daily</code>).</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="daily" checked />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Missions</div>
+                        <div class="setting-help">The mission catalog (<code>khela:missions</code>).</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="missions" checked />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Chests</div>
+                        <div class="setting-help">The chest catalog (<code>khela:chests</code>).</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="chests" checked />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Progression, VIP &amp; loyalty</div>
+                        <div class="setting-help">XP curve, level rewards, comp rates.</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="progression" />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Reward switches</div>
+                        <div class="setting-help">
+                            <code>Rewards:</code> keys, including <strong>BypassAdForMissedDays</strong>. Off by default:
+                            a testing switch should never travel by accident.
+                        </div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="rewards" />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Game &amp; table timing</div>
+                        <div class="setting-help">
+                            Blackjack and table knobs. Off by default — timers are usually environment-specific, and a
+                            dev server's shortened windows are exactly what you don't want carried.
+                        </div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="game" />
+                </div>
+
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Note</div>
+                        <div class="setting-help">Logged by the receiving server when it applies the file. "piggy pacing, 19 Aug".</div>
+                    </div>
+                    <input class="input setting-input" type="text" name="note" placeholder="what this carries" />
+                </div>
+            </div>
+
+            <div style="margin-top:18px; display:flex; gap:10px; flex-wrap:wrap">
+                <button class="btn btn-primary" type="submit" name="mode" value="download">Download settings file</button>
+                <button class="btn" type="submit" name="mode" value="save">Save to disk</button>
+            </div>
+        </form>
+
+        <p class="page-sub" style="margin-top:18px">
+            Only knobs that have been <strong>saved here</strong> are in Redis — anything still on its appsettings
+            default is not exported, because the target already has that default.
+        </p>
+    </div>
+</div>
+
 @section Scripts {
     <script>
+        (function () {
+            // Add a tier row by cloning the last one and blanking it — cloning keeps the inputs identical to the
+            // server's expectations (same names, same types) without duplicating the markup in JS.
+            var add = document.getElementById('addTier');
+            if (add) {
+                add.addEventListener('click', function () {
+                    var body = document.querySelector('#tierTable tbody');
+                    if (!body) return;
+
+                    var row;
+                    if (body.rows.length > 0) {
+                        row = body.rows[body.rows.length - 1].cloneNode(true);
+                        row.querySelectorAll('input').forEach(function (i) { i.value = ''; });
+                    } else {
+                        row = document.createElement('tr');
+                        row.innerHTML =
+                            '<td><input class="input" type="number" min="1" step="1" name="tierMinLevel" style="width:120px" /></td>' +
+                            '<td><input class="input" type="number" min="0" step="1000" name="tierMaxAmount" style="width:200px" /></td>' +
+                            '<td><input class="input" type="text" name="tierSku" style="width:220px" /></td>' +
+                            '<td><button type="button" class="btn">Remove</button></td>';
+                    }
+
+                    var remove = row.querySelector('button');
+                    if (remove) remove.onclick = function () { row.remove(); };
+
+                    body.appendChild(row);
+                });
+            }
+        })();
+
         (function () {
             var tabs = document.querySelectorAll('.tab');
             var panels = document.querySelectorAll('.tab-panel');

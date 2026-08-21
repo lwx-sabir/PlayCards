@@ -218,12 +218,15 @@ namespace Khela.Game.Services.Pass
         public const int MaxCardLabelLength = 32;
 
         /// <summary>
-        /// ⚠️ TESTING — currently <see cref="CatchUpPolicy.All"/> so every missed day is collectible and the collect
-        /// flow can be exercised without waiting a day per claim. The PRODUCT decision is
-        /// <see cref="CatchUpPolicy.GoldenOrAds"/>; put it back before launch.
-        /// Only the built-in default: an admin config in Redis sets its own policy and overrides this.
+        /// The catch-up policy a fresh deployment runs on: today is free for everyone, a missed day is free for
+        /// subscribers and costs ad views for everyone else, capped per cycle.
+        ///
+        /// Only the built-in default — an admin config in Redis carries its own policy and overrides this. Setting it
+        /// to <see cref="CatchUpPolicy.All"/> makes every missed day collectible for nothing, which is useful for
+        /// exercising the collect flow without waiting a day per claim; it is a chip faucet on a live server, so put
+        /// it back before it ships.
         /// </summary>
-        public const CatchUpPolicy DefaultCatchUp = CatchUpPolicy.All;
+        public const CatchUpPolicy DefaultCatchUp = CatchUpPolicy.GoldenOrAds;
 
         public static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
         {
@@ -366,7 +369,7 @@ namespace Khela.Game.Services.Pass
         /// missed day back with rewarded-ad views, bounded by the per-cycle cap.
         /// </summary>
         public static PassAvailability Availability(PassCycle cycle, DateTime localDate, ISet<int> alreadyClaimed,
-            bool isGolden, int adCatchUpsUsed = 0)
+            bool isGolden, int adCatchUpsUsed = 0, bool bypassAdCatchUp = false)
         {
             var a = new PassAvailability();
             if (cycle == null) return a;
@@ -381,7 +384,10 @@ namespace Khela.Game.Services.Pass
             // Today is always free, subscriber or not.
             if (a.MaxNode >= 1 && Exists(a.MaxNode) && !Claimed(a.MaxNode)) a.Claimable.Add(a.MaxNode);
 
+            // Rewards:BypassAdForMissedDays turns the ad price off wherever one applies (see RewardOptions). It only
+            // ever loosens: a day the calendar hasn't reached is still unreachable, and the golden track is untouched.
             bool freeBackfill = cycle.CatchUp == CatchUpPolicy.All
+                             || (bypassAdCatchUp && cycle.CatchUp == CatchUpPolicy.GoldenOrAds)
                              || (isGolden && (cycle.CatchUp == CatchUpPolicy.GoldenOnly
                                            || cycle.CatchUp == CatchUpPolicy.GoldenOrAds
                                            || cycle.CatchUp == CatchUpPolicy.All));

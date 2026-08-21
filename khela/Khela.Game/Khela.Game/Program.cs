@@ -146,7 +146,24 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
-builder.Services.AddSignalR().AddStackExchangeRedis(
+// Timeouts tuned for MOBILE on a poor link, not the desktop-shaped defaults.
+//
+// The defaults are ClientTimeoutInterval 30s / KeepAliveInterval 15s: the server closes a connection it has not
+// heard from in 30s, while the client pings every ~15s. That leaves room for exactly one missed ping. On a phone
+// where a round-trip is already 1.5-5s and the main thread is busy through the round-end ceremony, two late pings
+// is normal — and the socket was being closed mid-round. The player then loses board pushes AND, because the
+// app-level heartbeat rides the same hub, gets reaped from the seat 30s later.
+//
+// 60s to close: survives three missed pings, so a busy frame or a slow burst no longer costs the connection.
+// 10s keepalive: the server speaks more often, which also lets the CLIENT notice a dead link sooner, and keeps
+// traffic well inside nginx proxy_read_timeout (100s).
+// 30s handshake: the default 15s is tight when a single request on this link can take 5s.
+builder.Services.AddSignalR(o =>
+{
+    o.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
+    o.KeepAliveInterval     = TimeSpan.FromSeconds(10);
+    o.HandshakeTimeout      = TimeSpan.FromSeconds(30);
+}).AddStackExchangeRedis(
     builder.Environment.IsDevelopment()
         ? builder.Configuration.GetConnectionString("RedisConnectionDevelopment")
         : builder.Configuration.GetConnectionString("RedisConnection"));
@@ -220,6 +237,18 @@ switch ((builder.Configuration.GetValue<string>("Ads:Provider") ?? "").Trim().To
 }
 builder.Services.AddScoped<Khela.Game.Services.Pass.IPassAdService, Khela.Game.Services.Pass.PassAdService>();
 
+// Daily login reward: a repeating ladder, one free day per calendar day, missed days bought back with verified ads.
+// Its own module rather than another pass program — it isn't calendar-bound and has no subscription track — but it
+// shares the payout seam, the local-midnight clock and the ad-credit model (docs/DAILY_REWARD_SPEC.md).
+builder.Services.AddScoped<Khela.Game.Services.Daily.IDailyService, Khela.Game.Services.Daily.DailyService>();
+builder.Services.AddScoped<Khela.Game.Services.Piggy.IPiggyService, Khela.Game.Services.Piggy.PiggyService>();
+builder.Services.AddScoped<Khela.Game.Services.Daily.IDailyAdService, Khela.Game.Services.Daily.DailyAdService>();
+
+// One switch, both ladders: Rewards:BypassAdForMissedDays hands missed days over free instead of charging ad views.
+// Bound (not captured) so flipping it in appsettings takes effect without a restart.
+builder.Services.Configure<Khela.Game.Services.Rewards.RewardOptions>(
+    builder.Configuration.GetSection(Khela.Game.Services.Rewards.RewardOptions.Section));
+
 // Config overlays live in Redis, which is a cache, not a backup: snapshot them to disk every few days (and at
 // startup), only when the content changed, never deleting anything. The admin dashboard lists/restores them.
 // Singleton, not scoped: the hosted sweep below is itself a singleton and would fail scope validation at boot
@@ -286,11 +315,52 @@ app.MapHub<BlackjackHub>("/blackjackhub");
 app.MapHub<Khela.Game.Games.ThreeCardPoker.ThreeCardPokerHub>("/threecardhub");
 app.MapHub<ChatHub>("/chathub");
 
+// Config seed: tuning exported from another environment's admin dashboard, applied to THIS Redis.
+//
+// The pass ladder, the daily ladder and the piggy's pacing live in Redis, so none of it travels with a build. Dropping
+// the exported file beside the app lets a deploy carry its tuning; applying it once per FILE CONTENT (not once per
+// boot) means a later restart never undoes tuning done live on this server since.
+using (var cfgScope = app.Services.CreateScope())
+{
+    try
+    {
+        var seedPath = builder.Configuration["Config:SeedFile"];
+        if (string.IsNullOrWhiteSpace(seedPath)) seedPath = "config/khela-settings.json";
+        if (!Path.IsPathRooted(seedPath)) seedPath = Path.Combine(app.Environment.ContentRootPath, seedPath);
+
+        await Khela.Game.Services.Config.ConfigSeeder.ApplyAsync(
+            seedPath,
+            cfgScope.ServiceProvider.GetRequiredService<Khela.Game.Services.Redis.IRedisService>(),
+            app.Logger);
+    }
+    catch (Exception ex) { app.Logger.LogError(ex, "Config seeding failed at startup."); }
+}
+
 // Seed leaderboard definitions + opening season at startup (idempotent; best-effort if the DB is down).
 using (var seedScope = app.Services.CreateScope())
 {
     try { await seedScope.ServiceProvider.GetRequiredService<ILeaderboardService>().SeedAsync(); }
     catch (Exception ex) { app.Logger.LogError(ex, "Leaderboard seeding failed at startup."); }
+}
+
+// Player-ID backfill: every legacy profile gets a permanent, globally-unique public Player ID. One-time and
+// idempotent — only fills NULLs, so a no-op once done. The local reserved-set stops in-batch collisions before save.
+using (var pidScope = app.Services.CreateScope())
+{
+    try
+    {
+        var pidDb = pidScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var missing = await pidDb.UserProfiles.Where(p => p.PublicId == null).ToListAsync();
+        if (missing.Count > 0)
+        {
+            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prof in missing)
+                prof.PublicId = await Khela.Game.Services.Identity.PublicPlayerId.AllocateAsync(pidDb, reserved);
+            await pidDb.SaveChangesAsync();
+            app.Logger.LogInformation("Backfilled Player IDs for {Count} legacy profile(s).", missing.Count);
+        }
+    }
+    catch (Exception ex) { app.Logger.LogError(ex, "Player-ID backfill failed at startup."); }
 }
 
 app.Run();

@@ -1,0 +1,179 @@
+@model Khela.Web.Controllers.TestingVm
+@{
+    ViewData["Title"] = "Testing";
+    ViewData["Crumb"] = "Testing";
+    ViewData["Nav"] = "testing";
+}
+
+<h1 class="page-title">Testing tools</h1>
+<p class="page-sub">Put one player's reward ladders back to a known state. QA only — this deletes claim history.</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved)) { <div class="banner ok">@Model.Saved</div> }
+@if (!string.IsNullOrEmpty(Model.Error)) { <div class="banner err">@Model.Error</div> }
+
+@if (!Model.Enabled)
+{
+    <div class="banner err">
+        <strong>Disabled on this environment.</strong> Set <code>"Testing": { "Enabled": true }</code> in appsettings
+        and restart. The buttons below delete claim history and pass ledger rows, so they stay one deliberate switch
+        away from any environment you care about.
+    </div>
+}
+
+<div class="panel">
+    <div class="panel-head"><h3>Player</h3></div>
+    <form asp-controller="Testing" asp-action="Index" method="get">
+        <div class="setting-edit-row2">
+            <div class="setting-meta">
+                <div class="setting-label">Find</div>
+                <div class="setting-help">User id (GUID), Player ID, or display name.</div>
+            </div>
+            <input class="input setting-input" type="text" name="q" value="@Model.Query" placeholder="KhelaKIng" />
+        </div>
+        <div style="margin-top:14px"><button class="btn btn-primary" type="submit">Look up</button></div>
+    </form>
+</div>
+
+@if (Model.Found)
+{
+    <div class="panel">
+        <div class="panel-head">
+            <h3>@Model.DisplayName</h3>
+            <span class="badge badge-plan">@Model.PublicId · level @Model.Level</span>
+        </div>
+
+        <div class="setting-list">
+            <div class="setting-row">
+                <span class="setting-label">Daily</span>
+                <span class="setting-val">
+                    @if (Model.DailyCycle != null)
+                    {
+                        @($"cycle {Model.DailyCycle} · today is day {Model.DailyDayIndex} of {Model.LadderDays} · {Model.DailyClaims} claimed")
+                    }
+                    else
+                    {
+                        @($"no cycle yet · {Model.DailyClaims} claimed")
+                    }
+                </span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Pass</span>
+                <span class="setting-val">@Model.PassClaims claimed this cycle</span>
+            </div>
+            <div class="setting-row">
+                <span class="setting-label">Piggy</span>
+                <span class="setting-val">
+                    @if (Model.HasPiggy)
+                    {
+                        @($"{Model.PiggyAmount:#,0} / {Model.PiggyMax:#,0} (tier {Model.PiggyTier}) · today {Model.PiggyAccruedToday:#,0}")
+                        @if (Model.PiggyExpiresAtUtc != null) { @($" · expires {Model.PiggyExpiresAtUtc:u}") }
+                        else if (Model.PiggySeenAtUtc == null) { <text> · no countdown (not seen yet)</text> }
+                        @if (Model.PiggyExpiredCount > 0) { @($" · {Model.PiggyExpiredCount} expired") }
+                    }
+                    else { <text>no bank yet — created on the first settled wager</text> }
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head"><h3>Daily reward</h3></div>
+        <p class="page-sub" style="margin-top:0">
+            The ladder only ever offers <strong>one free day</strong> — today's. Everything before it is a missed day,
+            collectable only while <em>missed days are free</em> is on. So "open 10" means today becomes day 10 with
+            days 1–9 unclaimed behind it.
+        </p>
+        <p class="page-sub">
+            The reset also bumps the <strong>cycle</strong>, and that part is not optional: payout keys embed the cycle
+            and the wallet remembers them forever, so clearing claims alone makes every re-claim succeed and pay
+            <em>nothing</em>.
+        </p>
+        <form asp-controller="Testing" asp-action="ResetDaily" method="post">
+            <input type="hidden" name="userId" value="@Model.UserId" />
+            <div class="setting-edit-row2">
+                <div class="setting-meta">
+                    <div class="setting-label">Days to open</div>
+                    <div class="setting-help">1 = only today. @Model.LadderDays = the whole ladder.</div>
+                </div>
+                <input class="input setting-input" type="number" min="1" max="@Model.LadderDays" name="openDays" value="@Model.LadderDays" />
+            </div>
+            <div style="margin-top:14px"><button class="btn btn-primary" type="submit">Reset daily</button></div>
+        </form>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head"><h3>Monthly pass</h3></div>
+        <p class="page-sub" style="margin-top:0">
+            The pass cycle key is the calendar month, so there is no cycle to bump — the only way to make re-claims pay
+            is to <strong>delete the reward ledger rows</strong> holding those idempotency keys. That leaves gaps in
+            this player's wallet history: balances are untouched, but the audit trail no longer reconstructs. QA
+            accounts only.
+        </p>
+        <form asp-controller="Testing" asp-action="ResetPass" method="post">
+            <input type="hidden" name="userId" value="@Model.UserId" />
+            <div style="margin-top:14px"><button class="btn" type="submit">Reset pass (deletes ledger rows)</button></div>
+        </form>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head"><h3>Piggy bank</h3></div>
+        <p class="page-sub" style="margin-top:0">
+            <strong>Fill</strong> puts it at capacity but deliberately does <em>not</em> mark it seen — the countdown
+            has to start when the player is actually shown the full bank, which is the behaviour worth testing.
+            <strong>Clear today's cap</strong> is the answer to "it stopped filling for no reason": the daily cap is
+            almost always why.
+        </p>
+        <form asp-controller="Testing" asp-action="Piggy" method="post">
+            <input type="hidden" name="userId" value="@Model.UserId" />
+            <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+                <button class="btn btn-primary" type="submit" name="mode" value="fill">Fill to full</button>
+                <button class="btn" type="submit" name="mode" value="uncap">Clear today's cap</button>
+                <button class="btn" type="submit" name="mode" value="clear">Empty it</button>
+            </div>
+        </form>
+    </div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Switches</h3>
+        <span class="badge badge-live">Live · next claim</span>
+    </div>
+    <p class="page-sub" style="margin-top:0">
+        Written to Redis, not appsettings, so they apply on the next claim with no restart. Redis wins over appsettings
+        until the field is deleted.
+    </p>
+
+    <form asp-controller="Testing" asp-action="Switches" method="post">
+        <input type="hidden" name="userId" value="@Model.Query" />
+        <div class="setting-list">
+            <div class="setting-edit-row2">
+                <div class="setting-meta">
+                    <div class="setting-label">Missed days are free (no ad required)</div>
+                    <div class="setting-help">
+                        Applies to <strong>both</strong> ladders — pass and daily — on purpose: a build where one charges
+                        and the other doesn't is a bug nobody notices until a player is confused.
+                        @if (!Model.BypassAdsFromRedis)
+                        {
+                            <text><br /><strong>Not set in Redis yet</strong>, so the API is following its own
+                            appsettings and this box may not reflect it. Saving pins the value and takes over.</text>
+                        }
+                    </div>
+                </div>
+                <input class="setting-input" type="checkbox" name="bypassAds" value="on" @(Model.BypassAds ? "checked" : "") />
+            </div>
+
+            <div class="setting-edit-row2">
+                <div class="setting-meta">
+                    <div class="setting-label">⚠️ Piggy: break without purchase</div>
+                    <div class="setting-help">
+                        Opens a full bank with no verified purchase. A free break is the one thing that turns the piggy
+                        into a chip faucet — never leave this on anywhere real.
+                    </div>
+                </div>
+                <input class="setting-input" type="checkbox" name="bypassPurchase" value="on" @(Model.BypassPurchase ? "checked" : "") />
+            </div>
+        </div>
+        <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save switches</button></div>
+    </form>
+</div>

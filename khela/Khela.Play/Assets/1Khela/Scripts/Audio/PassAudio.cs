@@ -70,6 +70,12 @@ namespace PlayCard.Audio
                  "long tail piles up into mush.")]
         [Range(1, 32)][SerializeField] private int landingVoices = 12;
 
+        [Tooltip("Log every landing: whether the event arrived, which SoundEvent matched, which voice it played on, " +
+                 "and whether Sonity's SoundManager is even present. Off by default — turn it on for one run when a " +
+                 "landing sound goes missing, because every step of this chain fails SILENTLY by design and the " +
+                 "symptom is identical whichever one broke.")]
+        [SerializeField] private bool logLandings;
+
         [Serializable]
         public sealed class HitSound
         {
@@ -102,6 +108,9 @@ namespace PlayCard.Audio
                 panel.Opened += OnPanelOpened;
                 panel.Closing += OnPanelClosing;
             }
+
+            // One checkbox lights the whole chain: the flight's own reporting as well as this bank's.
+            if (logLandings) RewardFlyTarget.LogPieces = true;
 
             RewardFlyTarget.BurstStarted += OnBurstStarted;
             RewardFlyTarget.BurstProgress += OnPieceLanded;
@@ -163,11 +172,30 @@ namespace PlayCard.Audio
         private void OnPieceLanded(string rewardId, float progress01)
         {
             var sound = LandingFor(rewardId);
-            if (sound == null) { WarnNoLanding(rewardId); return; }
+            if (sound == null)
+            {
+                if (logLandings) Debug.Log($"[PassAudio] landing '{rewardId}': NO SOUND MATCHED (check the Landings rows)", this);
+                WarnNoLanding(rewardId);
+                return;
+            }
 
             // A DIFFERENT owner per hit. Sharing one would make each chip silence the one before it, which sounds
             // like a single stuttering tick instead of a stream of coins.
-            sound.Play(NextVoice());
+            var voice = NextVoice();
+
+            if (logLandings)
+            {
+                // Every link in the chain, because each one fails silently and they all look the same from outside:
+                // the event may not arrive, the id may not match a row, the voice may be inactive, or Sonity's
+                // manager may be absent — and only the last of those logs anything on its own.
+                bool managerAlive = Sonity.SoundManager.Instance != null;
+                Debug.Log($"[PassAudio] landing '{rewardId}' p={progress01:0.00} sound={sound.name} " +
+                          $"voice={(voice != null ? voice.name : "NULL")} " +
+                          $"voiceActive={(voice != null && voice.gameObject.activeInHierarchy)} " +
+                          $"soundManager={(managerAlive ? "yes" : "MISSING")}", this);
+            }
+
+            sound.Play(voice);
         }
 
         /// <summary>

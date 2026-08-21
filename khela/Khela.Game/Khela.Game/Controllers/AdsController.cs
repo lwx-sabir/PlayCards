@@ -21,8 +21,12 @@ namespace Khela.Game.Controllers
     public class AdsController : ControllerBase
     {
         private readonly IPassAdService _ads;
+        private readonly Services.Daily.IDailyAdService _dailyAds;
 
-        public AdsController(IPassAdService ads) => _ads = ads;
+        public AdsController(IPassAdService ads, Services.Daily.IDailyAdService dailyAds)
+        {
+            _ads = ads; _dailyAds = dailyAds;
+        }
 
         /// <summary>
         /// Rewarded-ad SSV. Networks call this with GET and sign the query string, so the RAW query is what gets
@@ -44,6 +48,29 @@ namespace Khela.Game.Controllers
             };
 
             var (ok, error) = await _ads.CreditAsync(callback, ct);
+            return Ok(new { ok, error });
+        }
+
+        /// <summary>
+        /// The same thing for the DAILY LOGIN ladder.
+        ///
+        /// A separate URL rather than one endpoint that sniffs the token: each ladder is a different ad placement, and
+        /// networks configure the callback per placement anyway. It also means a misconfigured placement fails loudly
+        /// on the wrong ladder instead of silently crediting the other one — the token's scope is checked again inside,
+        /// so even a mixed-up URL cannot credit across ladders.
+        /// </summary>
+        [HttpGet("ssv/daily")]
+        [HttpPost("ssv/daily")]
+        public async Task<IActionResult> SsvDaily(CancellationToken ct)
+        {
+            var raw = Request.QueryString.HasValue ? Request.QueryString.Value : string.Empty;
+            var callback = new AdSsvCallback
+            {
+                RawQuery = raw,
+                Query = AdSsvSigning.ParseQuery(raw),
+            };
+
+            var (ok, error) = await _dailyAds.CreditAsync(callback, ct);
             return Ok(new { ok, error });
         }
     }

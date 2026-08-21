@@ -140,18 +140,57 @@ namespace PlayCard.Game.Net
 
         public Task JoinTableAsync(string tableId)    => Send("JoinTable", tableId);
         public Task LeaveTableAsync(string tableId)   => Send("LeaveTable", tableId);
-        public Task RequestBoardAsync(string tableId) => Send("RequestBoard", tableId);
-        public Task HeartbeatAsync(string tableId)    => Send("Heartbeat", tableId);
 
-        private async Task Send(string method, string tableId)
+        /// <summary>
+        /// Ask for the current board. Falls back to REST while the socket is down.
+        ///
+        /// Send() is a silent no-op when not connected, which is right for fire-and-forget hub chatter and WRONG for
+        /// this: the client asks for a board precisely when it believes it has missed something. During a reconnect it
+        /// would ask, be told nothing, and sit on a stale board — which is a dealer who has already settled server-side
+        /// standing there not revealing until the socket comes back.
+        /// </summary>
+        public async Task RequestBoardAsync(string tableId)
         {
-            if (!_connected || _hub == null) return;
-            try { await _hub.SendAsync(method, tableId); }
+            if (await TrySend("RequestBoard", tableId)) return;
+
+            var res = await BlackjackRestClient.Instance.GetBoardAsync(tableId);
+            if (res.Ok && res.Value != null) OnTableUpdated?.Invoke(res.Value);
+        }
+
+        /// <summary>
+        /// Seated keep-alive. Falls back to REST while the socket is down — and that fallback is the whole point.
+        ///
+        /// A hub Send() while disconnected returns having sent NOTHING and reported nothing, so the caller's 5s loop
+        /// keeps ticking in the belief that the seat is alive while the server hears silence. Its reaper drops the seat
+        /// at Table:StalledTimeoutSeconds (30s), so roughly six quiet ticks into a reconnect the player is removed from
+        /// a table they are still sitting at and still playing. REST is a separate path that keeps working through a
+        /// socket outage, which is exactly the condition this has to survive.
+        /// </summary>
+        public async Task HeartbeatAsync(string tableId)
+        {
+            if (await TrySend("Heartbeat", tableId)) return;
+            await BlackjackRestClient.Instance.HeartbeatAsync(tableId);
+        }
+
+        private Task Send(string method, string tableId) => TrySend(method, tableId);
+
+        /// <summary>
+        /// Send over the hub and SAY whether it actually went. The flag alone is not enough to decide that: a drop is
+        /// discovered by a send THROWING, and _connected only turns false once Best has raised the change and Update
+        /// has processed the queue. In that window a send fails, the exception is swallowed as an expected close, and
+        /// a caller checking only the flag believes it succeeded — which is how the heartbeat went missing while the
+        /// fallback that exists to cover it never ran.
+        /// </summary>
+        private async Task<bool> TrySend(string method, string tableId)
+        {
+            if (!_connected || _hub == null) return false;
+            try { await _hub.SendAsync(method, tableId); return true; }
             catch (Exception ex)
             {
                 // A send that races a closing connection ("Connection closed unexpectedly") is EXPECTED on any drop —
                 // the reconnect policy recovers, so it's not worth a warning. Only surface unexpected send failures.
                 if (!IsExpectedClose(ex)) Debug.LogWarning($"[Hub] {method} failed: {ex.Message}");
+                return false;
             }
         }
 

@@ -408,6 +408,27 @@ namespace Khela.Game.Managers
             }
         }
 
+        /// <summary>
+        /// Banks a share of a settled seat's CLEAN wager into the piggy bank. Idempotent per (round, user).
+        ///
+        /// NOT gated on the progression flag: the piggy has its own switch (Piggy:Enabled) and is a store feature
+        /// rather than a progression one. Best-effort like its neighbours — the wallet has already settled, and
+        /// nothing that fills a bar may endanger that.
+        /// </summary>
+        private async Task AccruePiggyAsync(Guid userId, decimal cleanWager, decimal net, string roundId)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var piggy = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Piggy.IPiggyService>();
+                await piggy.AccrueForRoundAsync(userId, cleanWager, net < 0m ? -net : 0m, roundId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Piggy accrual failed for user {UserId} round {RoundId}", userId, roundId);
+            }
+        }
+
         /// <summary>Advances daily-mission progress for a settled seat from the round's events (round count, clean
         /// wager, hand outcomes from the stat counters). Idempotent per (round, user). Best-effort — never breaks settle.</summary>
         private async Task AccrueMissionsAsync(Guid userId, IReadOnlyDictionary<string, long> statCounters, decimal cleanWager, string roundId)
@@ -425,53 +446,107 @@ namespace Khela.Game.Managers
         }
 
         /// <summary>
+        /// Everything the audit writer needs off the live table, captured while the table lock is still held and
+        /// BEFORE the round teardown runs. The audit row is written after the board has been pushed and after the
+        /// lock is released, so it must never touch the mutable table again: the teardown nulls CurrentRoundId and
+        /// CurrentDeckHash, which are exactly what the row and its ResultChecksum are built from.
+        /// </summary>
+        private sealed class HandAuditSnapshot
+        {
+            public Guid HandId;
+            public string TableId;
+            public string RoundId;
+            public int HandNumber;
+            public DateTime StartedAt;
+            public string ShoeId;
+            public int ShoeCardsDealt;
+            public string MetadataJson;
+            public string ShuffleSeed;
+            public string DeckHash;
+            public string PrevHandHash;
+            public string ResultChecksum;
+            public List<string> DealerCards;
+            public List<GameActionEntry> Actions;
+        }
+
+        /// <summary>
+        /// Captures the settled round's audit record off the live table. PURE with respect to the table — it reads
+        /// and copies, never mutates — so the caller decides when to write the chain link back. Must be called with
+        /// the table lock held and BEFORE the teardown; see <see cref="HandAuditSnapshot"/>.
+        /// </summary>
+        private static HandAuditSnapshot BuildHandAuditSnapshot(BlackjackTable table, string roundId,
+                                                                List<GameHandParticipant> participants)
+        {
+            // Derive from the SHOE nonce, not the round nonce: with a persistent multi-deck shoe one shuffle spans
+            // many rounds, so RoundNonce would record a seed that never produced this hand's cards.
+            //
+            // ShoeNonce 0 means this round was DEALT before the shoe existed — a round in flight across a deploy,
+            // settling on the new build. Those cards came from a RoundNonce-derived shuffle, so record that
+            // instead; otherwise the one hand straddling the upgrade would verify false forever.
+            var seedNonce = table.ShoeNonce > 0 ? table.ShoeNonce : table.RoundNonce;
+            var roundSeed = ProvableShuffle.DeriveSeed(
+                Convert.FromHexString(table.ServerSeed), table.ClientSeed, seedNonce);
+
+            return new HandAuditSnapshot
+            {
+                HandId = Guid.NewGuid(),
+                TableId = table.TableId,
+                RoundId = roundId,
+                HandNumber = (int)table.RoundNonce,
+                StartedAt = table.RoundStartedAt?.UtcDateTime ?? DateTime.UtcNow,
+                ShoeId = string.IsNullOrEmpty(table.ShoeHash) ? table.ServerSeedHash : table.ShoeHash,
+                ShoeCardsDealt = table.ShoeDealtAtRoundStart,   // where in the shoe this hand started
+                // Normally absent. A shoe that had to extend itself mid-round dealt cards BEYOND the shuffle the
+                // recorded hash covers, so replay needs to know to derive those continuation segments too —
+                // otherwise the hand verifies against a shoe that is missing some of its own cards.
+                MetadataJson = (table.Game?.ShoeExtensions ?? 0) > 0
+                    ? JsonSerializer.Serialize(new { shoeExtensions = table.Game.ShoeExtensions, extensionSeedLabel = "shoe-ext" })
+                    : null,
+                ShuffleSeed = Convert.ToHexString(roundSeed).ToLowerInvariant(),
+                DeckHash = table.CurrentDeckHash,
+                // Chain to the previous settled hand on this table (genesis = the published server-seed commitment),
+                // so the per-table sequence of hands is tamper-evident.
+                PrevHandHash = string.IsNullOrEmpty(table.LastHandHash) ? table.ServerSeedHash : table.LastHandHash,
+                ResultChecksum = ComputeResultChecksum(table, participants),
+                // Materialised, not referenced — the table object keeps living, and these collections are rebuilt
+                // by the next round while the deferred writer may still be reading them.
+                DealerCards = table.Game.Dealer.Hand.Cards.Select(ProvableShuffle.Canonical).ToList(),
+                Actions = (table.ActionLog ?? new List<GameActionEntry>()).ToList()
+            };
+        }
+
+        /// <summary>
         /// Persists the settled hand to the audit tables (provably-fair record + per-seat results).
         /// Wrapped so an audit failure can never break gameplay — the round already settled in
-        /// Redis and the wallet.
+        /// Redis and the wallet. Reads ONLY the pre-teardown snapshot, never the live table.
         /// </summary>
-        private async Task PersistHandAsync(BlackjackTable table, string roundId, List<GameHandParticipant> participants)
+        private async Task PersistHandAsync(HandAuditSnapshot snap, List<GameHandParticipant> participants)
         {
             try
             {
-                // Derive from the SHOE nonce, not the round nonce: with a persistent multi-deck shoe one shuffle spans
-                // many rounds, so RoundNonce would record a seed that never produced this hand's cards.
-                //
-                // ShoeNonce 0 means this round was DEALT before the shoe existed — a round in flight across a deploy,
-                // settling on the new build. Those cards came from a RoundNonce-derived shuffle, so record that
-                // instead; otherwise the one hand straddling the upgrade would verify false forever.
-                var seedNonce = table.ShoeNonce > 0 ? table.ShoeNonce : table.RoundNonce;
-                var roundSeed = ProvableShuffle.DeriveSeed(
-                    Convert.FromHexString(table.ServerSeed), table.ClientSeed, seedNonce);
-
                 var header = new GameHandHeader
                 {
-                    TableId = table.TableId,
+                    HandId = snap.HandId,
+                    TableId = snap.TableId,
                     GameType = GameType.Blackjack,
-                    RoundId = roundId,
-                    HandNumber = (int)table.RoundNonce,
-                    StartedAt = table.RoundStartedAt?.UtcDateTime ?? DateTime.UtcNow,
+                    RoundId = snap.RoundId,
+                    HandNumber = snap.HandNumber,
+                    StartedAt = snap.StartedAt,
                     SettledAt = DateTime.UtcNow,
                     Status = HandStatus.Settled,
-                    ShoeId = string.IsNullOrEmpty(table.ShoeHash) ? table.ServerSeedHash : table.ShoeHash,
-                    ShoeCardsDealt = table.ShoeDealtAtRoundStart,   // where in the shoe this hand started
-                    // Normally absent. A shoe that had to extend itself mid-round dealt cards BEYOND the shuffle the
-                    // recorded hash covers, so replay needs to know to derive those continuation segments too —
-                    // otherwise the hand verifies against a shoe that is missing some of its own cards.
-                    MetadataJson = (table.Game?.ShoeExtensions ?? 0) > 0
-                        ? JsonSerializer.Serialize(new { shoeExtensions = table.Game.ShoeExtensions, extensionSeedLabel = "shoe-ext" })
-                        : null,
-                    ShuffleSeed = Convert.ToHexString(roundSeed).ToLowerInvariant(),
-                    DeckHash = table.CurrentDeckHash,
-                    // Chain to the previous settled hand on this table (genesis = the published server-seed commitment),
-                    // so the per-table sequence of hands is tamper-evident.
-                    PrevHandHash = string.IsNullOrEmpty(table.LastHandHash) ? table.ServerSeedHash : table.LastHandHash,
-                    ResultChecksum = ComputeResultChecksum(table, participants)
+                    ShoeId = snap.ShoeId,
+                    ShoeCardsDealt = snap.ShoeCardsDealt,
+                    MetadataJson = snap.MetadataJson,
+                    ShuffleSeed = snap.ShuffleSeed,
+                    DeckHash = snap.DeckHash,
+                    PrevHandHash = snap.PrevHandHash,
+                    ResultChecksum = snap.ResultChecksum
                 };
 
                 foreach (var p in participants) p.HandId = header.HandId;
 
                 // Flush the buffered move-by-move log → GameHandActions, stamped with this round's HandId.
-                var actions = (table.ActionLog ?? new List<GameActionEntry>()).Select(a => new GameHandAction
+                var actions = snap.Actions.Select(a => new GameHandAction
                 {
                     HandId = header.HandId,
                     UserId = Guid.TryParse(a.UserId, out var au) ? au : (Guid?)null,
@@ -489,11 +564,11 @@ namespace Khela.Game.Managers
                 // reconstructable beyond the checksum — completes the provably-fair audit record.
                 var snapshotJson = JsonSerializer.Serialize(new
                 {
-                    roundId,
+                    roundId = snap.RoundId,
                     handNumber = header.HandNumber,
                     prevHandHash = header.PrevHandHash,
                     deckHash = header.DeckHash,
-                    dealer = table.Game.Dealer.Hand.Cards.Select(ProvableShuffle.Canonical),
+                    dealer = snap.DealerCards,
                     seats = participants.Where(p => p.HandIndex >= 0).Select(p => new
                     {
                         p.SeatNumber, p.HandIndex, p.Bet, p.InsuranceBet, p.Payout,
@@ -512,13 +587,13 @@ namespace Khela.Game.Managers
                     SnapshotHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(snapshotJson))).ToLowerInvariant()
                 });
                 await db.SaveChangesAsync();
-
-                table.LastHandId = header.HandId.ToString(); // surfaced in the board for one-click verify
-                table.LastHandHash = header.ResultChecksum;  // the next hand chains its PrevHandHash to this one
+                // table.LastHandId / LastHandHash are assigned by the CALLER, inside the lock, off this same
+                // snapshot. Assigning them here would mutate a table that has already been saved and released —
+                // the chain link would never persist and every hand would re-chain to the genesis commitment.
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to persist blackjack hand audit for table {TableId} round {RoundId}", table.TableId, roundId);
+                logger.LogError(ex, "Failed to persist blackjack hand audit for table {TableId} round {RoundId}", snap.TableId, snap.RoundId);
             }
         }
 
@@ -656,9 +731,10 @@ namespace Khela.Game.Managers
         // concurrent mutations (or the round-driver racing a player action) would clobber each other
         // (last-write-wins). A short distributed lock per table serialises all mutations across instances.
 
-        // 30s comfortably exceeds the worst-case settle latency (N per-seat wallet credits + retries + the
-        // audit SaveChanges), so the lock can't lapse mid-settle on a slow-but-alive run and re-open the
-        // table-blob race; a crashed holder still self-releases within 30s.
+        // 30s comfortably exceeds the worst-case settle latency (N per-seat wallet credits + retries), so the lock
+        // can't lapse mid-settle on a slow-but-alive run and re-open the table-blob race; a crashed holder still
+        // self-releases within 30s. The audit + progression writes no longer count against this budget — they run
+        // after the lock is released (see SettleInternalAsync's deferred accounting).
         private static readonly TimeSpan TableLockTtl = TimeSpan.FromSeconds(30);
         private const int TableLockRetries = 100;                       // * 50ms = up to ~5s wait under contention
         private static readonly TimeSpan TableLockRetryDelay = TimeSpan.FromMilliseconds(50);
@@ -1799,29 +1875,49 @@ namespace Khela.Game.Managers
 
         public async Task<BlackjackTable?> DealerPlayAndSettleAsync(string tableId, string userId)
         {
-            await using var _tableLock = await LockTableAsync(tableId);
+            // NOT `await using`: the lock is released EXPLICITLY below, before the post-settle accounting runs.
+            // That accounting is per-user and touches no table state, so holding a table lock across it only blocks
+            // this table's next bet for the duration of several database round-trips.
+            var _tableLock = await LockTableAsync(tableId);
+            var deferred = new List<Func<Task>>();
+            BlackjackTable? settled = null;
 
-            var table = await GetTableAsync(tableId);
-            if (table == null) return null;
+            try
+            {
+                var table = await GetTableAsync(tableId);
+                if (table == null) return null;
 
-            if (!table.RoundInProgress)
-                throw new InvalidOperationException("Round not in progress.");
+                if (!table.RoundInProgress)
+                    throw new InvalidOperationException("Round not in progress.");
 
-            if (table.InsuranceExpiresAt.HasValue)
-                throw new InvalidOperationException("Insurance is still open; the round isn't ready to settle.");
+                if (table.InsuranceExpiresAt.HasValue)
+                    throw new InvalidOperationException("Insurance is still open; the round isn't ready to settle.");
 
-            // Only a seated player may trigger settle — no unseated user can force-settle/grief a table.
-            if (!table.Seats.Any(s => s.Player != null && s.Player.Id == userId))
-                throw new InvalidOperationException("You are not seated at this table.");
+                // Only a seated player may trigger settle — no unseated user can force-settle/grief a table.
+                if (!table.Seats.Any(s => s.Player != null && s.Player.Id == userId))
+                    throw new InvalidOperationException("You are not seated at this table.");
 
-            // EVERY player hand must be resolved first. CurrentSeatNumber == -1 is the engine's "no live turn left"
-            // sentinel (AdvanceTurn parks it there once GetOrderedHands is exhausted) — the same condition the client
-            // uses to expose the button. Without this a player could call /dealerPlay during ANOTHER seat's turn and
-            // settle the round out from under them: their hand would be scored wherever it stood, with no chance to act.
-            if (table.CurrentSeatNumber != -1)
-                throw new InvalidOperationException("Players are still acting; the round isn't ready to settle.");
+                // EVERY player hand must be resolved first. CurrentSeatNumber == -1 is the engine's "no live turn left"
+                // sentinel (AdvanceTurn parks it there once GetOrderedHands is exhausted) — the same condition the client
+                // uses to expose the button. Without this a player could call /dealerPlay during ANOTHER seat's turn and
+                // settle the round out from under them: their hand would be scored wherever it stood, with no chance to act.
+                if (table.CurrentSeatNumber != -1)
+                    throw new InvalidOperationException("Players are still acting; the round isn't ready to settle.");
 
-            return await SettleInternalAsync(table, tableId);
+                settled = await SettleInternalAsync(table, tableId, deferred);
+            }
+            finally
+            {
+                // ALWAYS — every early return and every guard-throw above must release it too. A leaked table lock
+                // wedges the table for every player until its TTL expires.
+                await _tableLock.DisposeAsync();
+            }
+
+            // OUTSIDE the lock. Per-user bookkeeping — XP, VIP, loyalty, missions, the audit row, the stats roll-up —
+            // that no other operation on this table should have to queue behind. Still awaited, so a failure surfaces
+            // to the caller exactly as it did when it ran inline.
+            foreach (var run in deferred) await run();
+            return settled;
         }
 
         /// <summary>
@@ -1829,7 +1925,15 @@ namespace Khela.Game.Managers
         /// CALLER must already hold the table lock. Shared by the user-triggered DealerPlayAndSettleAsync
         /// (after seat-auth) and by the round-driver (system-triggered, no user).
         /// </summary>
-        private async Task<BlackjackTable> SettleInternalAsync(BlackjackTable table, string tableId)
+        /// <param name="deferred">
+        /// When supplied, the post-push ACCOUNTING (XP/VIP/loyalty/missions, audit row, stats roll-up) is queued here
+        /// instead of being awaited, so the caller can run it AFTER releasing the table lock. None of that work reads
+        /// or writes table state — it is all per-user and separately guarded — so holding a table lock across it only
+        /// blocks the next bet on this table for no benefit. Null keeps the old behaviour: run it inline, still inside
+        /// the lock, which is correct but slower.
+        /// </param>
+        private async Task<BlackjackTable> SettleInternalAsync(BlackjackTable table, string tableId,
+                                                               List<Func<Task>> deferred = null)
         {
             // Single-shot: claim the round so a raced/retried settle can't re-enter (which would
             // double-count stats + leaderboards and insert a duplicate audit row). Auto-expires so a crash
@@ -1876,6 +1980,20 @@ namespace Khela.Game.Managers
             var participants = new List<GameHandParticipant>();
             var statResults = new List<RoundResult>();
             var lastResults = new List<SeatRoundResult>();
+
+            // ---- deferred accounting ------------------------------------------------------------------------
+            // Everything after the wallet credit is BOOKKEEPING: XP, VIP, loyalty, missions, the audit row and the
+            // stats roll-up. None of it changes a balance and none of it is read by the board — but all of it used
+            // to run BEFORE the table was saved, and saving the table is what PUSHES the board. So the round result,
+            // and with it the dealer turning her hole card, waited on ~10 sequential database round-trips that
+            // nobody was waiting for. On a local database that is a millisecond and invisible; on a slow or loaded
+            // one it is the entire delay. Collected here, run after the push.
+            var pendingAccruals = new List<(string Uid, decimal CleanWager, bool Won, decimal Wagered, decimal Net,
+                                            List<HandSettlement> SeatHands)>();
+
+            // The settled round's audit record, captured in the finally below just before the teardown.
+            // Built there, written after the board push — see BuildHandAuditSnapshot for why the timing matters.
+            HandAuditSnapshot auditSnapshot = null;
 
             // Reconcile each player's NET result to the authoritative wallet, sync the mirror, audit it.
             // try/finally guarantees the round always tears down + saves, so one seat's wallet failure
@@ -2068,33 +2186,13 @@ namespace Khela.Game.Managers
                             }
                         }
                     }
-
-                    // Progression XP + the stats roll-up run whether or not the payout credit succeeded — a
-                    // settle_failed seat is still money-healed by reconciliation and it DID play the round.
-                    // Accrual is idempotent + best-effort; stats record games/net regardless. Gated by the flag.
-                    long grantedXp = progressionEnabled
-                        ? await AccrueProgressionAsync(uid, cleanWager, net > 0m, roundId)
-                        : 0L;
-                    var statCounters = BlackjackStatCounters.ForSeat(seatHands);   // game-specific lifetime counters (blackjacks/doubles/busts/…)
-                    statResults.Add(new RoundResult(uid, pre.Wagered, net, cleanWager, grantedXp, statCounters));
-                    // VIP Status Points (flat ×1, never from winnings) — best-effort, idempotent per (round, user).
-                    if (progressionEnabled) await AccrueVipAsync(uid, cleanWager, roundId);
-                    // Loyalty Points (clean wager × VIP multiplier) — best-effort, idempotent per (round, user).
-                    if (progressionEnabled) await AccrueLoyaltyAsync(uid, cleanWager, roundId);
-                    // Daily-mission progress (round + clean wager + outcomes) — idempotent per (round, user).
-                    if (progressionEnabled) await AccrueMissionsAsync(uid, statCounters, cleanWager, roundId);
+                    // Progression XP, VIP, loyalty, missions and this seat's stats row are DEFERRED — they run
+                    // after the board has been pushed (see the accounting pass below the finally). Recorded whether
+                    // or not the payout credit succeeded: a settle_failed seat is still money-healed by
+                    // reconciliation and it DID play the round. Order is preserved down there, because the XP grant
+                    // feeds the stats row.
+                    pendingAccruals.Add((uid.ToString(), cleanWager, net > 0m, pre.Wagered, net, seatHands));
                 }
-
-                // The money credits above are idempotent (per-seat :pay key), but PersistHand and RecordStats
-                // are NOT. Each owns its OWN at-most-once guard so a crash between them only re-runs the
-                // UNFINISHED one — under the old single guard, completing the audit then crashing would skip the
-                // retry's stats forever. (Cleaner long-term: a DB unique index on GameHandHeader.RoundId makes
-                // the audit insert idempotent so its guard could be claimed AFTER success instead of before.)
-                var settleRdb = redisService.GetDatabase();
-                if (await settleRdb.StringSetAsync($"bjr:audited:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
-                    await PersistHandAsync(table, roundId, participants);
-                if (await settleRdb.StringSetAsync($"bjr:stats:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
-                    await RecordStatsAsync(statResults);
             }
             finally
             {
@@ -2115,6 +2213,32 @@ namespace Khela.Game.Managers
                     await redisService.GetDatabase().StringSetAsync(
                         $"bjr:settled:{settleRoundId}", "1", TimeSpan.FromDays(7));
 
+                // AUDIT SNAPSHOT — taken here: lock still held, teardown not yet run, board not yet pushed. The
+                // audit row itself is several database round-trips that the dealer's hole card should not wait on,
+                // so it is written afterwards — but the values it is built from are exactly the ones the teardown
+                // destroys (CurrentRoundId, CurrentDeckHash). Read later, the row records a NULL round id and a
+                // ResultChecksum computed over blanks: every hand would then fail /verify, silently.
+                //
+                // Guarded: this is a `finally` whose entire job is to leave the table saved and un-wedged. The
+                // derivation it does (hex-decoding the server seed, hashing the result) used to sit inside
+                // PersistHandAsync's own try/catch; unguarded here, a malformed seed would throw straight past
+                // SaveTableAsync and freeze the table at RoundInProgress=true. A missing audit row is recoverable.
+                try
+                {
+                    auditSnapshot = BuildHandAuditSnapshot(table, roundId, participants);
+
+                    // The provably-fair chain link, written INSIDE the lock so the save below persists it. The next
+                    // hand chains its PrevHandHash to this value; assigning it in the deferred writer instead would
+                    // mutate a table nobody saves again, restarting the chain at the genesis commitment every round.
+                    table.LastHandId   = auditSnapshot.HandId.ToString();   // surfaced in the board for one-click verify
+                    table.LastHandHash = auditSnapshot.ResultChecksum;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to capture hand audit snapshot for table {TableId} round {RoundId}",
+                        tableId, roundId);
+                }
+
                 // Always finish the round so a seat failure can never wedge the table.
                 table.RoundStartBalance?.Clear();
                 table.CurrentRoundId = null;
@@ -2131,6 +2255,45 @@ namespace Khela.Game.Managers
                 ArmBettingWindow(table, afterRound: true);              // bets are open for the next round
                 await SaveTableAsync(tableId, table);
             }
+
+            // ---- ACCOUNTING, after the push -----------------------------------------------------------------
+            // The board has been saved and pushed above, so every client already has the result and the dealer's
+            // card is turning. What follows never changes a balance and is never read by the board; it used to sit
+            // in front of that push and cost the round its entire visible latency.
+            //
+            // Everything here keeps its original ORDER and its original idempotency guards. The XP grant still
+            // feeds the stats row, and the audit and stats keep their separate at-most-once claims so a crash
+            // between them only re-runs the unfinished one. Still awaited, not fire-and-forget: the audit row is
+            // the money's paper trail, and its guard is claimed BEFORE the write — dropping the write on a
+            // shutdown would lose the row permanently and block its own retry.
+            // Wrapped so it can either run here (deferred == null, old behaviour) or be handed to the caller to run
+            // once the table lock is released. The body is identical either way — only WHERE it runs changes.
+            async Task RunAccountingAsync()
+            {
+                foreach (var a in pendingAccruals)
+                {
+                    Guid.TryParse(a.Uid, out var auid);
+                    long grantedXp = progressionEnabled
+                        ? await AccrueProgressionAsync(auid, a.CleanWager, a.Won, roundId)
+                        : 0L;
+                    var statCounters = BlackjackStatCounters.ForSeat(a.SeatHands);   // blackjacks/doubles/busts/…
+                    statResults.Add(new RoundResult(auid, a.Wagered, a.Net, a.CleanWager, grantedXp, statCounters));
+                    if (progressionEnabled) await AccrueVipAsync(auid, a.CleanWager, roundId);
+                    if (progressionEnabled) await AccrueLoyaltyAsync(auid, a.CleanWager, roundId);
+                    if (progressionEnabled) await AccrueMissionsAsync(auid, statCounters, a.CleanWager, roundId);
+                    await AccruePiggyAsync(auid, a.CleanWager, a.Net, roundId);   // own switch — see Piggy:Enabled
+                }
+
+                var settleRdb = redisService.GetDatabase();
+                if (auditSnapshot != null && await settleRdb.StringSetAsync($"bjr:audited:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
+                    await PersistHandAsync(auditSnapshot, participants);
+                if (await settleRdb.StringSetAsync($"bjr:stats:{roundId}", "1", TimeSpan.FromHours(1), When.NotExists))
+                    await RecordStatsAsync(statResults);
+            }
+
+            if (deferred != null) deferred.Add(RunAccountingAsync);   // caller runs it once the lock is released
+            else await RunAccountingAsync();                          // no opt-in → unchanged behaviour
+
             return table;
         }
 
@@ -2276,112 +2439,124 @@ namespace Khela.Game.Managers
             bool allBetDue = !peek.RoundInProgress && AllSeatedActivelyBet(peek);
             if (!peek.RoundInProgress && !bettingDue && !allBetDue && !AnySeatNeedsSweep(peek)) return;
 
-            await using var _tableLock = await LockTableAsync(tableId);
+            // The locked section is scoped into a local function so the lock is released at its closing brace —
+            // every early return inside it releases too — and the post-settle accounting below runs OUTSIDE it.
+            // That accounting is per-user (XP/VIP/loyalty/missions/audit/stats) and touches no table state, so
+            // holding a table lock across its database round-trips only blocks this table's next bet.
+            var deferred = new List<Func<Task>>();
+            await DriveLockedAsync();
+            foreach (var run in deferred) await run();
+            return;
 
-            var table = await GetTableAsync(tableId);       // authoritative re-read under the lock
-            if (table == null) return;
-
-            // STALLED-SEAT SWEEP — runs whether or not a round is in progress, so §5's between-rounds removal
-            // happens here too. Derives IsConnected/IsStalled from heartbeat freshness and frees seats that are
-            // stalled AND money-safe to remove; a stalled in-round player with a live stake is left to the
-            // existing auto-stand → settle and removed on a later tick once the round has ended.
-            var changed = SweepStalledSeats(table);
-
-            // Between rounds the only clock is the BETTING window. When it expires the round starts on whatever bets
-            // are down — nobody has to press Deal, so one player can't hold the table hostage by never starting it.
-            if (!table.RoundInProgress)
+            async Task DriveLockedAsync()
             {
-                // Everyone seated has ACTIVELY bet this window → start the round now instead of waiting out the rest of
-                // it. The last player to press Deal usually triggers this via DealAsync; this backstops the case where
-                // the final bet came in without a deal tap (or a stalled seat was just swept, unblocking all-bet).
-                if (AllSeatedActivelyBet(table))
-                {
-                    try { await DealCoreAsync(table, tableId); }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "All-bet auto-deal failed on table {TableId}", tableId);
-                        DisarmAfterFailedDeal(table);   // clear BetThisWindow + re-arm, or all-bet re-fires every tick
-                        await SaveTableAsync(tableId, table);
-                    }
-                    return;
-                }
+                await using var _tableLock = await LockTableAsync(tableId);
 
-                if (table.BettingExpiresAt.HasValue && DateTimeOffset.UtcNow >= table.BettingExpiresAt.Value)
-                {
-                    // The window closed. Tally who bet: reset the idle counter for every funded seat, increment it for
-                    // every seat that sat this window out, and EVICT any seat that has now missed too many in a row.
-                    // This is the anti-squat rule the heartbeat reaper can't provide (a connected client pings forever).
-                    changed |= SweepIdleBettors(table);
+                var table = await GetTableAsync(tableId);       // authoritative re-read under the lock
+                if (table == null) return;
 
-                    // No funded bet ⇒ nothing to deal. Keep the window CYCLING while players are still seated so their
-                    // idle counters keep climbing toward eviction; go fully idle only once the table has emptied.
-                    if (!table.Game.Players.Any(p => p.Hands.Count > 0 && p.Hands[0].Bet > 0))
+                // STALLED-SEAT SWEEP — runs whether or not a round is in progress, so §5's between-rounds removal
+                // happens here too. Derives IsConnected/IsStalled from heartbeat freshness and frees seats that are
+                // stalled AND money-safe to remove; a stalled in-round player with a live stake is left to the
+                // existing auto-stand → settle and removed on a later tick once the round has ended.
+                var changed = SweepStalledSeats(table);
+
+                // Between rounds the only clock is the BETTING window. When it expires the round starts on whatever bets
+                // are down — nobody has to press Deal, so one player can't hold the table hostage by never starting it.
+                if (!table.RoundInProgress)
+                {
+                    // Everyone seated has ACTIVELY bet this window → start the round now instead of waiting out the rest of
+                    // it. The last player to press Deal usually triggers this via DealAsync; this backstops the case where
+                    // the final bet came in without a deal tap (or a stalled seat was just swept, unblocking all-bet).
+                    if (AllSeatedActivelyBet(table))
                     {
-                        table.BettingDurationSeconds = bettingDurationSeconds;
-                        table.MaxIdleBettingWindows = maxIdleBettingWindows;
-                        table.BettingExpiresAt = null;                 // clear so ArmBettingWindow re-stamps a fresh window
-                        ArmBettingWindow(table, afterRound: false);    // stays null if no seated players remain
-                        await SaveTableAsync(tableId, table);
+                        try { await DealCoreAsync(table, tableId); }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "All-bet auto-deal failed on table {TableId}", tableId);
+                            DisarmAfterFailedDeal(table);   // clear BetThisWindow + re-arm, or all-bet re-fires every tick
+                            await SaveTableAsync(tableId, table);
+                        }
                         return;
                     }
 
-                    // DealCore saves on success and refunds every reserved stake on failure. A throw here must not
-                    // escape into the driver loop (it would skip the remaining tables), and it must not leave the
-                    // window armed either — that would retry the deal every tick.
-                    try { await DealCoreAsync(table, tableId); }
-                    catch (Exception ex)
+                    if (table.BettingExpiresAt.HasValue && DateTimeOffset.UtcNow >= table.BettingExpiresAt.Value)
                     {
-                        logger.LogWarning(ex, "Auto-deal at betting-window expiry failed on table {TableId}", tableId);
-                        DisarmAfterFailedDeal(table);   // clear BetThisWindow + re-arm so a persistent failure can't loop
-                        await SaveTableAsync(tableId, table);
+                        // The window closed. Tally who bet: reset the idle counter for every funded seat, increment it for
+                        // every seat that sat this window out, and EVICT any seat that has now missed too many in a row.
+                        // This is the anti-squat rule the heartbeat reaper can't provide (a connected client pings forever).
+                        changed |= SweepIdleBettors(table);
+
+                        // No funded bet ⇒ nothing to deal. Keep the window CYCLING while players are still seated so their
+                        // idle counters keep climbing toward eviction; go fully idle only once the table has emptied.
+                        if (!table.Game.Players.Any(p => p.Hands.Count > 0 && p.Hands[0].Bet > 0))
+                        {
+                            table.BettingDurationSeconds = bettingDurationSeconds;
+                            table.MaxIdleBettingWindows = maxIdleBettingWindows;
+                            table.BettingExpiresAt = null;                 // clear so ArmBettingWindow re-stamps a fresh window
+                            ArmBettingWindow(table, afterRound: false);    // stays null if no seated players remain
+                            await SaveTableAsync(tableId, table);
+                            return;
+                        }
+
+                        // DealCore saves on success and refunds every reserved stake on failure. A throw here must not
+                        // escape into the driver loop (it would skip the remaining tables), and it must not leave the
+                        // window armed either — that would retry the deal every tick.
+                        try { await DealCoreAsync(table, tableId); }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "Auto-deal at betting-window expiry failed on table {TableId}", tableId);
+                            DisarmAfterFailedDeal(table);   // clear BetThisWindow + re-arm so a persistent failure can't loop
+                            await SaveTableAsync(tableId, table);
+                        }
+                        return;
                     }
+
+                    if (changed) await SaveTableAsync(tableId, table);
+                    return;
+                }
+
+                // INSURANCE phase: hold play (and settlement) until its own timer expires or everyone has decided,
+                // THEN start play. This MUST return before the settle-on-(-1) logic below, or the driver would
+                // settle the round during the insurance window (CurrentSeatNumber is -1 here too).
+                if (table.InsuranceExpiresAt.HasValue)
+                {
+                    if (DateTimeOffset.UtcNow >= table.InsuranceExpiresAt.Value || AllInsuranceDecided(table))
+                    {
+                        CloseInsurancePhase(table);   // dealer peek inside: -1 (settle) on dealer BJ, else first turn
+                        if (table.CurrentSeatNumber == -1)
+                        {
+                            await SettleInternalAsync(table, tableId, deferred);  // dealer blackjack → settle now, no player turns
+                            return;
+                        }
+                        await SaveTableAsync(tableId, table);
+                        return;
+                    }
+                    if (changed) await SaveTableAsync(tableId, table);   // insurance window still open — persist any sweep changes
+                    return;
+                }
+
+                // Auto-stand the current player when their turn timer expires — OR when their seat is already flagged
+                // stalled (the sweep above marked them): a known-disconnected player shouldn't hold the table for the
+                // full turn timer. They still settle normally below (their InRound stake is honoured), just sooner.
+                bool currentStalled = table.CurrentSeatNumber > 0
+                    && (table.Seats.FirstOrDefault(s => s.SeatNumber == table.CurrentSeatNumber)?.IsStalled ?? false);
+                if (table.CurrentSeatNumber > 0
+                    && ((table.TurnExpiresAt.HasValue && DateTimeOffset.UtcNow > table.TurnExpiresAt.Value) || currentStalled))
+                {
+                    AutoStand(table);
+                    changed = true;
+                }
+
+                // All player hands resolved → finish the round (dealer plays + settle). SettleInternal saves.
+                if (table.CurrentSeatNumber == -1)
+                {
+                    await SettleInternalAsync(table, tableId, deferred);
                     return;
                 }
 
                 if (changed) await SaveTableAsync(tableId, table);
-                return;
             }
-
-            // INSURANCE phase: hold play (and settlement) until its own timer expires or everyone has decided,
-            // THEN start play. This MUST return before the settle-on-(-1) logic below, or the driver would
-            // settle the round during the insurance window (CurrentSeatNumber is -1 here too).
-            if (table.InsuranceExpiresAt.HasValue)
-            {
-                if (DateTimeOffset.UtcNow >= table.InsuranceExpiresAt.Value || AllInsuranceDecided(table))
-                {
-                    CloseInsurancePhase(table);   // dealer peek inside: -1 (settle) on dealer BJ, else first turn
-                    if (table.CurrentSeatNumber == -1)
-                    {
-                        await SettleInternalAsync(table, tableId);  // dealer blackjack → settle now, no player turns
-                        return;
-                    }
-                    await SaveTableAsync(tableId, table);
-                    return;
-                }
-                if (changed) await SaveTableAsync(tableId, table);   // insurance window still open — persist any sweep changes
-                return;
-            }
-
-            // Auto-stand the current player when their turn timer expires — OR when their seat is already flagged
-            // stalled (the sweep above marked them): a known-disconnected player shouldn't hold the table for the
-            // full turn timer. They still settle normally below (their InRound stake is honoured), just sooner.
-            bool currentStalled = table.CurrentSeatNumber > 0
-                && (table.Seats.FirstOrDefault(s => s.SeatNumber == table.CurrentSeatNumber)?.IsStalled ?? false);
-            if (table.CurrentSeatNumber > 0
-                && ((table.TurnExpiresAt.HasValue && DateTimeOffset.UtcNow > table.TurnExpiresAt.Value) || currentStalled))
-            {
-                AutoStand(table);
-                changed = true;
-            }
-
-            // All player hands resolved → finish the round (dealer plays + settle). SettleInternal saves.
-            if (table.CurrentSeatNumber == -1)
-            {
-                await SettleInternalAsync(table, tableId);
-                return;
-            }
-
-            if (changed) await SaveTableAsync(tableId, table);
         }
 
         /// <summary>The ids of all tables in the lobby index — the round-driver ticks each one.</summary>

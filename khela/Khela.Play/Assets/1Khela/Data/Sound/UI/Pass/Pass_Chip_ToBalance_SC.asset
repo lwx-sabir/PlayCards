@@ -650,11 +650,11 @@ MonoBehaviour:
         m_PostInfinity: 2
         m_RotationOrder: 4
     audioClips:
-    - {fileID: 8300000, guid: bc9814658e84c754e8e10ce139e29ca4, type: 3}
-    - {fileID: 8300000, guid: bd57f90c40450be46b667d6d05650214, type: 3}
-    - {fileID: 8300000, guid: fc3ca84bb52b7f745bfb0e215b331954, type: 3}
-    - {fileID: 8300000, guid: a3587ae96af4d7846b95745e1764ca2f, type: 3}
-    - {fileID: 8300000, guid: 8f0939e9463f6184fb2114f8ed60ed58, type: 3}
+    - {fileID: 8300000, guid: c6d87ad9ccfaa144dab42f160f153137, type: 3}
+    - {fileID: 8300000, guid: f87e793f74142734db64637c829a0a51, type: 3}
+    - {fileID: 8300000, guid: cca421d16b7443447823188471e7a7b4, type: 3}
+    - {fileID: 8300000, guid: 471bafdd1a0ae444992b8de111f0ebd2, type: 3}
+    - {fileID: 8300000, guid: 9578399d02a5ddf4a85f161914341d15, type: 3}
     notes: Notes
   assetGuid: f8151e0893673a64caf240b139de50bb
   assetGuidHash: -1751025436132294263

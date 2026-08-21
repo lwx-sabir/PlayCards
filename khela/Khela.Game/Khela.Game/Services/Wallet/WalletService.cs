@@ -108,25 +108,69 @@ namespace Khela.Game.Services.Wallet
                 throw new InvalidOperationException(
                     $"Currency '{currency}' is not wagerable; only Chips and Coins may be bet or won at a table.");
 
-            // Ensure the wallet row exists before opening the money transaction.
-            var wallet = await GetOrCreateWalletAsync(userId, currency);
-            var walletId = wallet.WalletId;
+            var uid = ParseUserId(userId);
 
-            await using var dbTx = await _db.Database.BeginTransactionAsync();
+            // Was this wallet ALREADY read in this request, before the lock? Asked here, before the locking query runs,
+            // because that query tracks the row itself. Purely local — it costs nothing.
+            bool preTracked = _db.ChangeTracker.Entries<PlayerWallet>()
+                .Any(e => e.Entity != null && e.Entity.UserId == uid && e.Entity.Currency == currency);
 
-            // Pessimistic lock: serialise concurrent writers to this wallet row until commit.
-            var locked = await _db.PlayerWallets
-                .FromSqlInterpolated($"SELECT * FROM `PlayerWallets` WHERE `WalletId` = {walletId} FOR UPDATE")
-                .SingleAsync();
+            // JOIN the caller's transaction when there is one, rather than opening a second.
+            //
+            // A payout is several of these in a row — chips, then Kash, then XP — and a private transaction each costs
+            // a BEGIN and a COMMIT per currency on top of the actual work. Over a link with any latency that is most
+            // of the request. Sharing the caller's transaction also makes the whole payout atomic, which the
+            // reserve-then-grant dance was only approximating. Rows are still flushed here; only the COMMIT moves out,
+            // so a caller cannot lose money by forgetting to save.
+            bool ownsTx = _db.Database.CurrentTransaction == null;
+            var dbTx = ownsTx ? await _db.Database.BeginTransactionAsync() : null;
 
-            // …and then FORCE the freshly-locked values into the entity. The FOR UPDATE above really does take the
-            // row lock, but the wallet was already tracked by GetOrCreateWalletAsync (read BEFORE the lock), and EF's
-            // identity resolution returns that tracked instance and DISCARDS the values the locking query just read.
-            // Without this reload the balance arithmetic runs on a pre-lock snapshot: if another writer committed
-            // while we waited for the lock, we'd compute from a stale balance. The RowVersion token would catch it as
-            // a concurrency exception rather than corruption, but a failed money op is still a failed money op — and
-            // the pessimistic serialisation this method documents would be a fiction.
-            await _db.Entry(locked).ReloadAsync();
+            // Pessimistic lock, taken on (user, currency) — a unique index, so this is one record lock — rather than on
+            // a WalletId read a moment earlier. Reading the row first only to learn its id costs a round trip AND
+            // leaves EF tracking a pre-lock copy, which then has to be reloaded: a second wasted trip before the
+            // balance arithmetic is safe to do.
+            var locked = await LockWalletAsync(uid, currency);
+
+            if (locked == null)
+            {
+                // NO WALLET YET — and creating it inside this transaction would be a trap. Twenty-five first-ever
+                // credits racing each other would each hold a transaction open while queuing on the unique index,
+                // and they time out waiting rather than serialising. So step OUT, create it in its own short
+                // transaction (the index settles the race), and start the money transaction over.
+                if (ownsTx)
+                {
+                    await dbTx.RollbackAsync();
+                    await dbTx.DisposeAsync();
+
+                    await GetOrCreateWalletAsync(userId, currency);
+                    preTracked = true;                     // it is tracked now, so the lock below needs its reload
+
+                    dbTx = await _db.Database.BeginTransactionAsync();
+                }
+                else
+                {
+                    // The caller owns the transaction, so there is no stepping out. Create in place: a caller-scoped
+                    // payout is one player's claim, not a crowd of first-credits racing for the same row.
+                    _db.PlayerWallets.Add(new PlayerWallet { UserId = uid, Currency = currency });
+                    await _db.SaveChangesAsync();
+                    preTracked = true;
+                }
+
+                locked = await LockWalletAsync(uid, currency);
+                if (locked == null)
+                    throw new InvalidOperationException($"Wallet for {currency} could not be created for {userId}.");
+            }
+
+            if (preTracked)
+            {
+                // Something in this request read the wallet before the lock. EF's identity resolution hands back that
+                // pre-lock instance and DISCARDS what the locking query just read, so the arithmetic would run on a
+                // stale balance — if another writer committed while we waited for the lock, we'd compute from the old
+                // one. Only in that case is a reload worth its round trip.
+                await _db.Entry(locked).ReloadAsync();
+            }
+
+            var walletId = locked.WalletId;
 
             // Idempotency check, performed while holding the row lock.
             var existing = await _db.WalletTransactions
@@ -141,7 +185,7 @@ namespace Khela.Game.Services.Wallet
                     throw new InvalidOperationException(
                         $"Correlation id '{correlationId}' was rolled back and cannot be re-used; issue a new id.");
 
-                await dbTx.CommitAsync();
+                if (dbTx != null) await dbTx.CommitAsync();
                 return existing;
             }
 
@@ -194,7 +238,7 @@ namespace Khela.Game.Services.Wallet
             _db.WalletTransactions.Add(txn);
 
             await _db.SaveChangesAsync();
-            await dbTx.CommitAsync();
+            if (dbTx != null) await dbTx.CommitAsync();   // an ambient transaction is the caller's to commit
 
             _logger.LogInformation(
                 "Wallet {WalletId}: {Type} {Amount} {Currency} ({Before} -> {After}) corr={CorrelationId}",
@@ -202,6 +246,12 @@ namespace Khela.Game.Services.Wallet
 
             return txn;
         }
+
+        /// <summary>Take the row lock for one wallet, or null if the player has never held that currency.</summary>
+        private Task<PlayerWallet> LockWalletAsync(Guid uid, CurrencyType currency)
+            => _db.PlayerWallets
+                .FromSqlInterpolated($"SELECT * FROM `PlayerWallets` WHERE `UserId` = {uid} AND `Currency` = {(int)currency} FOR UPDATE")
+                .SingleOrDefaultAsync();
 
         /// <inheritdoc/>
         public async Task<WalletTransaction> RollbackAsync(string userId, CurrencyType currency,

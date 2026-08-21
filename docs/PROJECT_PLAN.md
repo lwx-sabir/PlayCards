@@ -1,6 +1,6 @@
 # Khela World — Master Project Plan
 
-*Owner: Reza · Last updated: 2026-06-26*
+*Owner: Reza · Last updated: 2026-08-21*
 
 This is the full plan and reasoning for the game project. The terse, must-follow
 rules live in `/CLAUDE.md` (read automatically by Claude Code); this document is the
@@ -10,41 +10,77 @@ rules live in `/CLAUDE.md` (read automatically by Claude Code); this document is
 
 ## 1. Vision
 
-A free-to-play **3D social casino wrapped in a virtual life**. Players play casino
-games (blackjack first, then poker / Texas Hold'em, roulette, slots) using
-**non-cashable in-game coins**, and live a light metagame: avatars, apartments they
-furnish, goods, and gifting. Real money comes from **in-app purchases** of coins and
-virtual items. A **separate, revenue-backed token** comes much later.
+A free-to-play **3D social casino**, **global from day one**. Players play casino games
+(blackjack, three-card poker and video poker today; more to follow) using **non-cashable
+in-game chips**, inside a light metagame of avatars, cosmetics and gifting. Real money
+comes from **in-app purchases**. A **separate, revenue-backed token** comes much later.
 
 Two things make this more than "another card app":
-- **The virtual-life metagame** (apartments, goods, gifts) is the retention + spend
-  engine that pure card games lack — proven by the big social-casino and avatar titles.
-- **A regional distribution wedge** (Bengali / South-Asian audience + diaspora) that
-  global incumbents underserve — the one advantage money can't easily buy.
+- **The live-ops + metagame stack** — pass, daily ladder, piggy bank, VIP, loyalty,
+  missions, chests, avatars, cosmetics, gifting — is the retention + spend engine that
+  pure card games lack, and it is the expensive-to-copy part of the product.
+- **A licensable, certifiable engine.** The money path is built to real-money standards
+  (idempotent, pessimistically locked, fully audited, provably fair) with a second
+  trajectory in mind: **licensing the engine to gambling houses (B2B)**. Khela itself
+  stays a social casino. This is why the wallet/ledger is deliberately over-built for an
+  F2P title.
+
+### What this is NOT (both of these were early AI-drafted scaffolding, now retired)
+- **Not region-first.** An earlier draft called for a Bengali / South-Asian wedge.
+  Retired: blackjack has no regional pull, and a small single-market cohort cannot answer
+  the questions that matter. Khela is **global by design** — default English, and the
+  locale set is never hardcoded (`Marketing:Locales`).
+- **Not a single-game app.** *"Ship blackjack, then measure"* is retired too. Nobody
+  installs a large single-game blackjack app when small free ones exist and none of it is
+  real money. In this category the install decision is made on **catalog + live-ops**; the
+  comparison set is Zynga Poker / Huuuge / Pokerist / Slotomania, not the small BJ apps.
+  A Home picker offering one live table is a broken promise.
 
 ### Guiding principle
 The game must be **fun and earn on its own**. The token is fuel bolted on *after* the
 game makes real, growing revenue — never a substitute for a game people want to play.
 
+### Constraints that shape every decision
+- **Download size is a product metric**, not a late optimisation — it is the category's
+  entry cost, and being materially smaller to install than the incumbents is a real
+  acquisition advantage. (It has blown up once already: divergent URP quality tiers
+  exploded the shader-variant superset, 453MB → 1.1GB.)
+- **Finish rate, not scope, is the current constraint.** Many systems sit at 85–95%. An
+  unfinished system cannot be charged for, shipped, or measured, so build velocity is
+  currently converting at roughly half efficiency. Close a lane end to end before opening
+  the next.
+
 ---
 
 ## 2. Sequencing (do not skip ahead)
 
-**Phase 0 — Fun + first paying players.** One casino game (blackjack) with a complete,
-server-authoritative play loop wired to the coin wallet, plus the IAP purchase flow.
-Decisive question: *will strangers pay real money to keep playing?* No virtual-life
-system yet, no blockchain.
+The old *"Phase 0 = one game + IAP, then ship and measure"* is retired for the reasons in
+§1. What replaces it is sequenced by **depth of finish**, not breadth of scope — because
+the scope is largely already built and the shortfall is that too much of it stops at 90%.
 
-**Phase 1 — Grow revenue.** Add games (poker, roulette, slots), retention features, and
-the virtual-life metagame (apartments, goods, gifting). Tune monetization. Find a
-user-acquisition channel cheaper than the revenue it brings. This is a normal, legal,
-profitable game business on its own.
+**Stage A — Make it chargeable.** Close the four IAP integration pieces (store +
+Apple/Google receipt validation → credit Chips; the chip-bundle shop screen; the piggy
+break SKUs; the rewarded-ad SDK) and the sinks that give the currency meaning (the Kash
+exchange, 1M chips = 1 Kash, currently unbuilt). The seams exist throughout the codebase
+already — this is integration work against existing contracts, not design work.
 
-**Phase 2 — Token.** Only once revenue is real and growing: launch a separate
-revenue-backed token (see §4). Fair launch, transparent vesting, buy-and-burn from real
-IAP revenue.
+**Stage B — Make the catalog credible.** Finish the clients for engines already built
+(three-card poker, video poker) so Home offers a real list rather than a promise, and
+close the cosmetics shop UI.
+
+**Stage C — Launch globally and tune.** Store listings (§8), a size budget, localisation,
+and a UA channel that costs less than it returns. Calibrate the live-ops economy against
+real players rather than assumptions.
+
+**Stage D — Token.** Only once revenue is real and growing (see §4). Fair launch,
+transparent vesting, buy-and-burn from real IAP revenue.
 
 > **Write no blockchain/token code until the game earns real, growing revenue.**
+
+**Open question, deliberately not decided here:** the catalog today is *all card games*.
+In this category slots is normally the revenue engine — highest ARPDAU and session count —
+while card games carry retention. Video poker is the nearest thing already built and its
+engine is pure and reusable. Whether slots is the next game is Reza's call.
 
 ---
 
@@ -58,7 +94,7 @@ Bought with real money or earned through play/bonuses. Used to wager at tables a
 buy goods/apartments/gifts. **Cannot be withdrawn, traded, or converted to money or to
 the token.** This is what keeps us a legal *social casino*, not real-money gambling.
 
-**$TOKEN — the separate, tradeable, revenue-backed coin (Phase 2+).** A standard ERC-20
+**$TOKEN — the separate, tradeable, revenue-backed coin (Stage D).** A standard ERC-20
 (on Base), traded on a DEX. Its value comes from the game's revenue, **not** from being
 wagered. **Players never win or buy goods with the token at the expense of the wager
 system, and never win the token by gambling.** If a tradeable token could be won at a
@@ -84,13 +120,13 @@ table, we would be running real-money gambling.
 - **Scarcity:** total supply per item is **public** (live counter + serial numbers, e.g. #142/500).
   **Cosmetic-only — never gameplay-affecting** (limits securities exposure). No appreciation promises.
 - **Sequencing:** ship cosmetics **off-chain first** (public counter + serials, same paid-only
-  flow) in Phase 0/1; turn on NFT minting as an **optional later layer** once real demand is
+  flow) now; turn on NFT minting as an **optional later layer** once real demand is
   proven. The purchase flow is identical, so sequencing the chain part later costs nothing.
 - Lawyer review before any on-chain sale; mind Bangladesh crypto restrictions (geo).
 
 ---
 
-## 4. Token model (Phase 2) — buy-and-burn
+## 4. Token model (Stage D) — buy-and-burn
 
 Start with **buy-and-burn**, not staking (lower securities risk, simpler):
 - Commit a fixed, public % of net IAP revenue (e.g. 20%) to a buyback wallet.
@@ -160,7 +196,7 @@ wired end-to-end**: `WalletService` (idempotent debit/credit, `SELECT…FOR UPDA
 signed-delta, `RowVersion` as `DateTime?`) now drives **debit-on-bet + credit-gross-on-settle**;
 players are **seated from their real wallet**; a **`BlackjackRoundDriver`** (2s tick) auto-stands
 expired turns + auto-settles. Per-hand settle audit (`GameHandParticipant.HandIndex`), move-by-move
-`GameHandActions`, and the provably-fair shuffle persist. Phase-1 **leaderboards, profiles, and
+`GameHandActions`, and the provably-fair shuffle persist. **Leaderboards, profiles, and
 social/gifts/chat/presence** are also built.
 
 **Done (ops — admin dashboard, 2026-06-26):** `Khela.Web` — a dark-themed ASP.NET Core MVC admin console
@@ -184,21 +220,34 @@ started-playing). The old Redis ZSET/seal/archive path is retired (dead write st
 channel + SignalR/polling transport, server-authoritative card rendering, action bar, result
 banner, and balance HUD.
 
-**Next (Phase 0 → revenue), in order:**
-1. **IAP purchase flow** — `StoreController` + server-side Apple/Google receipt validation →
-   credit Chips via `WalletTransaction`. This is the literal "take money" step and the remaining
-   Phase-0 gate.
-2. **Client gameplay polish** — seat-pick (clickable seats + join-by-seat: add `int? SeatNumber`
-   to `JoinTableRequest`), split-hand UI, bet validation, card dealing animations, dealer + avatar
-   models, mobile-readable card faces; swap polling → Best SignalR for WebGL.
-3. **Graphics tier selection in Settings** — a Low/Mid/High dropdown calling
-   `PostFxTierController.SetTier()` (persists to `PlayerPrefs["khela.gfxTier"]`, which already wins
-   over auto-detect). The post-processing half is built: `PP_Low`/`PP_Mid`/`PP_High` profiles under
-   `Assets/1Khela/Quality/PostProcess` + the controller. Remaining: the settings UI itself, and
-   deciding whether the tier should ALSO drive the URP quality level (`QualitySettings.SetQualityLevel`
-   → a cheaper renderer for Low), not just the post stack.
-4. **Ship blackjack** to a small Bengali/South-Asian audience; measure retention + whether
-   strangers pay. That gate decides everything after it.
+**Done since (2026-06-27 → 2026-08-21), in brief:** two more game engines — **three-card poker**
+(deployed, live-money-smoked) and **video poker** (6 variants, `/verify`, tamper hash chain), both in
+their own folders as plug-and-play modules. A complete live-ops stack: XP/levels, VIP, loyalty, daily
+missions, admin chests, the monthly **pass**, the **daily-login ladder**, the **piggy bank** (accrual,
+state machine, admin tiers) and the reward inbox — plus the shared **RewardFly** collect juice, avatars
+and wardrobe (BoZo), the cosmetics catalog, Firebase social auth, public player IDs, Sonity audio, and
+an expanded admin dashboard (Testing page, Piggy tab, config export→Redis seed). Wallet latency work cut
+a reward claim from ~21 round trips to ~12.
+
+**Next — the last mile, not new systems.** Each item below is one lane away from being chargeable or
+shippable, and an unfinished lane returns nothing:
+
+1. **Make it chargeable (Stage A).** Store + Apple/Google receipt validation → credit Chips; the
+   chip-bundle shop screen (design exists in `docs/IAP_SHOP_DESIGN` notes, build does not); the piggy
+   **break endpoint + three SKUs** (early / full / full×2 — payout ≠ banked on early, and `PiggyBreaks`
+   records SKU, multiplier and both figures); the **rewarded-ad SDK** (daily catch-up days currently
+   only work because the bypass switch is on). Item ids follow the SO/Mono id pattern from WGWB.
+2. **Close the sinks.** The **Kash exchange** (1M chips = 1 Kash) is specified and unbuilt; the chip
+   faucet is intentional, so the peg is what needs watching, not the faucet.
+3. **Make the catalog credible (Stage B).** Three-card poker and video poker clients; cosmetics shop UI.
+4. **Client polish.** Seat-pick (`int? SeatNumber` on `JoinTableRequest`), split-hand UI, bet validation,
+   mobile-readable card faces; swap polling → Best SignalR for WebGL.
+5. **Graphics tier selection in Settings** — a Low/Mid/High dropdown calling
+   `PostFxTierController.SetTier()` (persists to `PlayerPrefs["khela.gfxTier"]`, which already wins over
+   auto-detect). The post-processing half is built (`PP_Low`/`PP_Mid`/`PP_High` + controller). Remaining:
+   the settings UI, and whether the tier should also drive `QualitySettings.SetQualityLevel`. ⚠️ Keep
+   keyword settings consistent across tiers or the shader-variant superset explodes (§1).
+6. **Size budget + global launch (Stage C).** World-scene lightmaps are currently too heavy for mobile.
 
 **Smaller fixes:** remove the doubled `namespace CardGames.Blackjack` in `BlackjackGame.cs`; wire
 `GameHandSnapshot` persistence (deal/settle board JSON+hash — schema exists, unwired); add a
@@ -234,7 +283,7 @@ banner, and balance HUD.
   Addressables** groups — one per game/feature — so the app ships small and content streams at
   runtime. A **boot/loader scene** downloads required content with a progress bar; optional
   content (other games, cosmetics, avatar packs) loads **on demand** when the player opens it,
-  mapping directly onto the `GameDefinition`/`GameCatalog` system. **Phase 0:** keep content
+  mapping directly onto the `GameDefinition`/`GameCatalog` system. **Now:** keep content
   **local / in-build** (no CDN yet). **Before launch:** flip the same groups to **remote
   delivery** via a CDN (Unity CCD / S3+CloudFront / Cloudflare R2), plus **Google Play Asset
   Delivery** on Android (to clear the ~200 MB base-AAB limit) and a CDN (or On-Demand
@@ -293,12 +342,20 @@ The icon + first 2–3 words + screenshots drive most of the attention.
 
 ## 10. Distribution & competitive strategy
 
-You won't out-spend Zynga/Octro or the big social-casino studios. Win on a **wedge**:
-1. **Region/language first** — Bengali / South-Asian audience + diaspora; in-language
-   content, local channels. Own a small pond completely, then expand.
-2. **Cross-promotion** — the `coinfolytics` crypto-content platform is owned distribution
+You won't out-spend Zynga / Playtika / Huuuge. But the earlier answer to that — *"win a
+small Bengali / South-Asian pond first, then expand"* — is **retired** (§1): the audience
+for a social casino isn't regional, blackjack has no regional pull, and a small cohort
+can't validate a global product. The wedge is:
+
+1. **Depth of live-ops for the size of the studio.** Pass, daily ladder, piggy, VIP,
+   loyalty, missions, chests, social and gifting are already built. Most titles at this
+   scale ship with two of those. It is the hard-to-copy surface, and it is done.
+2. **Trust** — provably-fair games and a certifiable money path; the same work that makes
+   the engine licensable B2B, so it pays twice.
+3. **Size discipline** — materially smaller to install than the incumbents is a real
+   acquisition advantage in this category, not a nicety.
+4. **Cross-promotion** — the `coinfolytics` crypto-content platform is owned distribution
    that funnels players (and later token attention) for near-zero marginal cost.
-3. **Trust** — provably-fair games and (later) an on-chain, verifiable token model.
 
 Avoid head-to-head with incumbents and avoid the Indian card-gaming trademarks (Adda52,
 PokerBaazi, RummyCircle, Junglee) — don't name anything "Adda" or "Baazi."
@@ -321,25 +378,33 @@ PokerBaazi, RummyCircle, Junglee) — don't name anything "Adda" or "Baazi."
 
 ## 12. Costs & honest risks
 
-- Phase 0/1 cost is mostly your time + store fees (~$100) + assets. Token contracts only
+- Stage A–C cost is mostly your time + store fees (~$100) + assets. Token contracts only
   later, and a minimal standard ERC-20 + operational buy-and-burn avoids a big audit bill.
 - **Most games get no traction** — fun/retention is hard; the token can't save a game
   nobody plays.
-- Social casino is competitive and UA can be costly — the niche + owned distribution keep
-  CAC sane.
+- **The live risk is unfinished inventory, not scope.** A large amount of good work is
+  sitting at 85–95% and returning nothing. Build rate is not the problem; conversion of
+  build to shipped is.
+- Social casino is competitive and UA can be costly — depth of live-ops, install size and
+  owned distribution are what keep CAC sane, not a regional niche.
+- **Download size** is both a UA cost and a retention cost in this category; treat a size
+  regression as a bug.
 - The token adds legal complexity — sequencing + dual-currency + a lawyer contain it.
 
 ---
 
 ## 13. Immediate next steps
 
-1. ✅ Done — git trees reconciled + `.gitignore` fixed + work committed; `WalletService` wired into
-   bet/settle (debit-on-bet + credit-on-settle, idempotent); the blackjack vertical slice is playable.
-2. **Build the IAP purchase flow + Apple/Google receipt validation → credit Chips** — the remaining
-   Phase-0 gate (the "take money" step).
-3. Client gameplay polish: seat-pick, split UI, bet validation, dealing animations, dealer/avatars;
-   swap polling → Best SignalR for WebGL.
-4. Graphics tier selection in Settings — Low/Mid/High dropdown → `PostFxTierController.SetTier()`
-   (post profiles + controller already built; see §6).
-5. Ship blackjack to a small Bengali/South-Asian audience; measure retention + whether strangers
-   pay. That gate decides everything after it.
+*One rule for this list: **finish a lane before starting another.** An item at 90% returns nothing.*
+
+1. ✅ Done — three game engines live; money path real-money-grade and DB-audited; the full live-ops
+   stack (pass / daily / piggy / VIP / loyalty / missions / chests) built; admin dashboard + Testing
+   page + config seed; blackjack client assembled and playable.
+2. **Piggy break endpoint + its three SKUs**, then the store behind it. Highest-value dollar in the
+   game, the server side is ~90% there, and closing it drags several other rows across the line.
+3. **Store + Apple/Google receipt validation → credit Chips**, and the chip-bundle shop screen.
+4. **Rewarded-ad SDK** — then turn `Rewards:BypassAdForMissedDays` **off**.
+5. **Kash exchange** (1M chips = 1 Kash) — the sink that gives the chip faucet its meaning.
+6. **Three-card poker + video poker clients**, so the Home picker offers a catalog rather than a promise.
+7. Client polish (seat-pick, split UI, bet validation), graphics-tier settings UI, size budget.
+8. Global launch + measure. Retention and conversion — not instinct — decide what gets built after this.

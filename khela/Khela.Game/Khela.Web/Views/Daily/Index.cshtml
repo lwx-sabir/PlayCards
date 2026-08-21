@@ -1,0 +1,434 @@
+@using System.Linq
+@using Khela.Game.Services.Daily
+@using Khela.Game.Services.Pass
+@using Khela.Web.Controllers
+@model DailyVm
+@{
+    ViewData["Title"] = "Daily Reward";
+    ViewData["Crumb"] = "Daily";
+    ViewData["Nav"] = "daily";
+    var cfg = Model.Config;
+    string Totals(Dictionary<string, decimal> t) => t.Count == 0 ? "—" : string.Join(" · ", t.OrderBy(k => k.Key).Select(k => $"{k.Value:#,0} {k.Key}"));
+}
+
+<h1 class="page-title">@cfg.Title <span class="dim" style="font-size:14px">(daily login)</span></h1>
+<p class="page-sub">
+    One free day per calendar day, in each player's OWN timezone. The ladder starts the day a player first sees it and
+    repeats — so two players are on different days on the same date. A missed day costs rewarded-ad views.
+    @if (Model.Overridden)
+    {
+        <text><b>A saved override is live.</b></text>
+    }
+    else
+    {
+        <text>No override saved — the built-in ladder is live.</text>
+    }
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Run totals</h3>
+        <span class="dim" style="font-size:12.5px">what a player who collects all @cfg.Days days walks away with</span>
+    </div>
+    <table class="data-table"><tbody><tr><td>@Totals(Model.Totals)</td></tr></tbody></table>
+</div>
+
+<form asp-action="Save" method="post">
+    <div class="panel">
+        <div class="panel-head"><h3>Settings</h3></div>
+        <div style="padding:14px 16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px">
+            <label>Title<br /><input name="Title" value="@cfg.Title" class="vip-select" style="width:100%" /></label>
+            <label>Ads per missed day<br /><input name="AdsPerCatchUp" type="number" min="0" max="@DailyCatalog.MaxAdsPerCatchUp" value="@cfg.AdsPerCatchUp" class="vip-select" style="width:100%" /></label>
+            <label>Max ad catch-ups / run<br /><input name="MaxAdCatchUpsPerCycle" type="number" min="0" max="@cfg.Days" value="@cfg.MaxAdCatchUpsPerCycle" class="vip-select" style="width:100%" /></label>
+            <label style="align-self:end"><input name="Enabled" type="checkbox" value="true" checked="@cfg.Enabled" /> Live</label>
+        </div>
+        <div class="dim" style="font-size:11.5px; padding:0 16px 14px">
+            Set <b>Ads per missed day</b> or <b>Max ad catch-ups</b> to 0 to turn catch-up off entirely — a missed day
+            is then simply gone. The <code>Rewards:BypassAdForMissedDays</code> switch in appsettings overrides this for
+            testing and hands missed days over free, on this ladder AND the pass.
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head">
+            <h3>Ladder</h3>
+            <span class="dim" style="font-size:12.5px">@cfg.Days days · click a day to edit it</span>
+        </div>
+
+        @* The inputs the controller binds are HIDDEN inside each card and stay in day order — Save() reads
+           Rewards[]/Text[] positionally, so the DOM order IS the day order. The modal only writes into them. *@
+        <div class="day-grid">
+            @for (int i = 0; i < cfg.Nodes.Count; i++)
+            {
+                var node = cfg.Nodes[i];
+                var line = PassRewardText.Format(node.Rewards);
+                var auto = PassCatalog.AutoLabel(node.Rewards);
+
+                <div class="day-card@(node.IsMilestone ? " is-milestone" : "")" data-i="@i" data-day="@node.Index"
+                     data-auto="@auto" tabindex="0" role="button" title="Edit day @node.Index">
+
+                    <input type="hidden" name="Rewards" value="@line" />
+                    <input type="hidden" name="Text" value="@node.Text" />
+                    <input type="checkbox" name="Milestone" value="@node.Index" checked="@node.IsMilestone" hidden />
+
+                    <div class="day-head">
+                        <span class="day-no">@node.Index</span>
+                        <span class="star" title="Milestone">★</span>
+                    </div>
+                    <b class="v-text">@(string.IsNullOrWhiteSpace(node.Text) ? auto : node.Text)</b>
+                    <span class="v-line">@line</span>
+                </div>
+            }
+        </div>
+
+        <div style="display:flex; gap:10px; padding:14px 16px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save ladder</button>
+            <span class="dim" style="font-size:12px">Edits are held in the page until you save.</span>
+        </div>
+    </div>
+
+    @* ONE modal, reused for every day. It edits the hidden inputs of whichever card was opened. *@
+    <div class="modal-back" id="dayModal" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dayModalTitle">
+            <div class="modal-head">
+                <h3 id="dayModalTitle">Day</h3>
+                <button type="button" class="btn btn-outline modal-x" data-close>✕</button>
+            </div>
+
+            <div class="modal-body">
+                <section class="rw-sec">
+                    <div class="rw-head">
+                        <span class="track-tag">REWARDS</span>
+                        <button type="button" class="btn btn-outline btn-sm" id="mAdd">+ reward</button>
+                    </div>
+                    <div class="rw-list" id="rwList"></div>
+                    <label class="fld">
+                        <span>Card text <em class="dim">— blank uses the derived label</em></span>
+                        <input id="mText" class="vip-select" />
+                    </label>
+                </section>
+
+                <label class="fld fld-check">
+                    <input type="checkbox" id="mMilestone" /> <span>★ Milestone</span>
+                </label>
+
+                <details class="rw-raw">
+                    <summary class="dim">Raw text (advanced)</summary>
+                    <label class="fld"><span>Rewards</span><input id="mRaw" class="vip-select" readonly /></label>
+                    <div class="dim modal-help">
+                        This is what gets saved, rebuilt from the rows above.
+                        Artwork is appended as <code>@@back.png|front.png</code> — back layer first, up to 3.
+                    </div>
+                </details>
+            </div>
+
+            <div class="modal-foot">
+                <button type="button" class="btn btn-outline" data-close>Cancel</button>
+                <button type="button" class="btn btn-primary" id="mApply">Apply</button>
+                <span class="dim" style="font-size:12px">Applied to the page — press <b>Save ladder</b> to write it.</span>
+            </div>
+        </div>
+    </div>
+
+    <datalist id="chestIds">
+        @foreach (var id in Model.ChestIds)
+        {
+            <option value="@id"></option>
+        }
+    </datalist>
+</form>
+
+<div class="panel">
+    <div class="panel-head"><h3>Bulk tools</h3></div>
+    <form asp-action="ApplyRange" method="post" style="display:flex; gap:10px; padding:14px 16px; align-items:center; flex-wrap:wrap">
+        <b style="font-size:13px">Days</b>
+        <input name="from" type="number" min="1" value="1" class="vip-select" style="width:80px" />
+        <span class="dim">→</span>
+        <input name="to" type="number" min="1" value="@cfg.Days" class="vip-select" style="width:80px" />
+        <input name="rewards" placeholder="Rewards (blank = leave alone)" class="vip-select" style="flex:1; min-width:240px" />
+        <select name="milestone" class="vip-select">
+            <option value="">★ unchanged</option>
+            <option value="true">★ on</option>
+            <option value="false">★ off</option>
+        </select>
+        <button class="btn btn-outline" type="submit">Apply</button>
+    </form>
+    <form asp-action="Resize" method="post" style="display:flex; gap:10px; padding:0 16px 14px; align-items:center; flex-wrap:wrap">
+        <b style="font-size:13px">Ladder length</b>
+        <input name="length" type="number" min="1" max="@DailyCatalog.MaxNodes" value="@cfg.Days" class="vip-select" style="width:90px" />
+        <button class="btn btn-outline" type="submit">Resize</button>
+        <span class="dim" style="font-size:12px">New days copy the last one. Shrinking drops days off the end.</span>
+    </form>
+    <form asp-action="Reset" method="post" style="padding:0 16px 14px">
+        <button class="btn btn-outline" type="submit" onclick="return confirm('Drop the saved ladder and fall back to the built-in one?')">Reset to built-in</button>
+        <span class="dim" style="font-size:12px">The current config is backed up first.</span>
+    </form>
+</div>
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Backups</h3>
+        <span class="dim" style="font-size:12.5px">every 3 days + before each save · never auto-deleted</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Taken (UTC)</th><th>File</th><th style="width:110px">Size</th></tr></thead>
+        <tbody>
+            @if (Model.Backups.Count == 0)
+            {
+                <tr><td colspan="3" class="dim">No snapshots yet — one is written the first time you save.</td></tr>
+            }
+            else
+            {
+                @foreach (var b in Model.Backups)
+                {
+                    <tr>
+                        <td>@b.TakenUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td><a asp-action="Restore" asp-route-file="@b.FileName">@b.FileName</a></td>
+                        <td>@(b.Bytes / 1024) KB</td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Raw JSON</h3>
+        <span class="dim" style="font-size:12.5px">for bulk edits and restores</span>
+    </div>
+    <form asp-action="SaveJson" method="post" style="padding:14px 16px">
+        <textarea name="json" rows="14" class="vip-select" style="width:100%; font-family:ui-monospace,Consolas,monospace; font-size:12px">@Model.Json</textarea>
+        <div style="margin-top:10px"><button class="btn btn-outline" type="submit">Save JSON</button></div>
+    </form>
+</div>
+
+<style>
+    .vip-select {
+        background: var(--panel-2, #1a2030); color: var(--text, #e6e9ef);
+        border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    }
+    label { font-size: 12.5px; color: var(--dim, #93a0b5); }
+
+    .day-grid { display: grid; gap: 10px; padding: 14px 16px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+    .day-card {
+        background: var(--panel-2, #1a2030); border: 1px solid var(--border, #2a3344);
+        border-radius: 8px; padding: 10px 11px; cursor: pointer; outline: none;
+        display: flex; flex-direction: column; gap: 6px;
+    }
+    .day-card:hover, .day-card:focus { border-color: var(--accent, #6b8afd); }
+    .day-card.is-milestone { border-color: #d8a12a; }
+    .day-head { display: flex; align-items: center; justify-content: space-between; }
+    .day-no { font-weight: 700; font-size: 15px; color: var(--text, #e6e9ef); }
+    .day-head .star { color: #d8a12a; display: none; }
+    .day-card.is-milestone .day-head .star { display: inline; }
+    .day-card .v-text { font-size: 13.5px; color: var(--text, #e6e9ef); }
+    .day-card .v-line { font-size: 11px; color: var(--dim, #93a0b5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+    .modal-back[hidden] { display: none; }
+    .modal { background: var(--panel, #141a27); border: 1px solid var(--border, #2a3344); border-radius: 10px; width: 100%; max-width: 560px; max-height: 90vh; overflow: auto; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--border, #2a3344); }
+    .modal-head h3 { margin: 0; font-size: 15px; }
+    .modal-x { padding: 2px 9px; }
+    .modal-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 13px 16px; border-top: 1px solid var(--border, #2a3344); }
+    .fld { display: flex; flex-direction: column; gap: 4px; }
+    .fld > span { font-size: 12px; }
+    .fld em { font-style: normal; font-size: 11px; }
+    .fld-check { flex-direction: row; align-items: center; gap: 8px; }
+    .modal-help { font-size: 11.5px; line-height: 1.7; }
+
+    .rw-sec { border: 1px solid var(--border, #2a3344); border-radius: 8px; padding: 10px 11px; display: flex; flex-direction: column; gap: 10px; }
+    .rw-head { display: flex; align-items: center; justify-content: space-between; }
+    .track-tag { font-size: 9.5px; letter-spacing: .09em; color: var(--dim, #93a0b5); }
+    .btn-sm { padding: 2px 9px; font-size: 12px; }
+    .rw-list { display: flex; flex-direction: column; gap: 9px; }
+    .rw { border: 1px solid var(--border, #2a3344); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--panel-2, #1a2030); }
+    .rw-main { display: flex; gap: 6px; align-items: center; }
+    .rw-main .rw-kind { width: 110px; }
+    .rw-main .rw-id { flex: 1; min-width: 0; }
+    .rw-main .rw-amount { width: 110px; }
+    .rw-imgs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .rw-imgs input { min-width: 0; font-size: 11.5px; }
+    .rw-raw { font-size: 12px; }
+    .rw-raw summary { cursor: pointer; }
+    .rw-raw .fld { margin-top: 8px; }
+</style>
+
+<script>
+    (function () {
+        var modal = document.getElementById('dayModal');
+        if (!modal) return;
+
+        var title = document.getElementById('dayModalTitle');
+        var mText = document.getElementById('mText');
+        var mRaw = document.getElementById('mRaw');
+        var mMilestone = document.getElementById('mMilestone');
+        var rwList = document.getElementById('rwList');
+        var card = null;
+
+        // Mirrors PassRewardText's one-line form ("Chips 1000, Kash 3, XP 50 @@a.png|b.png"): parse it into rows to
+        // edit, rebuild it to save. The server parses and validates the string, so this only has to round-trip.
+        var CURRENCIES = ['Chips', 'Coins', 'Gems', 'Kash'];
+        var ITEMISH = ['Chest', 'Item', 'Cosmetic'];
+
+        function fields(c) {
+            return {
+                rewards: c.querySelector('input[name="Rewards"]'),
+                text: c.querySelector('input[name="Text"]'),
+                milestone: c.querySelector('input[name="Milestone"]')
+            };
+        }
+
+        function parseLine(text) {
+            var rows = [];
+            (text || '').split(',').forEach(function (raw) {
+                var token = raw.trim();
+                if (!token) return;
+
+                var images = [];
+                var at = token.indexOf('@@');
+                if (at >= 0) {
+                    images = token.substring(at + 1).split('|').map(function (u) { return u.trim(); }).filter(Boolean);
+                    token = token.substring(0, at).trim();
+                }
+                if (!token) return;
+
+                var parts = token.split(/\s+/);
+                var head = parts[0];
+
+                if (head.toUpperCase() === 'XP') {
+                    rows.push({ kind: 'XP', id: '', amount: parts[1] || '', images: images });
+                } else if (ITEMISH.some(function (k) { return k.toLowerCase() === head.toLowerCase(); })) {
+                    var count = parts[2] ? parts[2].replace(/^x/i, '') : '1';
+                    rows.push({ kind: head, id: parts[1] || '', amount: count, images: images });
+                } else {
+                    rows.push({ kind: head, id: '', amount: parts[1] || '', images: images });
+                }
+            });
+            return rows;
+        }
+
+        function buildLine() {
+            var out = [];
+            rwList.querySelectorAll('.rw').forEach(function (r) {
+                var kind = r.querySelector('.rw-kind').value;
+                var id = r.querySelector('.rw-id').value.trim();
+                var amount = r.querySelector('.rw-amount').value.trim();
+                var imgs = Array.prototype.map.call(r.querySelectorAll('.rw-img'), function (i) { return i.value.trim(); })
+                                             .filter(Boolean).slice(0, 3);
+
+                var body;
+                if (kind === 'XP') {
+                    if (!amount) return;
+                    body = 'XP ' + amount;
+                } else if (ITEMISH.indexOf(kind) >= 0) {
+                    if (!id) return;
+                    body = kind + ' ' + id + (amount && amount !== '1' ? ' x' + amount : '');
+                } else {
+                    if (!amount) return;
+                    body = kind + ' ' + amount;
+                }
+                out.push(imgs.length ? body + ' @@' + imgs.join('|') : body);
+            });
+            return out.join(', ');
+        }
+
+        function addRow(row) {
+            row = row || { kind: 'Chips', id: '', amount: '', images: [] };
+            var el = document.createElement('div');
+            el.className = 'rw';
+
+            var opts = CURRENCIES.concat(['XP']).concat(ITEMISH).map(function (k) {
+                return '<option value="' + k + '"' + (k === row.kind ? ' selected' : '') + '>' + k + '</option>';
+            }).join('');
+
+            el.innerHTML =
+                '<div class="rw-main">' +
+                '  <select class="vip-select rw-kind">' + opts + '</select>' +
+                '  <input class="vip-select rw-id" list="chestIds" placeholder="id (e.g. CK_Chest:Rare)" />' +
+                '  <input class="vip-select rw-amount" type="text" placeholder="amount" />' +
+                '  <button type="button" class="btn btn-outline btn-sm rw-del" title="Remove">✕</button>' +
+                '</div>' +
+                '<div class="rw-imgs">' +
+                '  <input class="vip-select rw-img" placeholder="image 1 (back layer)" />' +
+                '  <input class="vip-select rw-img" placeholder="image 2" />' +
+                '  <input class="vip-select rw-img" placeholder="image 3 (front)" />' +
+                '</div>';
+
+            el.querySelector('.rw-id').value = row.id || '';
+            el.querySelector('.rw-amount').value = row.amount || '';
+            var imgInputs = el.querySelectorAll('.rw-img');
+            for (var i = 0; i < 3; i++) imgInputs[i].value = (row.images && row.images[i]) || '';
+
+            el.querySelector('.rw-del').addEventListener('click', function () { el.remove(); refreshRaw(); });
+            el.querySelector('.rw-kind').addEventListener('change', function () { kindChanged(el); refreshRaw(); });
+            el.addEventListener('input', refreshRaw);
+
+            rwList.appendChild(el);
+            kindChanged(el);
+        }
+
+        // A currency carries no id (the kind IS the id) and XP carries neither id nor count.
+        function kindChanged(el) {
+            var kind = el.querySelector('.rw-kind').value;
+            var isItem = ITEMISH.indexOf(kind) >= 0;
+            el.querySelector('.rw-id').style.display = isItem ? '' : 'none';
+            el.querySelector('.rw-amount').placeholder = isItem ? 'count (blank = 1)' : 'amount';
+        }
+
+        function refreshRaw() { mRaw.value = buildLine(); }
+
+        function open(c) {
+            card = c;
+            var f = fields(c);
+            title.textContent = 'Day ' + c.dataset.day;
+            rwList.innerHTML = '';
+            parseLine(f.rewards.value).forEach(addRow);
+            refreshRaw();
+            mText.value = f.text.value;
+            mText.placeholder = c.dataset.auto || '';
+            mMilestone.checked = f.milestone.checked;
+            modal.hidden = false;
+        }
+
+        function close() { modal.hidden = true; card = null; }
+
+        function apply() {
+            if (!card) return close();
+            refreshRaw();
+            var f = fields(card);
+            f.rewards.value = mRaw.value;
+            f.text.value = mText.value;
+            f.milestone.checked = mMilestone.checked;
+
+            card.querySelector('.v-text').textContent = mText.value.trim() || (card.dataset.auto || '');
+            card.querySelector('.v-line').textContent = mRaw.value;
+            card.classList.toggle('is-milestone', mMilestone.checked);
+            close();
+        }
+
+        document.querySelectorAll('.day-card').forEach(function (c) {
+            c.addEventListener('click', function () { open(c); });
+            c.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(c); }
+            });
+        });
+
+        document.getElementById('mAdd').addEventListener('click', function () { addRow(); refreshRaw(); });
+        modal.querySelectorAll('[data-close]').forEach(function (b) { b.addEventListener('click', close); });
+        document.getElementById('mApply').addEventListener('click', apply);
+        modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+        document.addEventListener('keydown', function (e) { if (!modal.hidden && e.key === 'Escape') close(); });
+    })();
+</script>

@@ -56,6 +56,15 @@ namespace PlayCard.UI
                  "each piece lands, instead of snapping to the server's value a second before the first one arrives. " +
                  "Only applies to currencies that actually have a RewardFlyTarget — nothing flies without one.")]
         [SerializeField] private bool creditWithFlyingPieces = true;
+
+        [Tooltip("OFF (default) = the counter only ever walks toward a balance the SERVER has confirmed. Turn ON and " +
+                 "it starts walking the moment the pieces launch, using the amount the burst announces, and " +
+                 "reconciles when the real balance arrives.\n\n" +
+                 "Only needed where claims QUEUE and each takes seconds: the second payout's chips land long before " +
+                 "its balance does, so a counter that waits shows nothing and then jumps. Where taps are one at a " +
+                 "time the wallet is already there when the pieces are, and this only adds a way to be briefly wrong.")]
+        [SerializeField] private bool creditBeforeWalletConfirms;
+
         [Tooltip("Give up on a burst after this long and show the true balance. The safety net for a panel closed " +
                  "mid-flight or a burst that never reports: a held number is a stale number until it is released.")]
         [SerializeField] private float holdTimeout = 5f;
@@ -99,8 +108,16 @@ namespace PlayCard.UI
             // steps toward Target as they arrive.
             public bool Held;
             public decimal HeldFrom;
+            public decimal HeldPending;  // announced by bursts, not yet confirmed by the wallet — claims queue, so several stack
             public float HeldUntil;      // unscaled deadline — the number reconciles itself if the burst never finishes
             public bool HeldFlashed;
+
+            // How long a balance BELOW what the pieces already showed is treated as a late confirmation rather than a
+            // correction, plus the one such value we're sitting on. Without this the number bounces: with claims
+            // queued, tap 2's chips land before tap 1's wallet push arrives.
+            public float OptimisticUntil;
+            public decimal PendingWallet;
+            public bool HasPendingWallet;
         }
 
         private readonly List<Track> _tracks = new List<Track>();
@@ -134,6 +151,7 @@ namespace PlayCard.UI
         {
             foreach (var t in _tracks) t.SawChange = false;
 
+            RewardFlyTarget.BurstValue += OnBurstStarted;
             RewardFlyTarget.BurstProgress += OnPieceLanded;
             RewardFlyTarget.BurstEnded += OnBurstEnded;
 
@@ -146,6 +164,7 @@ namespace PlayCard.UI
 
         private void OnDisable()
         {
+            RewardFlyTarget.BurstValue -= OnBurstStarted;
             RewardFlyTarget.BurstProgress -= OnPieceLanded;
             RewardFlyTarget.BurstEnded -= OnBurstEnded;
             if (WalletManager.Instance != null) WalletManager.Instance.OnBalancesChanged -= Show;
@@ -189,9 +208,22 @@ namespace PlayCard.UI
             // Compared against the TARGET, not what's on screen: mid-roll the label reads a partial figure, and a
             // repeated push of the same balance (they arrive in pairs — the instant chip hint, then the refresh)
             // would otherwise restart the roll from wherever it had got to and re-fire the pop.
-            if (value == t.Target) return;
+            if (value == t.Target) { t.HasPendingWallet = false; return; }   // the wallet caught up with the optimism
 
             bool gain = value > t.Target;
+
+            // A balance BELOW what the pieces already walked the label to, moments after a burst, is almost always a
+            // LATE CONFIRMATION of an earlier claim rather than a correction to this one: claims are queued, so tap 2's
+            // chips land well before tap 1's wallet push arrives. Rolling down to it would bounce the number backwards
+            // and then straight up again. Hold it aside — if it really was the truth (a refused claim), nothing higher
+            // follows and the grace period expires, and Update applies it then.
+            if (!gain && Time.unscaledTime < t.OptimisticUntil)
+            {
+                t.PendingWallet = value;
+                t.HasPendingWallet = true;
+                return;
+            }
+            t.HasPendingWallet = false;
 
             // A CREDIT with pieces on the way: freeze the number where it is and let the landings walk it up. Only a
             // credit — money leaving is the player's own action and must show at once — and only when the number has
@@ -202,11 +234,14 @@ namespace PlayCard.UI
             // the player just triggered, which is a far stronger signal than "the previous value happened to be zero".
             if (gain && creditWithFlyingPieces && RewardFlyTarget.IsBurstArmed(t.Id))
             {
-                if (!t.Held) { t.HeldFrom = t.Shown; t.HeldFlashed = false; }
+                if (!t.Held) { t.HeldFrom = t.Shown; t.HeldPending = 0m; t.HeldFlashed = false; }
                 t.Held = true;
                 t.SawChange = true;
                 t.Target = value;
                 t.HeldUntil = Time.unscaledTime + Mathf.Max(0.5f, holdTimeout);
+                // Only an OPTIMISTIC counter distrusts a lower balance (see the guard in this method). Without the
+                // opt-in the server is always right the moment it speaks, exactly as before.
+                if (creditBeforeWalletConfirms) t.OptimisticUntil = t.HeldUntil;
                 t.Roll?.Kill();       // a roll started before the burst armed must not race the pieces
                 return;
             }
@@ -235,6 +270,53 @@ namespace PlayCard.UI
         ///
         /// Measured from the value held when the burst armed, not from the shrinking remainder, so the steps are even.
         /// </summary>
+        /// <summary>
+        /// Pieces are on their way, and this is what they're worth. Start the walk NOW, from the amount rather than
+        /// from the wallet.
+        ///
+        /// Waiting for the balance to move is what made this fail: claims queue, so the second payout's wallet update
+        /// lands seconds after its chips do. The counter had nothing to walk toward while they arrived, released, and
+        /// then jumped when the truth turned up. Walking the announced amount means the number climbs with the pieces
+        /// every time — and the real value, when it arrives, simply becomes the target mid-walk.
+        ///
+        /// Display only. The wallet is still the authority: <see cref="Apply"/> overwrites the target the moment the
+        /// server says otherwise, and a refused claim rolls the number back down with it.
+        /// </summary>
+        private void OnBurstStarted(string rewardId, int pieces, decimal amount)
+        {
+            // Opt-in, and OFF by default: this is the only place the counter moves on something the server has not
+            // confirmed yet. A screen that claims one tap at a time never needs it, and must not silently get it.
+            if (!creditBeforeWalletConfirms) return;
+            if (!creditWithFlyingPieces || amount <= 0m) return;
+
+            var t = TrackFor(rewardId);
+            if (t == null || !t.HasValue) return;
+
+            if (!t.Held)
+            {
+                t.HeldFrom = t.Shown;
+                t.HeldPending = 0m;
+                t.HeldFlashed = false;
+                t.Held = true;
+            }
+
+            // This IS the change — so the "first value after opening is a placeholder, snap it" rule can't claim it
+            // and skip the walk on a counter that happened to be sitting at zero.
+            t.SawChange = true;
+
+            // ACCUMULATE. A second burst for the same currency adds to the first rather than replacing it — five taps
+            // in a row are five payouts, and the counter has to be walking toward their sum. Only ever raises the
+            // target, so a wallet value that already includes this payout is left alone.
+            t.HeldPending += amount;
+            var expected = t.HeldFrom + t.HeldPending;
+            if (expected > t.Target) t.Target = expected;
+
+            float grace = Mathf.Max(0.5f, holdTimeout);
+            t.HeldUntil = Time.unscaledTime + grace;
+            t.OptimisticUntil = t.HeldUntil;
+            t.Roll?.Kill();
+        }
+
         private void OnPieceLanded(string rewardId, float progress01)
         {
             var t = TrackFor(rewardId);
@@ -262,6 +344,7 @@ namespace PlayCard.UI
         private void ReleaseHold(Track t)
         {
             t.Held = false;
+            t.HeldPending = 0m;
             if (t.Shown == t.Target) return;
             if (t.SkipRoll) Snap(t, t.Target);
             else Roll(t, t.Target);
@@ -275,6 +358,23 @@ namespace PlayCard.UI
             for (int i = 0; i < _tracks.Count; i++)
             {
                 var t = _tracks[i];
+
+                // The deferred truth. A balance lower than the optimistic figure was set aside rather than rolled to,
+                // in case a queued claim's confirmation was simply late. Once the grace is up and nothing higher has
+                // arrived, it WAS the truth — a refused claim — so the number rolls back down to it.
+                if (t.HasPendingWallet && Time.unscaledTime >= t.OptimisticUntil)
+                {
+                    t.HasPendingWallet = false;
+                    decimal v = t.PendingWallet;
+                    if (v != t.Target)
+                    {
+                        bool up = v > t.Target;
+                        if (t.SkipRoll) Snap(t, v); else Roll(t, v);
+                        Pop(t);
+                        Flash(t, up);
+                    }
+                }
+
                 if (!t.Held || Time.unscaledTime < t.HeldUntil) continue;
                 ReleaseHold(t);
                 // Clear the arm too, or the very next credit is held all over again. Done AFTER the release so the

@@ -28782,6 +28782,12 @@ MonoBehaviour:
   pullDamping: 9
   magnetStagger: 0.14
   endScale: 0.55
+  useSpawnedTargets: 0
+  spawnedTargets: []
+  openSeconds: 0.32
+  holdSeconds: 0.9
+  closeSeconds: 0.26
+  slideStretch: 0.2
   punchTargetPerPiece: 1
   impactPrefab: {fileID: 0}
   impactLife: 0.6

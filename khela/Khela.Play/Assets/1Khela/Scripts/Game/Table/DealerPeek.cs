@@ -39,6 +39,7 @@ namespace PlayCard.Game.Table
 
 
         private bool _peeked;                 // once per round — survives the settle so the director can see it
+        private bool _allNaturalDeal;         // every dealt hand was a natural: no peek this round, at either entry point
         private bool _prevInRound;
         private bool _running;
         private const int AceFaceVal = 14;    // FaceValue.Ace on the wire; 10-value cards are 10..13 (10/J/Q/K)
@@ -87,7 +88,7 @@ namespace PlayCard.Game.Table
             // Re-arm on the START of a NEW round, NOT at settle — a dealer blackjack ends the round instantly, and the
             // director still needs to see that the peek never ran so it can show it before the reveal.
             bool inRound = board.RoundInProgress;
-            if (inRound && !_prevInRound) _peeked = false;
+            if (inRound && !_prevInRound) { _peeked = false; _allNaturalDeal = false; }
             _prevInRound = inRound;
 
             if (!inRound) return;                              // round over → the director handles any missed peek
@@ -97,6 +98,22 @@ namespace PlayCard.Game.Table
             // (BeginPlayOrInsurance → … → CloseInsurancePhase → StartPlayOrPeek). Hold the animation until the window is
             // gone, or she'd be checking her hole card while players are still deciding — the wrong order.
             if (board.InsuranceExpiresAt.HasValue) return;
+
+            // EVERY DEALT PLAYER ALREADY HAS A NATURAL → there is nothing to peek FOR. The peek is a gate on player
+            // DECISIONS — she checks before anyone acts on a hand she is about to end — and with every hand already
+            // standing at 21 nobody is going to act. Checking and then turning the card over in the same breath is a
+            // beat with no question in it.
+            //
+            // NOT phrased as "the round is already decided" (CurrentSeatNumber == -1). That is also true when the
+            // DEALER holds the natural, and she should still be seen to check there — the peek is the whole point of
+            // that hand. This tests the PLAYERS' cards, which are never masked, so it separates the two cleanly.
+            if (EveryDealtHandIsNatural(board))
+            {
+                // Remembered, because the round-end director asks again (PeekIfMissed) and by then every hand on the
+                // board reads as finished, so it could no longer tell this case from any other.
+                _allNaturalDeal = true;
+                return;
+            }
 
             if (!UpCardWarrantsPeek(board)) return;
 
@@ -189,7 +206,22 @@ namespace PlayCard.Game.Table
         {
             var board = table != null ? table.Board : null;
             if (board?.Seats == null || betStacks == null) yield break;
-            if (DealerHasNatural(board)) yield break;         // insurance WON — the director pays it at settle
+
+            // ⚠️ DO NOT test DealerHasNatural(board) here. It cannot work at this point in the round and it silently
+            // returned false for a dealer who DID have one, so the winning insurance stake was swept to the house a
+            // beat before the director paid it back — "collect, reveal blackjack, then pay" on the felt.
+            //
+            // The hole card is MASKED on the wire until it turns face-up (BlackjackBoard.MaskCard sends FaceVal 0),
+            // which is the whole point: a snapshot must never leak the down card. So mid-round the client has no way
+            // to know what she is holding, and the only honest signal is the one the server already sends — A LIVE
+            // TURN. StartPlayOrPeek hands one out only when its own peek found nothing, so a turn is positive proof
+            // that every insurance bet on the table is dead. No turn (-1) means the round is already decided, which
+            // mid-round can only be her natural — insurance WON, and the round-end director pays it.
+            //
+            // This is the guard that actually holds, and it has to be tested HERE rather than by turning the peek
+            // away up front: she is still seen to check on her own blackjack, so this code runs on exactly the hand
+            // where getting it wrong swept a winning stake to the house.
+            if (board.CurrentSeatNumber < 0) yield break;
 
             foreach (var seat in board.Seats)
             {
@@ -266,6 +298,12 @@ namespace PlayCard.Game.Table
             if (_peeked || _running || dealer == null || board == null) yield break;
             if (!UpCardWarrantsPeek(board)) yield break;
 
+            // The deal already ended the round for every player (all naturals), so the mid-round trigger deliberately
+            // stood down — see TryPeek. Honour that here too, or the peek she was excused from simply reappears one
+            // beat later, immediately before the reveal, which is the same redundant gesture in a worse position.
+            // Latched at the deal because by now every hand on the board reads as finished, natural or not.
+            if (_allNaturalDeal) yield break;
+
             // She only checks if there is something to find. A peek is a question — "do I already have blackjack?" —
             // and by the time this runs the round is over and every hand is resolved, so the only answer worth showing
             // is yes. With no natural under there she would be miming a check whose result changes nothing, AFTER the
@@ -284,8 +322,13 @@ namespace PlayCard.Game.Table
         }
 
         /// <summary>
-        /// Her two cards are an Ace + a ten-value — a natural. Safe to read at round-end: the settle snapshot carries
-        /// the real hole card (the view masks it visually until the reveal beat, the DATA is already true).
+        /// Her two cards are an Ace + a ten-value — a natural.
+        ///
+        /// ⚠️ ONLY MEANINGFUL ONCE THE HOLE CARD IS FACE-UP, i.e. at round-end. While it is down the server masks it to
+        /// FaceVal 0 on the wire (BlackjackBoard.MaskCard) so a snapshot can never leak it, and this therefore returns
+        /// FALSE for a dealer who is holding a natural. Calling it mid-round reads as a working check and is not one.
+        /// Safe where it IS used: the settle snapshot carries the real card (the view keeps masking it VISUALLY until
+        /// the reveal beat, but the DATA is already true).
         /// </summary>
         private static bool DealerHasNatural(BoardSnapshot board)
         {
@@ -299,6 +342,37 @@ namespace PlayCard.Game.Table
             bool tenA = a.FaceVal >= 10 && a.FaceVal < AceFaceVal;   // 10/J/Q/K
             bool tenB = b.FaceVal >= 10 && b.FaceVal < AceFaceVal;
             return (aceA && tenB) || (aceB && tenA);
+        }
+
+        /// <summary>
+        /// Every hand that was dealt is a natural — two cards totalling 21 — so not one player has a decision left.
+        ///
+        /// Reads the PLAYERS' cards on purpose. Theirs are always face-up on the wire, so this is answerable the
+        /// moment the deal lands; the dealer's hole card is masked until she turns it (see DealerHasNatural), which is
+        /// why the same question cannot be asked about her. Seats with no hands are spectators and are not counted,
+        /// and an empty felt answers false rather than vacuously true.
+        /// </summary>
+        private static bool EveryDealtHandIsNatural(BoardSnapshot board)
+        {
+            if (board.Seats == null) return false;
+            int dealt = 0;
+            foreach (var seat in board.Seats)
+            {
+                var player = seat?.Player;
+                // InRound, not merely "has hands": a settled hand STAYS on the board between rounds, so a seat that
+                // sat this deal out can still be carrying last round's cards. Counting those would let one stale
+                // natural speak for a player who was never dealt in.
+                if (player == null || !player.InRound) continue;
+                var hands = player.Hands;
+                if (hands == null || hands.Count == 0) continue;      // dealt in but no cards yet — nothing to say
+                foreach (var h in hands)
+                {
+                    if (h == null || h.Cards == null) return false;
+                    dealt++;
+                    if (h.Cards.Count != 2 || h.HandValue != 21) return false;
+                }
+            }
+            return dealt > 0;
         }
 
         // Real blackjack peeks only on a 10-value or Ace up-card.

@@ -37,8 +37,46 @@ namespace PlayCard.UI.RewardFly
                  "chink or spawn a spark on.")]
         [SerializeField] private UnityEngine.Events.UnityEvent onPieceArrival;
 
-        private static readonly Dictionary<string, RewardFlyTarget> Registry =
-            new Dictionary<string, RewardFlyTarget>(System.StringComparer.OrdinalIgnoreCase);
+        [Header("Impact sound (optional)")]
+        [Tooltip("Played once per piece that lands HERE. Leave empty and this counter is silent — useful when a " +
+                 "screen already owns its audio (PassAudio, DailyAudio), which would otherwise play the same chink " +
+                 "twice for every chip.")]
+        [SerializeField] private Sonity.SoundEvent impactSound;
+
+        [Tooltip("How many impacts may ring at once. Sonity treats (event, OWNER) as ONE voice and re-triggering it " +
+                 "STOPS the playing instance — so without a rotating owner per hit a stream of chips silences itself " +
+                 "into a single stuttering tick. Around the number of pieces in a burst.")]
+        [Range(1, 32)][SerializeField] private int impactVoices = 12;
+
+        /// <summary>
+        /// Global off switch for every counter's impact sound.
+        ///
+        /// For screens that own their own mix: a panel with an audio component already playing per-piece landings can
+        /// turn this off for the duration rather than having each target assigned nothing. The sound still only plays
+        /// where one is authored — this is the override, not the enable.
+        /// </summary>
+        public static bool ImpactSoundsEnabled = true;
+
+        /// <summary>
+        /// Log every piece that reports in, from anywhere. Set it once and the whole chain becomes visible: whether
+        /// pieces land at all, which target caught them, and whether that target has a sound to play.
+        ///
+        /// Static rather than a field because the interesting case is when NOTHING happens — and a per-instance
+        /// toggle can only be ticked on a target you already know is running.
+        /// </summary>
+        public static bool LogPieces;
+
+        /// <summary>
+        /// Every LIVE counter per reward id, oldest first — a STACK, not a single slot.
+        ///
+        /// Two counters for the same currency are the normal case, not an edge one: the Home HUD has a chip counter,
+        /// and a modal popup opened over it has its own. With a single slot the popup's registration overwrote Home's,
+        /// and closing the popup then deleted the entry outright — leaving NO target for chips even though Home's
+        /// counter was still on screen. Keeping them stacked means the topmost one wins while it is open and the one
+        /// underneath resumes when it closes, which is exactly what the player sees.
+        /// </summary>
+        private static readonly Dictionary<string, List<RewardFlyTarget>> Registry =
+            new Dictionary<string, List<RewardFlyTarget>>(System.StringComparer.OrdinalIgnoreCase);
 
         // ---------------- the burst channel ----------------
         //
@@ -55,9 +93,19 @@ namespace PlayCard.UI.RewardFly
         private static readonly HashSet<string> ArmedBursts =
             new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>The pieces for this reward just launched — the reward id and how many are flying. The beat a burst
-        /// sound belongs on: arming happens at payout time, which can be a second earlier.</summary>
+        /// <summary>The pieces for this reward just launched: the reward id and how many are flying.</summary>
         public static event System.Action<string, int> BurstStarted;
+
+        /// <summary>
+        /// The same launch, plus WHAT THE PIECES ARE WORTH — a separate event so that listeners which only care that
+        /// a burst happened (a sound bank) are not dragged along by a signature they have no use for.
+        ///
+        /// The amount matters because a counter cannot wait for the wallet. A queued claim against a distant server
+        /// lands seconds after its pieces do, so a HUD that only moves when the balance moves shows nothing while the
+        /// chips arrive and then jumps later. Carrying the value lets it walk up with them and reconcile when the real
+        /// number appears.
+        /// </summary>
+        public static event System.Action<string, int, decimal> BurstValue;
 
         /// <summary>A piece landed: the reward id and how far through that reward's burst it is (0..1).</summary>
         public static event System.Action<string, float> BurstProgress;
@@ -78,7 +126,7 @@ namespace PlayCard.UI.RewardFly
         {
             if (string.IsNullOrWhiteSpace(rewardId)) return false;
             var key = rewardId.Trim();
-            if (!Registry.TryGetValue(key, out var target) || target == null) return false;
+            if (Lookup(key) == null) return false;
             ArmedBursts.Add(key);
             return true;
         }
@@ -89,10 +137,12 @@ namespace PlayCard.UI.RewardFly
 
         /// <summary>The pieces are away. Raised by the flight itself, so anything hanging off it (a burst sound, a
         /// camera shake) fires on the launch rather than on the decision to launch.</summary>
-        public static void NotifyBurstStarted(string rewardId, int pieces)
+        public static void NotifyBurstStarted(string rewardId, int pieces, decimal amount)
         {
             if (string.IsNullOrWhiteSpace(rewardId)) return;
-            BurstStarted?.Invoke(rewardId.Trim(), pieces);
+            var key = rewardId.Trim();
+            BurstStarted?.Invoke(key, pieces);
+            BurstValue?.Invoke(key, pieces, amount);
         }
 
         /// <summary>Release the hold on this reward — its last piece landed, or nothing is coming after all.</summary>
@@ -109,20 +159,26 @@ namespace PlayCard.UI.RewardFly
 
         private void OnEnable()
         {
-            if (!string.IsNullOrWhiteSpace(rewardId)) Registry[rewardId.Trim()] = this;
+            if (string.IsNullOrWhiteSpace(rewardId)) return;
+            var key = rewardId.Trim();
+
+            if (!Registry.TryGetValue(key, out var list)) Registry[key] = list = new List<RewardFlyTarget>(2);
+            list.Remove(this);   // re-enabled without a disable (a pooled panel) must not queue twice
+            list.Add(this);      // newest wins — the popup over the HUD
         }
 
         private void OnDisable()
         {
+
             if (string.IsNullOrWhiteSpace(rewardId)) return;
-            if (Registry.TryGetValue(rewardId.Trim(), out var existing) && existing == this) Registry.Remove(rewardId.Trim());
+            if (Registry.TryGetValue(rewardId.Trim(), out var list)) list.Remove(this);
         }
 
         /// <summary>The landing point for a reward id, or null when this scene shows no counter for it.</summary>
         public static RectTransform Find(string rewardId)
         {
-            if (string.IsNullOrWhiteSpace(rewardId)) return null;
-            return Registry.TryGetValue(rewardId.Trim(), out var target) && target != null ? target.Landing : null;
+            var target = Lookup(rewardId);
+            return target != null ? target.Landing : null;
         }
 
         /// <summary>Tell the counter something landed — lets a HUD play its own punch/roll without this system
@@ -143,11 +199,21 @@ namespace PlayCard.UI.RewardFly
             float p = Mathf.Clamp01(progress01);
 
             var target = Lookup(rewardId);
+
+            if (LogPieces)
+                Debug.Log($"[RewardFlyTarget] piece '{rewardId}' p={p:0.00} " +
+                          $"target={(target != null ? target.name : "NONE")} " +
+                          $"impactSound={(target != null && target.impactSound != null ? target.impactSound.name : "none")} " +
+                          $"progressListeners={(BurstProgress != null ? BurstProgress.GetInvocationList().Length : 0)}");
             if (target != null && punch)
             {
                 target.onPieceArrival?.Invoke();
                 target.Punch();
             }
+
+            // Its own gate, deliberately not the punch's: whether the counter kicks and whether it makes a noise are
+            // separate decisions, and a screen that wants one without the other should not have to give up both.
+            if (target != null) target.PlayImpact();
 
             // Published even with no target instance left alive (a HUD torn down mid-flight): a listener holding a
             // number still has to be told, or it waits out its timeout showing a stale figure.
@@ -155,10 +221,19 @@ namespace PlayCard.UI.RewardFly
             if (p >= 1f) EndBurst(rewardId);
         }
 
+        /// <summary>The counter that should receive this reward: the most recently enabled one still alive. That is
+        /// the topmost on screen — a popup's own counter while it's open, the HUD's underneath once it closes.</summary>
         private static RewardFlyTarget Lookup(string rewardId)
         {
             if (string.IsNullOrWhiteSpace(rewardId)) return null;
-            return Registry.TryGetValue(rewardId.Trim(), out var target) ? target : null;
+            if (!Registry.TryGetValue(rewardId.Trim(), out var list)) return null;
+
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                if (list[i] != null) return list[i];
+                list.RemoveAt(i);   // destroyed without OnDisable (a scene unload) — tidy as we go
+            }
+            return null;
         }
 
         /// <summary>
@@ -181,6 +256,44 @@ namespace PlayCard.UI.RewardFly
             _punch = StartCoroutine(PunchRoutine(rect));
         }
 
+        /// <summary>
+        /// One chip's landing sound, on a ROTATING owner.
+        ///
+        /// The rotation is the whole trick. Sonity keys a voice on (SoundEvent, owner Transform) and allows one per
+        /// key — re-triggering the same pair stops the instance that was playing. Firing twenty landings against this
+        /// one transform would therefore produce a single stuttering tick rather than a stream of coins, and a poly
+        /// group cannot fix it because a poly group only ever LOWERS the limit.
+        ///
+        /// The owners are parked on the listener because this lives on a Canvas, whose world coordinates run to
+        /// hundreds of units: a 3D SoundContainer played out there attenuates to nothing, logs a cheerful "Play", and
+        /// is silent in the headphones. On the listener a 3D container is centred and a 2D one ignores position.
+        /// </summary>
+        public void PlayImpact()
+        {
+            if (!ImpactSoundsEnabled || impactSound == null || !isActiveAndEnabled) return;
+
+            if (_voices == null || _voices.Length != impactVoices)
+            {
+                var old = _voices;
+                _voices = new Transform[Mathf.Max(1, impactVoices)];
+                for (int i = 0; i < _voices.Length; i++)
+                {
+                    if (old != null && i < old.Length && old[i] != null) { _voices[i] = old[i]; continue; }
+                    var go = new GameObject($"ImpactVoice_{i}");
+                    go.transform.SetParent(transform, false);
+                    _voices[i] = go.transform;
+                }
+            }
+
+            _voice = (_voice + 1) % _voices.Length;
+            var voice = _voices[_voice] != null ? _voices[_voice] : transform;
+
+            if (_listener == null) _listener = FindAnyObjectByType<AudioListener>();
+            if (_listener != null) voice.position = _listener.transform.position;
+
+            impactSound.Play(voice);
+        }
+
         private IEnumerator PunchRoutine(RectTransform rect)
         {
             float t = 0f;
@@ -200,5 +313,9 @@ namespace PlayCard.UI.RewardFly
         private Coroutine _punch;
         private Vector3 _baseScale = Vector3.one;
         private bool _baseCaptured;
+
+        private Transform[] _voices;
+        private int _voice;
+        private AudioListener _listener;
     }
 }

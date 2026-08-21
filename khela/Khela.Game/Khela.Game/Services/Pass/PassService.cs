@@ -11,6 +11,7 @@ using Khela.Game.Services.Rewards;
 using Khela.Game.Services.Wallet;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Khela.Game.Services.Pass
 {
@@ -68,11 +69,18 @@ namespace Khela.Game.Services.Pass
         private readonly IWalletService _wallet;
         private readonly IRedisService _redis;
         private readonly ILogger<PassService> _logger;
+        private readonly IOptionsMonitor<RewardOptions> _rewardOptions;
+
+        /// <summary>Rewards:BypassAdForMissedDays — read per call, never captured, so flipping it takes effect at once.</summary>
+        /// <summary>Missed days free? Redis first, appsettings second — see RewardSwitches. One switch drives this
+        /// ladder and the daily one, so a build can never charge for one and not the other.</summary>
+        private Task<bool> BypassAdsAsync() => Khela.Game.Services.Rewards.RewardSwitches.BypassAdForMissedDaysAsync(_redis, _rewardOptions);
 
         public PassService(AppDbContext db, IRewardGrantService grants, IRewardService rewards, IWalletService wallet,
-            IRedisService redis, ILogger<PassService> logger)
+            IRedisService redis, ILogger<PassService> logger, IOptionsMonitor<RewardOptions> rewardOptions)
         {
             _db = db; _grants = grants; _rewards = rewards; _wallet = wallet; _redis = redis; _logger = logger;
+            _rewardOptions = rewardOptions;
         }
 
         // ---------------- reads ----------------
@@ -87,7 +95,7 @@ namespace Khela.Game.Services.Pass
             var adUnlocksUsed = claims.Count(c => c.WasAdUnlock);
             int creditsHeld = await UnspentAdCreditsAsync(userId, ctx.Cycle);
 
-            var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate, claimedNodes, ctx.IsGolden, adUnlocksUsed);
+            var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate, claimedNodes, ctx.IsGolden, adUnlocksUsed, await BypassAdsAsync());
 
             var dto = new PassStateDto
             {
@@ -155,7 +163,7 @@ namespace Khela.Game.Services.Pass
                 AdsPerCatchUp = ctx.Cycle.AdsPerCatchUp,
                 MaxAdCatchUpsPerCycle = ctx.Cycle.MaxAdCatchUpsPerCycle,
                 Availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate,
-                    new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock)),
+                    new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock), await BypassAdsAsync()),
             };
         }
 
@@ -177,7 +185,7 @@ namespace Khela.Game.Services.Pass
             var claims = await ClaimsAsync(userId, ctx.Cycle);
             var claimedNodes = new HashSet<int>(claims.Select(c => c.Node));
             var adUnlocksUsed = claims.Count(c => c.WasAdUnlock);
-            var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate, claimedNodes, ctx.IsGolden, adUnlocksUsed);
+            var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate, claimedNodes, ctx.IsGolden, adUnlocksUsed, await BypassAdsAsync());
 
             // Re-drive an interrupted claim before anything else: a row with CompletedAt == null still owes payloads.
             var pending = claims.FirstOrDefault(c => c.CompletedAt == null && (node == null || c.Node == node.Value));
@@ -236,7 +244,7 @@ namespace Khela.Game.Services.Pass
 
             var claims = await ClaimsAsync(userId, ctx.Cycle);
             var availability = PassCatalog.Availability(ctx.Cycle, ctx.LocalDate,
-                new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock));
+                new HashSet<int>(claims.Select(c => c.Node)), ctx.IsGolden, claims.Count(c => c.WasAdUnlock), await BypassAdsAsync());
 
             var todo = PassClaimPlan.ClaimAllOrder(availability, claims.Where(c => c.CompletedAt == null).Select(c => c.Node));
             if (todo.Count == 0) return Fail("Nothing to claim.");

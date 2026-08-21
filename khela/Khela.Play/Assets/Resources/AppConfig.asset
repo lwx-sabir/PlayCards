@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 627860b8f2a978145b0c5e796cc2d390, type: 3}
   m_Name: AppConfig
   m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Core.AppConfig
-  baseApiUrl: https://khela.casuallabinteractive.com
+  baseApiUrl: http://localhost:5044
   hubPath: /blackjackhub
   threeCardHubPath: /threecardhub
   requestTimeoutSeconds: 20

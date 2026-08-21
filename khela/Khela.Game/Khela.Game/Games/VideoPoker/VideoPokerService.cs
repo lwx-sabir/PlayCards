@@ -545,6 +545,7 @@ namespace Khela.Game.Games.VideoPoker
                         await AccrueLoyaltyAsync(uid, cleanWager, state.HandId);
                         await AccrueMissionsAsync(uid, counters, cleanWager, state.HandId);
                     }
+                    await AccruePiggyAsync(uid, cleanWager, net, state.HandId);   // own switch — see Piggy:Enabled
                 }
             }
             catch (Exception ex) { _logger.LogError(ex, "VP stats/accrual failed for hand {Hand}", state.HandId); }
@@ -660,6 +661,19 @@ namespace Khela.Game.Games.VideoPoker
                 await loyalty.AccrueForRoundAsync(userId, cleanWager, handId);
             }
             catch (Exception ex) { _logger.LogError(ex, "VP loyalty accrual failed for user {UserId} hand {Hand}", userId, handId); }
+        }
+
+        /// <summary>Banks a share of the hand's CLEAN wager into the piggy bank. Idempotent per (hand, user).
+        /// Not gated on the progression flag — the piggy has its own switch. Best-effort; never breaks settle.</summary>
+        private async Task AccruePiggyAsync(Guid userId, decimal cleanWager, decimal net, string handId)
+        {
+            try
+            {
+                using var scope = _scopes.CreateScope();
+                var piggy = scope.ServiceProvider.GetRequiredService<Khela.Game.Services.Piggy.IPiggyService>();
+                await piggy.AccrueForRoundAsync(userId, cleanWager, net < 0m ? -net : 0m, handId);
+            }
+            catch (Exception ex) { _logger.LogError(ex, "VP piggy accrual failed for user {UserId} hand {Hand}", userId, handId); }
         }
 
         private async Task AccrueMissionsAsync(Guid userId, IReadOnlyDictionary<string, long> counters, decimal cleanWager, string handId)

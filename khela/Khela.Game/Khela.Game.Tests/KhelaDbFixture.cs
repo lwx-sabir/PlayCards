@@ -12,6 +12,7 @@ using Khela.Game.Services.Wallet;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using Xunit;
 
@@ -84,7 +85,11 @@ namespace Khela.Game.Tests
                 NullLogger<RewardGrantService>.Instance);
 
             var rewards = new RewardService(db, wallet, grants, NullLogger<RewardService>.Instance);
-            var pass = new PassService(db, grants, rewards, wallet, new NoRedis(), NullLogger<PassService>.Instance);
+            // Ad bypass OFF: these tests assert the REAL catch-up rules, so the switch that hands missed days over
+            // free must not be on.
+            var rewardOptions = new StaticOptionsMonitor<RewardOptions>(new RewardOptions { BypassAdForMissedDays = false });
+
+            var pass = new PassService(db, grants, rewards, wallet, new NoRedis(), NullLogger<PassService>.Instance, rewardOptions);
             return new PassStack(db, wallet, rewards, pass);
         }
 
@@ -162,6 +167,18 @@ namespace Khela.Game.Tests
     /// overlay read is wrapped in a catch that falls back to <see cref="PassCatalog.Defaults"/>), and these tests prove
     /// it rather than assuming it.
     /// </summary>
+    /// <summary>An <see cref="IOptionsMonitor{T}"/> over a fixed value — the production code reads options through a
+    /// monitor so a config change lands without a restart, and a test just needs one value that never moves.</summary>
+    public sealed class StaticOptionsMonitor<T> : IOptionsMonitor<T>
+    {
+        private readonly T _value;
+        public StaticOptionsMonitor(T value) => _value = value;
+
+        public T CurrentValue => _value;
+        public T Get(string name) => _value;
+        public IDisposable OnChange(Action<T, string> listener) => null;   // nothing ever changes
+    }
+
     public sealed class NoRedis : IRedisService
     {
         public IDatabase GetDatabase() => throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "no redis in tests");

@@ -140,6 +140,60 @@ namespace PlayCard.Game.Table
         /// warning. Server-computed per seat, matched to us by id.</summary>
         public bool AmIIdleKickWarned => MySeatView?.IdleKickWarning ?? false;
 
+        /// <summary>
+        /// The BOARD says we hold a seat. Deliberately not <c>MySeat &gt; 0</c>: that property falls back to the
+        /// lobby-picked <see cref="GameSession.SeatNumber"/> so the camera can frame our seat before the first board
+        /// lands, which would make a spectator look seated. Sit UI must gate on this stricter form.
+        /// </summary>
+        public bool AmISeated => MySeatView != null;
+
+        /// <summary>Raised whenever a sit request starts or finishes, so seat UI can grey itself for the round trip
+        /// without polling. <c>true</c> = in flight.</summary>
+        public event Action<bool> SittingChanged;
+
+        /// <summary>True while a <see cref="SitAsync"/> round trip is outstanding.</summary>
+        public bool Sitting { get; private set; }
+
+        /// <summary>
+        /// TAKE A SEAT from inside the table scene. Until this existed the table had no way to seat anyone: the join
+        /// is issued by the LOBBY, and <see cref="Start"/> deliberately skips it when we arrived with a table id
+        /// (<c>fromLobby</c>). So every path that opens the table WITHOUT joining first — Spectate/View, or a Play Now
+        /// that carries a table id — stranded the player at a table they could not sit down at, with Back as the only
+        /// exit.
+        ///
+        /// Server-authoritative: it validates the seat is in play, unoccupied and ours to take, all under the table
+        /// lock, so two players racing for the last seat cannot both win it — the loser gets a 400 and we re-read the
+        /// board rather than guessing. We only cache <see cref="GameSession.SeatNumber"/> AFTER it accepts.
+        /// </summary>
+        /// <returns>true if we are seated when this returns.</returns>
+        public async Task<bool> SitAsync(int seatNumber)
+        {
+            if (seatNumber <= 0 || string.IsNullOrEmpty(TableId)) return false;
+            if (Sitting || AmISeated) return false;      // one request at a time; never sit twice
+
+            Sitting = true;
+            SittingChanged?.Invoke(true);
+            try
+            {
+                // The same display name the lobby sends. The seat stores whatever arrives at join, so a literal here
+                // would brand our banner "Player" on every other client — the exact bug the lobby path already fixed.
+                var joinName = ProfileManager.Instance != null ? ProfileManager.Instance.DisplayName : null;
+                if (string.IsNullOrWhiteSpace(joinName)) joinName = "Player";
+
+                bool ok = await Do(Rest.JoinAsync(TableId, joinName, "", seatNumber));
+                // Re-read either way. On success it confirms the seat is really ours; on a lost race it corrects the
+                // stale board that made us think the seat was free.
+                await RefreshAsync();
+                if (ok && AmISeated) GameSession.SeatNumber = seatNumber;
+                return ok && AmISeated;
+            }
+            finally
+            {
+                Sitting = false;
+                SittingChanged?.Invoke(false);
+            }
+        }
+
         private async void Start()
         {
             // Everything between the scene-load mark and this one is Unity building the scene — every Awake, every
@@ -293,10 +347,33 @@ namespace PlayCard.Game.Table
 
             // Re-open betting for this player when a DIFFERENT window arms, or once the round is actually running.
             // Keyed on the deadline rather than a bool so a commit can't leak into the next hand.
-            if (BettingCommitted && (Board.RoundInProgress || Board.BettingExpiresAt != _committedForWindow))
+            //
+            // ⚠️ A CHANGED DEADLINE IS NOT A NEW WINDOW. The /presented handshake a few lines below COLLAPSES this very
+            // window — the server trims BettingExpiresAt the moment our round-end ceremony reports in (PresentedAsync).
+            // Plain inequality treated that trim as the next hand and dropped the commit, and because the collapse
+            // fires exactly when the ceremony ends, it landed inside the gap between pressing Repeat and the round
+            // actually starting: the whole betting presentation came back for about a second — bet camera and FOV, the
+            // bet HUD, and the window-open sting a SECOND time — before the round-started board snapped it away again.
+            //
+            // The collapse can only ever move the deadline EARLIER (PresentedAsync will not extend past its ceiling),
+            // and a genuinely new window is always armed LATER, at the next settle. So: a later deadline is a new
+            // window and re-opens betting; an earlier one is this window being trimmed, and we absorb it and stay
+            // committed. An armed/cleared transition is a real change either way.
+            if (BettingCommitted)
             {
-                BettingCommitted = false;
-                _committedForWindow = null;
+                var window = Board.BettingExpiresAt;
+                bool armedChanged = window.HasValue != _committedForWindow.HasValue;
+                bool newerWindow = window.HasValue && _committedForWindow.HasValue
+                                   && window.Value > _committedForWindow.Value;
+                if (Board.RoundInProgress || armedChanged || newerWindow)
+                {
+                    BettingCommitted = false;
+                    _committedForWindow = null;
+                }
+                else
+                {
+                    _committedForWindow = window;   // absorb the collapse so the next window still compares as later
+                }
             }
 
             // BETWEEN ROUNDS the same handshake collapses the BETTING window. The server arms it at settle with an
@@ -425,6 +502,7 @@ namespace PlayCard.Game.Table
 
         private void HandleConnected()
         {
+            _hubUp = true;
             OnConnectionChanged?.Invoke(true);
             // Re-join the table group + resync on (re)connect: a reconnect gets a NEW connection id and is
             // dropped from the server's group, so without this the board freezes after a network blip.
@@ -437,7 +515,19 @@ namespace PlayCard.Game.Table
             catch (Exception ex) { Debug.LogWarning($"[TableController] rejoin failed: {ex.Message}"); }
         }
 
-        private void HandleDisconnected(string reason) => OnConnectionChanged?.Invoke(false);
+        private void HandleDisconnected(string reason)
+        {
+            _hubUp = false;
+            OnConnectionChanged?.Invoke(false);
+        }
+
+        /// <summary>
+        /// Is the PUSH channel live? Starts false and is driven only by the hub's own connect/disconnect events, so a
+        /// hub that never came up is treated the same as one that dropped — both need the heartbeat loop to pull the
+        /// board over REST instead. Deliberately not read from the hub component: the events are what the rest of the
+        /// table already trusts, and a second source of truth here could disagree with the overlay the player sees.
+        /// </summary>
+        private bool _hubUp;
 
         // ---- intents (UI → server-authoritative REST) ----
 
@@ -557,6 +647,13 @@ namespace PlayCard.Game.Table
             if (_leaving) return;
             _leaving = true;
             StopHeartbeat();
+
+            // Stop the overlay claiming to RECONNECT. It is driven purely by transport state, so a drop that ends in
+            // the seat being taken leaves it saying "Reconnecting…" all the way out — the one moment that word is
+            // definitely false. There is nothing left to reconnect TO: the seat is gone server-side and we are leaving
+            // for the lobby, where PendingNotice says what happened. Offline hides the overlay rather than replacing
+            // one wrong message with another.
+            PlayCard.App.NetworkStatus.Report(PlayCard.App.NetState.Offline, "removed from the table");
             GameSession.SeatNumber = 0;
             ClearSessionStart();   // the sitting is over — the next one starts a fresh hand log
             GameSession.PendingNotice = _lastIdleWarned
@@ -624,6 +721,23 @@ namespace PlayCard.Game.Table
                 {
                     try { await _hub.HeartbeatAsync(TableId); }
                     catch (Exception ex) { Debug.LogWarning($"[TableController] heartbeat failed: {ex.Message}"); }
+
+                    // WHILE THE PUSH CHANNEL IS DOWN, PULL. There are only two sources of board state — the hub push
+                    // and an explicit RefreshAsync — and neither is periodic, so a dead socket froze the board
+                    // indefinitely: the felt kept showing us seated, every button stayed live, and the server's
+                    // reaper took the seat 30s in. The player then tapped DEAL, which goes over REST and therefore
+                    // still reached a server that no longer had them at the table, and got a rejection with no way
+                    // to understand it. The self-removal watch that exists for exactly this is in HandleBoard, so
+                    // with no boards arriving it could never fire and never sent them back to the lobby.
+                    //
+                    // This is what the old polling transport did for free — see this loop's own note about "a REST
+                    // call on polling". Best SignalR replaced the push channel and took the periodic pull with it.
+                    // RequestBoardAsync already falls back to REST when the socket is down, so one call covers both.
+                    if (!_hubUp)
+                    {
+                        try { await RefreshAsync(); }
+                        catch (Exception ex) { Debug.LogWarning($"[TableController] offline board pull failed: {ex.Message}"); }
+                    }
                 }
             }
         }
