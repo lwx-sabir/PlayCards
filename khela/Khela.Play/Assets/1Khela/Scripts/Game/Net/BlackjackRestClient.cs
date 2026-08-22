@@ -84,7 +84,11 @@ namespace PlayCard.Game.Net
             {
                 // If the response carries the post-credit chip balance, pass it so WalletManager updates INSTANTLY;
                 // the reconcile re-pull then fills the other currencies (e.g. Kash from a chest).
+                // A hint of 0 is treated as "unknown": a REFUSAL (HTTP 200, Ok=false — a redeem the store rejected, an exchange
+                // with too few chips) leaves the balance fields at their default 0, and pushing that would zero every chip
+                // HUD until the re-pull. Null re-pulls instead, which yields the real 0 on the rare account that has none.
                 decimal? chips = (res.Value as IChipBalanceResult)?.NewChipBalance;
+                if (chips == 0m) chips = null;
                 BalanceMaybeChanged?.Invoke(chips);
             }
             return res;
@@ -226,6 +230,24 @@ namespace PlayCard.Game.Net
         /// <summary>My purchase history (support / restore UI).</summary>
         public Task<ApiResult<List<StorePurchaseDto>>> GetStorePurchasesAsync(int take = 50)
             => SendAsync<List<StorePurchaseDto>>(HttpMethod.Get, $"/api/store/purchases?take={take}");
+
+        // ---- Currency exchange (docs/EXCHANGE_SPEC.md) ----
+        /// <summary>Every exchange pair with MY availability, usage against the caps, and my balances — one call for the screen.</summary>
+        public Task<ApiResult<Khela.Common.Exchange.ExchangeCatalogDto>> GetExchangeCatalogAsync()
+            => SendAsync<Khela.Common.Exchange.ExchangeCatalogDto>(HttpMethod.Get, "/api/exchange");
+
+        /// <summary>"What would it cost?" — the server's arithmetic and refusal reasons; no writes.</summary>
+        public Task<ApiResult<Khela.Common.Exchange.ExchangeQuoteDto>> ExchangeQuoteAsync(string pairKey, decimal toAmount)
+            => SendAsync<Khela.Common.Exchange.ExchangeQuoteDto>(HttpMethod.Post, "/api/exchange/quote", new Khela.Common.Exchange.ExchangeQuoteRequest { PairKey = pairKey, ToAmount = toAmount });
+
+        /// <summary>Do it. <paramref name="requestId"/> = a fresh Guid per tap; a retry with the same id replays the original outcome and
+        /// moves nothing. Routed through <c>BalanceChangingAsync</c> so every balance HUD repaints from the server's post-exchange balances.</summary>
+        public Task<ApiResult<ExchangeResultData>> ExchangeAsync(string pairKey, decimal toAmount, Guid requestId)
+            => BalanceChangingAsync<ExchangeResultData>(HttpMethod.Post, "/api/exchange", new Khela.Common.Exchange.ExchangeRequest { PairKey = pairKey, ToAmount = toAmount, RequestId = requestId });
+
+        /// <summary>My completed exchanges, newest first.</summary>
+        public Task<ApiResult<List<Khela.Common.Exchange.ExchangeRecordDto>>> GetExchangeHistoryAsync(int take = 50)
+            => SendAsync<List<Khela.Common.Exchange.ExchangeRecordDto>>(HttpMethod.Get, $"/api/exchange/history?take={take}");
 
         /// <summary>Another player's PUBLIC profile (GET /api/profile/{userId}). 404/null if blocked or not found.</summary>
         public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)
