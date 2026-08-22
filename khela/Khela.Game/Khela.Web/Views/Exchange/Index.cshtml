@@ -1,0 +1,254 @@
+@using System.Globalization
+@using System.Linq
+@using Khela.Game.Services.Exchange
+@using Khela.Web.Controllers
+@model ExchangeIndexVm
+@{
+    ViewData["Title"] = "Exchange";
+    ViewData["Crumb"] = "Exchange";
+    ViewData["Nav"] = "exchange";
+    string Num(decimal d) => d.ToString("#,0.####", CultureInfo.InvariantCulture);
+    string Win(ExchangePairDef p) => p.FromUtc.HasValue || p.ToUtc.HasValue ? (p.FromUtc?.ToString("MM-dd HH:mm") ?? "…") + " → " + (p.ToUtc?.ToString("MM-dd HH:mm") ?? "…") : "";
+    string Caps(ExchangePairDef p)
+    {
+        var parts = new List<string>();
+        if (p.MaxToPerTx > 0m) parts.Add("≤ " + Num(p.MaxToPerTx) + "/tx");
+        if (p.DailyCapTo > 0m) parts.Add("≤ " + Num(p.DailyCapTo) + "/day");
+        if (p.LifetimeCapTo > 0m) parts.Add("≤ " + Num(p.LifetimeCapTo) + " ever");
+        if (p.MinLevel > 0) parts.Add("lvl " + p.MinLevel + "+");
+        return string.Join(" · ", parts);
+    }
+}
+
+<h1 class="page-title">Exchange</h1>
+<p class="page-sub">
+    Currency exchange — any pair A → B at a fixed rate (docs/EXCHANGE_SPEC.md). The player chooses the amount of <b>B</b>; the cost is
+    <code>amount × rate</code> exactly, never a floor. Validated exactly as the game validates: <b>Tokens can never be on either side</b>,
+    a pair and its reverse must <b>lose value round-trip</b>, one enabled pair per route. Read by the game from Redis <code>khela:exchange</code>
+    (~15 s cache); every exchange keeps its own record of the rate it used, so editing here never rewrites history.
+    <strong>@(Model.Overridden ? "A saved catalog is live." : "Using the built-in catalog (E-03: chips → Kash, 1,000,000 : 1, one way).")</strong>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+@* ---------------------------------------------------------------- switch + status ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Status</h3>
+        <span class="dim" style="font-size:12.5px">the kill switch lives on the settings hash (<code>Exchange:Enabled</code>) · live within ~15 s</span>
+    </div>
+    <div style="display:flex; gap:18px; flex-wrap:wrap; padding:14px 16px; align-items:flex-start">
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Exchange</div>
+            <span class="pill @(Model.SwitchOn && Model.Config.Enabled ? "active" : "suspend")">@(Model.SwitchOn ? (Model.Config.Enabled ? "OPEN" : "CATALOG OFF") : "CLOSED")</span>
+            <form asp-action="Switch" method="post" style="display:inline; margin-left:8px">
+                <input type="hidden" name="on" value="@(Model.SwitchOn ? "false" : "true")" />
+                <button class="btn btn-outline" type="submit">@(Model.SwitchOn ? "Switch OFF" : "Switch ON")</button>
+            </form>
+        </div>
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Exchanges</div>
+            <a class="btn btn-outline" asp-action="Ledger">@Model.CountTotal.ToString("#,0") total · @Model.Count30d.ToString("#,0") in 30 d</a>
+        </div>
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Store yardsticks</div>
+            <span class="dim" style="font-size:12.5px">best pack @Num(Model.BestChipsPerUsd) chips/$ · @Num(Model.BestKashPerUsd) Kash/$</span>
+        </div>
+    </div>
+    @if (Model.Notes.Count > 0)
+    {
+        <div style="padding:0 16px 14px">
+            @foreach (var n in Model.Notes)
+            {
+                <div style="color:@(n.Contains("OK.") ? "var(--muted,#9aa4b2)" : "var(--warn,#fbbf24)"); font-size:12.5px">@(n.Contains("OK.") ? "·" : "⚠") @n</div>
+            }
+        </div>
+    }
+</div>
+
+@* ---------------------------------------------------------------- pairs ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Pairs</h3>
+        <span class="dim" style="font-size:12.5px">@Model.Config.Pairs.Count pair(s) · rate = units of FROM per ONE unit of TO</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Key</th><th>From → To</th><th>Rate</th><th>Step · min</th><th>Limits</th><th>Window (UTC)</th><th>Title</th><th>State</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var p in Model.Config.Pairs.OrderBy(p => p.SortOrder).ThenBy(p => p.Key))
+            {
+                <tr>
+                    <td><b>@p.Key</b></td>
+                    <td>@p.FromCurrency → <b>@p.ToCurrency</b></td>
+                    <td>@Num(p.FromPerUnit) @p.FromCurrency = 1 @p.ToCurrency</td>
+                    <td class="dim" style="font-size:12.5px">@Num(p.Step) · min @Num(p.MinTo)</td>
+                    <td class="dim" style="font-size:12px">@Caps(p)</td>
+                    <td class="dim" style="font-size:12px">@Win(p)</td>
+                    <td class="dim" style="font-size:12.5px">@p.Title</td>
+                    <td><span class="pill @(p.Enabled ? "active" : "suspend")">@(p.Enabled ? "On" : "Off")</span></td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <button type="button" class="btn btn-outline" onclick="openEdit(this)"
+                                data-key="@p.Key" data-enabled="@p.Enabled.ToString().ToLower()" data-title="@p.Title" data-desc="@p.Description"
+                                data-from="@p.FromCurrency" data-to="@p.ToCurrency"
+                                data-rate="@p.FromPerUnit.ToString(CultureInfo.InvariantCulture)" data-step="@p.Step.ToString(CultureInfo.InvariantCulture)"
+                                data-min="@p.MinTo.ToString(CultureInfo.InvariantCulture)" data-max="@p.MaxToPerTx.ToString(CultureInfo.InvariantCulture)"
+                                data-daily="@p.DailyCapTo.ToString(CultureInfo.InvariantCulture)" data-life="@p.LifetimeCapTo.ToString(CultureInfo.InvariantCulture)"
+                                data-minlevel="@p.MinLevel" data-sort="@p.SortOrder"
+                                data-fromutc="@(p.FromUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")" data-toutc="@(p.ToUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")">Edit</button>
+                        <form asp-action="Toggle" method="post" style="display:inline">
+                            <input type="hidden" name="key" value="@p.Key" />
+                            <button class="btn btn-outline" type="submit">@(p.Enabled ? "Turn off" : "Turn on")</button>
+                        </form>
+                        <form asp-action="Delete" method="post" style="display:inline" onsubmit="return confirm('Delete @p.Key? Turn it off instead if it was ever live.');">
+                            <input type="hidden" name="key" value="@p.Key" />
+                            <button class="btn btn-outline" type="submit">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            @if (Model.Config.Pairs.Count == 0)
+            {
+                <tr><td colspan="9" class="dim" style="padding:18px 16px">No pairs — nothing is exchangeable.</td></tr>
+            }
+        </tbody>
+    </table>
+    <form asp-action="Create" method="post" style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
+        <input name="key" class="vip-select" style="width:220px" placeholder="new pair key, e.g. kash_gems" />
+        <button type="submit" class="btn btn-primary">Add pair</button>
+        <span class="dim" style="font-size:12px">Arrives disabled as Chips → Kash at 1,000,000 : 1 — set the currencies and the rate, then turn it on.</span>
+    </form>
+</div>
+
+@* ---------------------------------------------------------------- backups + JSON ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head"><h3>Backups</h3><span class="dim" style="font-size:12.5px">before each save · never auto-deleted</span></div>
+    <table class="data-table">
+        <thead><tr><th>Taken (UTC)</th><th>File</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var b in Model.Backups)
+            {
+                <tr>
+                    <td>@b.TakenUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td class="dim">@b.FileName</td>
+                    <td class="dim">@((b.Bytes / 1024.0).ToString("0.0")) KB</td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <a class="btn btn-outline" asp-action="Download" asp-route-file="@b.FileName">Download</a>
+                        <form asp-action="Restore" method="post" style="display:inline" onsubmit="return confirm('Restore @b.FileName? The current catalog is backed up first.');">
+                            <input type="hidden" name="file" value="@b.FileName" />
+                            <button class="btn btn-outline" type="submit">Restore</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            @if (Model.Backups.Count == 0)
+            {
+                <tr><td colspan="4" class="dim" style="padding:18px 16px">No snapshots yet — one is written the first time you save.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">bulk edits and restores — the exact document the game reads</span></div>
+    <form asp-action="SaveJson" method="post">
+        <textarea name="json" rows="14" class="json-editor" spellcheck="false">@Model.Json</textarea>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save JSON</button>
+            <span class="dim" style="font-size:12px">Validated as the game would; a saved document is live within ~15 s.</span>
+        </div>
+    </form>
+    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in catalog? The current one is backed up first.');" style="margin-top:10px">
+        <button type="submit" class="btn btn-outline">Reset to defaults</button>
+    </form>
+</div>
+
+@* ---------------------------------------------------------------- edit modal ---------------------------------------------------------------- *@
+<div id="editModal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="emTitle" style="width:min(720px,96vw)">
+        <div class="modal-head">
+            <div><div id="emTitle" class="modal-title">Edit pair</div><div class="dim" style="font-size:12px" id="emSub"></div></div>
+            <button type="button" class="modal-close" onclick="closeEdit()" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form asp-action="Save" method="post" id="emForm">
+                <input type="hidden" name="Key" id="f_key" />
+                <div class="grid2">
+                    <label>Enabled <input type="checkbox" name="Enabled" value="true" id="f_enabled" /></label>
+                    <label>Sort order <input name="SortOrder" id="f_sort" type="number" class="vip-select" /></label>
+                    <label>From currency
+                        <select name="FromCurrency" id="f_from" class="vip-select"><option>Chips</option><option>Kash</option><option>Gems</option><option>Coins</option></select>
+                    </label>
+                    <label>To currency
+                        <select name="ToCurrency" id="f_to" class="vip-select"><option>Kash</option><option>Chips</option><option>Gems</option><option>Coins</option></select>
+                    </label>
+                    <label class="span2">Rate — units of FROM per ONE unit of TO (1,000,000 chips = 1 Kash ⇒ 1000000; 1 Kash = 500,000 chips ⇒ 0.000002)
+                        <input name="FromPerUnit" id="f_rate" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Step (TO granularity; 1 = whole units). Step × rate must be ≥ 0.0001 FROM and a whole 0.0001 — the wallet's precision (0.000002 × step 50 = 0.0001 ✓)
+                        <input name="Step" id="f_step" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Minimum (TO units) <input name="MinTo" id="f_min" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Max per exchange (0 = ∞) <input name="MaxToPerTx" id="f_max" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Daily cap per player (TO units, 0 = ∞) <input name="DailyCapTo" id="f_daily" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Lifetime cap per player (0 = ∞) <input name="LifetimeCapTo" id="f_life" type="number" step="any" min="0" class="vip-select" /></label>
+                    <label>Min level <input name="MinLevel" id="f_minlevel" type="number" min="0" class="vip-select" /></label>
+                    <label>Available from (UTC) <input name="FromUtc" id="f_fromutc" type="datetime-local" class="vip-select" /></label>
+                    <label>Available to (UTC) <input name="ToUtc" id="f_toutc" type="datetime-local" class="vip-select" /></label>
+                    <label>Title <input name="Title" id="f_title" class="vip-select" maxlength="60" /></label>
+                    <label class="span2">Description <input name="Description" id="f_desc" class="vip-select" maxlength="200" /></label>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:14px; align-items:center">
+                    <button type="submit" class="btn btn-primary">Save pair</button>
+                    <button type="button" class="btn btn-outline" onclick="closeEdit()">Cancel</button>
+                    <span class="dim" style="font-size:12px">Tokens are refused on either side. A pair + its reverse must lose value round-trip.</span>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+    .json-editor { width:100%; min-height:240px; background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:8px; padding:12px; font-family:ui-monospace,Consolas,"Courier New",monospace; font-size:12.5px; line-height:1.5; resize:vertical; }
+    .vip-select { background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:6px; padding:6px 8px; font-size:13px; width:100%; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
+    .grid2 label { display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted,#9aa4b2); }
+    .grid2 label input[type=checkbox] { width:auto; align-self:flex-start; }
+    .grid2 .span2 { grid-column:1 / span 2; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(2,6,16,.62); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal-card { background:var(--panel,#131a2a); border:1px solid var(--border,#2a3344); border-radius:14px; box-shadow:0 24px 70px rgba(0,0,0,.55); overflow:hidden; max-height:92vh; display:flex; flex-direction:column; }
+    .modal-head { display:flex; justify-content:space-between; align-items:flex-start; padding:16px 18px; border-bottom:1px solid var(--border,#2a3344); }
+    .modal-title { font-weight:600; font-size:16px; }
+    .modal-close { background:none; border:none; color:var(--text,#e6e9ef); font-size:24px; cursor:pointer; line-height:1; }
+    .modal-body { padding:16px 18px 18px; overflow:auto; }
+</style>
+
+@section Scripts {
+    <script>
+        function setVal(id, v) { var el = document.getElementById(id); if (!el) return; el.value = v == null ? '' : v; }
+        function setChk(id, v) { var el = document.getElementById(id); if (!el) return; el.checked = (v === 'true'); }
+        function openEdit(btn) {
+            var d = btn.dataset;
+            setVal('f_key', d.key); document.getElementById('emSub').textContent = d.key;
+            setChk('f_enabled', d.enabled);
+            setVal('f_sort', d.sort); setVal('f_from', d.from); setVal('f_to', d.to); setVal('f_rate', d.rate); setVal('f_step', d.step);
+            setVal('f_min', d.min); setVal('f_max', d.max); setVal('f_daily', d.daily); setVal('f_life', d.life); setVal('f_minlevel', d.minlevel);
+            setVal('f_fromutc', d.fromutc); setVal('f_toutc', d.toutc); setVal('f_title', d.title); setVal('f_desc', d.desc);
+            document.getElementById('editModal').classList.add('open');
+        }
+        function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
+        document.querySelectorAll('.modal-overlay').forEach(function (ov) { ov.addEventListener('click', function (e) { if (e.target === this) this.classList.remove('open'); }); });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(function (m) { m.classList.remove('open'); }); });
+        (function () {
+            var openKey = '@(Model.EditKey ?? "")';
+            if (!openKey) return;
+            var btn = document.querySelector('button[data-key="' + openKey.replace(/"/g, '') + '"]');
+            if (btn) openEdit(btn);
+        })();
+    </script>
+}

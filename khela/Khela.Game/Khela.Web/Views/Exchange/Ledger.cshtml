@@ -1,0 +1,84 @@
+@using System.Globalization
+@using Khela.Web.Controllers
+@model ExchangeLedgerVm
+@{
+    ViewData["Title"] = "Exchange ledger";
+    ViewData["Crumb"] = "Exchange · Ledger";
+    ViewData["Nav"] = "exchange";
+    string Num(decimal d) => d.ToString("#,0.####", CultureInfo.InvariantCulture);
+    int pages = (Model.Total + Model.PageSize - 1) / Model.PageSize;
+}
+
+<h1 class="page-title">Exchange ledger</h1>
+<p class="page-sub">
+    Every currency exchange the server has executed (<code>CurrencyExchanges</code>). The money lives in the wallet ledger — both legs carry the
+    exchange id in their correlation ids (<code>xchg:&lt;id&gt;:d</code> / <code>:c</code>). Read-only. Search by player (name / Player ID / email / user id),
+    exchange id or request id.
+</p>
+
+<div class="panel">
+    <div class="panel-head"><h3>Last 30 days by pair</h3></div>
+    <table class="data-table">
+        <thead><tr><th>Pair</th><th>Exchanges</th><th>From (sunk)</th><th>To (issued)</th></tr></thead>
+        <tbody>
+            @foreach (var t in Model.Totals30d)
+            {
+                <tr><td><b>@t.PairKey</b></td><td>@t.Count.ToString("#,0")</td><td>@Num(t.FromAmount)</td><td>@Num(t.ToAmount)</td></tr>
+            }
+            @if (Model.Totals30d.Count == 0)
+            {
+                <tr><td colspan="4" class="dim" style="padding:14px 16px">Nothing in the last 30 days.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<form asp-action="Ledger" method="get" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px">
+    <input name="q" value="@Model.Query" class="vip-select" style="width:300px" placeholder="player name / Player ID / email / user id / exchange id" />
+    <select name="pair" class="vip-select" style="width:200px">
+        <option value="">any pair</option>
+        @foreach (var k in Model.Pairs) { <option value="@k" selected="@(k == Model.Pair)">@k</option> }
+    </select>
+    <button type="submit" class="btn btn-primary">Search</button>
+    <a class="btn btn-outline" asp-action="Ledger">Clear</a>
+    <a class="btn btn-outline" asp-action="Index">← Pairs</a>
+    <span class="dim" style="font-size:12px">@Model.Total.ToString("#,0") row(s)@(Model.NotFound ? " — no player matched" : "")</span>
+</form>
+
+<div class="panel">
+    <table class="data-table">
+        <thead><tr><th>When (UTC)</th><th>Player</th><th>Pair</th><th>Paid</th><th>Got</th><th>Rate</th><th>Status</th><th>Ids</th></tr></thead>
+        <tbody>
+            @foreach (var r in Model.Rows)
+            {
+                var x = r.Row;
+                <tr>
+                    <td class="dim" style="font-size:12px; white-space:nowrap">@x.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@(r.PlayerName ?? "—")<div class="dim" style="font-size:11px"><code>@x.UserId.ToString().Substring(0, 8)</code></div></td>
+                    <td><b>@x.PairKey</b></td>
+                    <td>@Num(x.FromAmount) @x.FromCurrency</td>
+                    <td>@Num(x.ToAmount) @x.ToCurrency</td>
+                    <td class="dim" style="font-size:12px">@Num(x.RateFromPerUnit) : 1</td>
+                    <td><span class="pill @(x.Status == "Completed" ? "active" : x.Status == "Failed" ? "suspend" : "pending")">@x.Status</span>@if (!string.IsNullOrEmpty(x.Error)) { <div class="dim" style="font-size:11px">@x.Error</div> }</td>
+                    <td class="dim" style="font-size:11px"><code>@x.Id.ToString("N").Substring(0, 8)</code> · req <code>@x.RequestId.ToString("N").Substring(0, 8)</code></td>
+                </tr>
+            }
+            @if (Model.Rows.Count == 0)
+            {
+                <tr><td colspan="8" class="dim" style="padding:18px 16px">No exchanges.</td></tr>
+            }
+        </tbody>
+    </table>
+    @if (pages > 1)
+    {
+        <div style="display:flex; gap:8px; padding:12px 16px; align-items:center; border-top:1px solid var(--border,#2a3344)">
+            @if (Model.Page > 0) { <a class="btn btn-outline" asp-action="Ledger" asp-route-q="@Model.Query" asp-route-pair="@Model.Pair" asp-route-page="@(Model.Page - 1)">← Newer</a> }
+            <span class="dim" style="font-size:12px">page @(Model.Page + 1) / @pages</span>
+            @if (Model.Page + 1 < pages) { <a class="btn btn-outline" asp-action="Ledger" asp-route-q="@Model.Query" asp-route-pair="@Model.Pair" asp-route-page="@(Model.Page + 1)">Older →</a> }
+        </div>
+    }
+</div>
+
+<style>
+    .vip-select { background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:6px; padding:6px 8px; font-size:13px; }
+</style>
