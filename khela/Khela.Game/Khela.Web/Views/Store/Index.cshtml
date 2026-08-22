@@ -185,6 +185,77 @@
 </div>
 
 @* ---------------------------------------------------------------- backups + raw JSON ---------------------------------------------------------------- *@
+@* ---------------------------------------------------------------- piggy pricing ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Piggy pricing</h3>
+        <span class="dim" style="font-size:12.5px">capacity from <a asp-controller="Settings" asp-action="Index">Settings ▸ Piggy</a> · price from this catalog</span>
+    </div>
+    <div class="dim" style="font-size:12.5px; padding:0 16px 12px">
+        A break always pays <b>whatever the bank holds</b>, never what the product says — so re-sizing a rung silently
+        re-prices it, and nothing keeps the two ladders in step. The top rung has no ceiling: it belongs to that level
+        <b>and above</b>. <b>Early</b> pays only what has accrued, so its chips/$ here is a best case.
+    </div>
+    @if (Model.PiggyLadder.Count == 0)
+    {
+        <div class="dim" style="padding:0 16px 18px">No piggy ladder configured.</div>
+    }
+    else
+    {
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Tier</th><th>Levels</th><th>Capacity</th>
+                    <th>Full</th><th>×2</th><th>Early</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Model.PiggyLadder)
+                {
+                    <tr>
+                        <td><b>T@row.Tier</b></td>
+                        <td class="dim" style="font-size:12.5px">@row.Levels</td>
+                        <td>@Num(row.Capacity)</td>
+                        @foreach (var o in row.Offers)
+                        {
+                            <td style="font-size:12.5px">
+                                @if (!o.Exists)
+                                {
+                                    <span style="color:var(--bad,#f87171)">missing</span>
+                                    <div class="dim" style="font-size:11.5px"><code>@o.ProductId</code></div>
+                                }
+                                else
+                                {
+                                    <a href="#" onclick="openEditById('@o.ProductId'); return false;"><code>@o.ProductId</code></a>
+                                    <div class="dim" style="font-size:11.5px">
+                                        @(o.Usd > 0m ? Usd(o.Usd) : "unpriced")
+                                        @if (o.ChipsPerUsd > 0m)
+                                        {
+                                            <text> · @Num(o.ChipsPerUsd)/$</text>
+                                        }
+                                        @if (!o.Enabled)
+                                        {
+                                            <text> · </text><span style="color:var(--warn,#fbbf24)">off</span>
+                                        }
+                                    </div>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <div style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
+            <form asp-action="CreatePiggyProducts" method="post" style="display:inline">
+                <button type="submit" class="btn @(Model.PiggyMissing > 0 ? "btn-primary" : "btn-outline")">
+                    Create missing products@(Model.PiggyMissing > 0 ? $" ({Model.PiggyMissing})" : "")
+                </button>
+            </form>
+            <span class="dim" style="font-size:12px">Created disabled at $0 with the effect and tier already set — price them, then enable.</span>
+        </div>
+    }
+</div>
+
 <div class="panel">
     <div class="panel-head"><h3>Backups</h3><span class="dim" style="font-size:12.5px">before each save · never auto-deleted</span></div>
     <table class="data-table">
@@ -213,13 +284,50 @@
     </table>
 </div>
 
+@* ---------------------------------------------------------------- sections ---------------------------------------------------------------- *@
 <div class="panel">
-    <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">bulk edits, sections, restores — the exact document the game reads</span></div>
+    <div class="panel-head">
+        <h3>Sections</h3>
+        <span class="dim" style="font-size:12.5px">the shop's tabs · a product's section must be one of these</span>
+    </div>
+    <form asp-action="SaveSections" method="post">
+        <table class="data-table">
+            <thead><tr><th style="width:26%">Key</th><th style="width:44%">Title</th><th style="width:18%">Sort</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var s in Model.Config.Sections.OrderBy(s => s.SortOrder))
+                {
+                    <tr>
+                        <td><input type="text" name="key" value="@s.Key" class="input" style="width:100%" /></td>
+                        <td><input type="text" name="title" value="@s.Title" class="input" style="width:100%" /></td>
+                        <td><input type="text" name="sort" value="@s.SortOrder" class="input" style="width:100%" /></td>
+                        <td class="dim" style="font-size:12px">@Model.Config.Products.Count(p => string.Equals(p.Section, s.Key, StringComparison.OrdinalIgnoreCase)) product(s)</td>
+                    </tr>
+                }
+                <tr>
+                    <td><input type="text" name="key" value="" placeholder="offers" class="input" style="width:100%" /></td>
+                    <td><input type="text" name="title" value="" placeholder="Offers" class="input" style="width:100%" /></td>
+                    <td><input type="text" name="sort" value="" placeholder="80" class="input" style="width:100%" /></td>
+                    <td class="dim" style="font-size:12px">new</td>
+                </tr>
+            </tbody>
+        </table>
+        <div style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
+            <button type="submit" class="btn btn-primary">Save sections</button>
+            <span class="dim" style="font-size:12px">
+                Clear a key to delete that row. Deleting a section that products still use is refused — the game's
+                validator rejects an unknown section, so the whole catalog would fail to load.
+            </span>
+        </div>
+    </form>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">bulk edits and restores — the exact document the game reads</span></div>
     <form asp-action="SaveJson" method="post">
         <textarea name="json" rows="18" class="json-editor" spellcheck="false">@Model.Json</textarea>
         <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
             <button type="submit" class="btn btn-primary">Save JSON</button>
-            <span class="dim" style="font-size:12px">Validated as the game would; a saved document is live within ~15 s. Sections (the shop tabs) are edited here.</span>
+            <span class="dim" style="font-size:12px">Validated as the game would; a saved document is live within ~15 s.</span>
         </div>
     </form>
     <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in catalog? The current one is backed up first.');" style="margin-top:10px">
@@ -319,6 +427,11 @@
             document.getElementById('editModal').classList.add('open');
         }
         function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
+        // Open the editor from anywhere that only knows the id (the piggy table) — the catalog row carries the data.
+        function openEditById(id) {
+            var btn = document.querySelector('button[data-id="' + String(id).replace(/"/g, '') + '"]');
+            if (btn) openEdit(btn);
+        }
         document.querySelectorAll('.modal-overlay').forEach(function (ov) { ov.addEventListener('click', function (e) { if (e.target === this) this.classList.remove('open'); }); });
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(function (m) { m.classList.remove('open'); }); });
         (function () {

@@ -163,6 +163,87 @@ namespace Khela.Web.Controllers
             return RedirectToAction(nameof(Index));
         }
 
+        /// <summary>
+        /// Create the products a piggy rung is missing, one per option. They arrive DISABLED at $0: a price is a
+        /// decision, and a $0 product on sale would give the bank away — this removes the tedium, never the pricing.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult CreatePiggyProducts()
+        {
+            var cfg = Effective();
+            var tiers = PiggyConfig.ParseTiers(Eff("Piggy:Tiers"), new PiggyConfig().Tiers);
+            var made = new List<string>();
+            for (int i = 0; i < tiers.Length; i++)
+            {
+                int tier = i + 1;
+                for (int k = 0; k < PiggyOptions.Length; k++)
+                {
+                    var (option, suffix, _) = PiggyOptions[k];
+                    if (FindPiggyProduct(cfg, tier, option) != null) continue;
+                    var id = $"piggy_t{tier}_{suffix}";
+                    if (cfg.Find(id) != null) continue;   // the id is taken by something that is NOT this offer — never rewrite it
+                    cfg.Products.Add(new StoreProductDef
+                    {
+                        Id = id,
+                        Enabled = false,
+                        Section = "piggy",
+                        SortOrder = tier * 10 + k,
+                        Title = option == "FullDouble" ? $"Piggy Bank T{tier} ×2" : option == "Early" ? $"Piggy Bank T{tier} (early)" : $"Piggy Bank T{tier}",
+                        StoreIds = StoreCatalog.BothStores(id),
+                        UsdReference = 0m,
+                        Effect = new StoreEffectDef
+                        {
+                            Type = StoreCatalog.EffectPiggyBreak,
+                            Arg = option,
+                            Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [StoreCatalog.PiggyTierParam] = tier.ToString(CultureInfo.InvariantCulture) },
+                        },
+                    });
+                    made.Add(id);
+                }
+            }
+            if (made.Count == 0) return Back("Every piggy rung already has its three products.");
+            return SaveConfig(cfg, $"Created {made.Count}: {string.Join(", ", made)} — all DISABLED at $0. Price them, then enable.");
+        }
+
+        /// <summary>
+        /// The shop's tabs. A row with no key is dropped, which is also how you delete one. Removing a section that
+        /// products still point at is refused rather than saved: the game's own validator rejects an unknown section,
+        /// so the catalog would fail to load rather than merely look wrong.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult SaveSections(string[] key, string[] title, string[] sort)
+        {
+            var cfg = Effective();
+            var list = new List<StoreSectionDef>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; key != null && i < key.Length; i++)
+            {
+                var k = (key[i] ?? "").Trim();
+                if (k.Length == 0) continue;
+                if (!seen.Add(k)) return Back($"Section '{k}' is listed twice.");
+                var t = title != null && i < title.Length ? Trim(title[i]) : null;
+                int order = (i + 1) * 10;
+                if (sort != null && i < sort.Length && int.TryParse(sort[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)) order = s;
+                list.Add(new StoreSectionDef { Key = k, Title = t ?? k, SortOrder = order });
+            }
+
+            if (list.Count > 0)
+            {
+                var orphans = cfg.Products
+                    .Where(p => !string.IsNullOrWhiteSpace(p.Section) && !seen.Contains(p.Section.Trim()))
+                    .Select(p => p.Id).ToList();
+                if (orphans.Count > 0)
+                    return Back($"That would orphan {orphans.Count} product(s): {string.Join(", ", orphans.Take(6))}{(orphans.Count > 6 ? " …" : "")}. Move them to a surviving section first.");
+            }
+
+            cfg.Sections = list;
+            return SaveConfig(cfg, list.Count == 0
+                ? "Sections cleared — products keep their section text and the shop groups them in catalog order."
+                : $"Saved {list.Count} section(s).");
+        }
+
         [HttpGet]
         public IActionResult Download(string file)
         {
@@ -337,6 +418,60 @@ namespace Khela.Web.Controllers
             return openEdit != null ? RedirectToAction(nameof(Index), new { edit = openEdit }) : RedirectToAction(nameof(Index));
         }
 
+        /// <summary>Full / ×2 / Early — the three ways one rung is sold, and what each pays out of the bank.</summary>
+        private static readonly (string Option, string Suffix, decimal Multiplier)[] PiggyOptions =
+        {
+            ("Full", "full", 1m), ("FullDouble", "x2", 2m), ("Early", "early", 1m),
+        };
+
+        /// <summary>The product that sells a rung — matched on the EFFECT, exactly as the client resolves it.</summary>
+        private static StoreProductDef FindPiggyProduct(StoreCatalogConfig cfg, int tier, string option)
+            => cfg?.Products?.FirstOrDefault(p => p?.Effect != null
+                   && string.Equals(p.Effect.Type, StoreCatalog.EffectPiggyBreak, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(p.Effect.Arg, option, StringComparison.OrdinalIgnoreCase)
+                   && StoreCatalog.PiggyTierOf(p) == tier);
+
+        /// <summary>
+        /// The piggy ladder joined to the products that sell it. The two halves live in different documents — capacity
+        /// comes from <c>Piggy:Tiers</c> (Settings ▸ Piggy), price from this catalog — and NOTHING keeps them in step,
+        /// because the payout is always whatever the bank holds. So re-sizing a rung silently re-prices it, and a rung
+        /// added past the last product becomes a bank nobody can buy. This table is what makes both visible.
+        /// </summary>
+        private List<PiggyLadderRow> BuildPiggyLadder(StoreCatalogConfig cfg)
+        {
+            var tiers = PiggyConfig.ParseTiers(Eff("Piggy:Tiers"), new PiggyConfig().Tiers);
+            var rows = new List<PiggyLadderRow>();
+            for (int i = 0; i < tiers.Length; i++)
+            {
+                int tier = i + 1;
+                // The top rung has no ceiling: it belongs to every player at that level AND ABOVE.
+                string levels;
+                if (i + 1 < tiers.Length)
+                {
+                    int last = tiers[i + 1].MinLevel - 1;
+                    levels = last > tiers[i].MinLevel ? $"{tiers[i].MinLevel}–{last}" : tiers[i].MinLevel.ToString(CultureInfo.InvariantCulture);
+                }
+                else levels = $"{tiers[i].MinLevel}+";
+
+                var row = new PiggyLadderRow { Tier = tier, MinLevel = tiers[i].MinLevel, Levels = levels, Capacity = tiers[i].MaxAmount };
+                foreach (var (option, suffix, multiplier) in PiggyOptions)
+                {
+                    var p = FindPiggyProduct(cfg, tier, option);
+                    row.Offers.Add(new PiggyOfferRow
+                    {
+                        Option = option,
+                        ProductId = p?.Id ?? $"piggy_t{tier}_{suffix}",
+                        Exists = p != null,
+                        Enabled = p != null && p.Enabled,
+                        Usd = p?.UsdReference ?? 0m,
+                        Chips = tiers[i].MaxAmount * multiplier,
+                    });
+                }
+                rows.Add(row);
+            }
+            return rows;
+        }
+
         private StoreIndexVm BuildIndex(string json = null)
         {
             var cfg = Effective();
@@ -357,16 +492,16 @@ namespace Khela.Web.Controllers
             vm.Warnings.AddRange(StoreCatalog.MissingStoreIds(cfg, enabledPlatforms));
             try
             {
-                var tiers = PiggyConfig.ParseTiers(Eff("Piggy:Tiers"), new PiggyConfig().Tiers);
-                var offers = new List<(string, decimal)>();
-                for (int i = 0; i < tiers.Length; i++)
-                {
-                    int n = i + 1;
-                    offers.Add(($"piggy_t{n}_full", tiers[i].MaxAmount));
-                    offers.Add(($"piggy_t{n}_x2", tiers[i].MaxAmount * 2m));
-                    offers.Add(($"piggy_t{n}_early", tiers[i].MaxAmount));
-                }
-                vm.Warnings.AddRange(StoreCatalog.PiggyValueWarnings(cfg, offers));
+                vm.PiggyLadder = BuildPiggyLadder(cfg);
+                var offers = vm.PiggyLadder.SelectMany(r => r.Offers).ToList();
+                vm.PiggyMissing = offers.Count(o => !o.Exists);
+                vm.Warnings.AddRange(StoreCatalog.PiggyValueWarnings(cfg, offers.Select(o => (o.ProductId, o.Chips))));
+                // A rung with no product is a bank its owners can never buy — the value guard SKIPS those silently
+                // (it can only price a product it can find), so say it out loud here or it stays invisible.
+                foreach (var row in vm.PiggyLadder.Where(r => r.Offers.Any(o => !o.Exists)))
+                    vm.Warnings.Add($"piggy tier {row.Tier} (level {row.Levels}, {row.Capacity:N0} chips) has no product for " +
+                                    string.Join(" / ", row.Offers.Where(o => !o.Exists).Select(o => o.ProductId)) +
+                                    " — those players cannot break their bank.");
                 vm.BestChipsPerUsd = StoreCatalog.BestChipsPerUsd(cfg);
             }
             catch { }
@@ -436,6 +571,29 @@ namespace Khela.Web.Controllers
         public int MinLevel { get; set; }
     }
 
+    /// <summary>One rung of the piggy ladder: what it holds, who gets it, and the three products that sell it.</summary>
+    public sealed class PiggyLadderRow
+    {
+        public int Tier { get; set; }
+        public int MinLevel { get; set; }
+        /// <summary>Level band, e.g. "10–14"; the top rung reads "25+" — it belongs to that level and above.</summary>
+        public string Levels { get; set; }
+        public decimal Capacity { get; set; }
+        public List<PiggyOfferRow> Offers { get; set; } = new();
+    }
+
+    public sealed class PiggyOfferRow
+    {
+        public string Option { get; set; }
+        public string ProductId { get; set; }
+        public bool Exists { get; set; }
+        public bool Enabled { get; set; }
+        public decimal Usd { get; set; }
+        /// <summary>What it pays: capacity (×2 for FullDouble). Early is an upper bound — a bank bought early is not full.</summary>
+        public decimal Chips { get; set; }
+        public decimal ChipsPerUsd => Usd > 0m ? Chips / Usd : 0m;
+    }
+
     public sealed class StoreIndexVm
     {
         public StoreCatalogConfig Config { get; set; }
@@ -446,6 +604,10 @@ namespace Khela.Web.Controllers
         public Dictionary<StorePlatform, bool> PlatformEnabled { get; set; } = new();
         public List<string> Warnings { get; set; } = new();
         public decimal BestChipsPerUsd { get; set; }
+        /// <summary>The piggy ladder (Settings ▸ Piggy) joined to the catalog products that sell each rung.</summary>
+        public List<PiggyLadderRow> PiggyLadder { get; set; } = new();
+        /// <summary>Rung/option pairs with no product — each one is a bank its owners cannot buy.</summary>
+        public int PiggyMissing { get; set; }
         public JsonDocument Status { get; set; }
         public int PurchaseCount { get; set; }
         public int PendingCount { get; set; }
