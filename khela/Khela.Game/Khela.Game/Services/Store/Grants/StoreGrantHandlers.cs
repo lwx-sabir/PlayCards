@@ -33,12 +33,18 @@ namespace Khela.Game.Services.Store.Grants
 
             // The piggy's own idempotency key = the store transaction (≤ 256, its column's width).
             var purchaseId = StoreMath.FitOrHash(ctx.Purchase.Platform + ":" + ctx.Purchase.StoreTransactionId, 256);
-            var result = await _piggy.BreakVerifiedAsync(ctx.UserId, option, purchaseId, ctx.Product.Id, ctx.Purchase.Id, ctx.CreditType);
+            // The rung this product was PRICED for (from the purchase's catalog snapshot). The piggy service caps the
+            // payout at that rung's capacity when it is applied to a bank of another rung — the store cannot tell
+            // which bank a receipt lands on, so a cheap rung's product must not buy an expensive bank.
+            var soldTier = StoreCatalog.PiggyTierOf(ctx.Product);
+            var result = await _piggy.BreakVerifiedAsync(ctx.UserId, option, purchaseId, ctx.Product.Id, ctx.Purchase.Id, ctx.CreditType, soldTier);
             fulfilment.Piggy = result;
             if (result == null || !result.Ok)
                 throw new InvalidOperationException("Piggy break could not be paid: " + (result?.Error ?? "no result"));
             if (result.Amount <= 0m)
                 fulfilment.Flags.Add("piggy: paid purchase found an empty bank — nothing to pay out (comp manually)");
+            if (!string.IsNullOrEmpty(result.Note))
+                fulfilment.Flags.Add("piggy: " + result.Note);
             _logger.LogInformation("Store piggy break {Option} paid {Amount} chips for {User} (purchase {Id}).", option, result.Amount, ctx.UserId, ctx.Purchase.Id);
         }
     }

@@ -125,6 +125,43 @@ namespace Khela.Game.Services.Piggy
             return amount >= need;
         }
 
+        /// <summary>
+        /// Capacity of the rung a store product was SOLD for (its <c>params.tier</c>, 1-based, the same ordinal
+        /// <see cref="TierFor"/> hands out), or null when the product carries no tier or the rung no longer exists.
+        /// </summary>
+        public static decimal? SoldCapacity(int soldTier, PiggyConfig cfg)
+        {
+            if (soldTier < 1 || cfg?.Tiers == null || soldTier > cfg.Tiers.Length) return null;
+            var rung = cfg.Tiers[soldTier - 1];
+            return rung == null || rung.MaxAmount <= 0m ? (decimal?)null : rung.MaxAmount;
+        }
+
+        /// <summary>
+        /// What a VERIFIED break pays before the option multiplier.
+        ///
+        /// <paramref name="bankRule"/> is what the bank itself says (what it holds; its capacity when the offer was
+        /// charged and the bank moved). That is the whole answer when the product was sold for the bank's own rung —
+        /// including a bank whose capacity was snapshotted before the ladder was edited, which must still pay what
+        /// the player filled.
+        ///
+        /// When the product was sold for a DIFFERENT rung the payout is capped at that rung's capacity. The store
+        /// only verifies that a product was paid for, not which bank it is applied to, and a break pays out of the
+        /// player's own bank — so without this cap the cheapest rung's product bought a level-25 bank at a level-1
+        /// price, repeatably, and beat every chip pack. The cap pays exactly what the sold rung's price bought, so
+        /// the honest case it also covers — a level-up between the tap and the receipt — is never under-delivered.
+        /// A sold rung that no longer exists (ladder shortened) is not capped: every such product was priced above
+        /// the ladder that remains.
+        /// </summary>
+        public static decimal PayoutBase(decimal bankRule, int bankTier, int soldTier, PiggyConfig cfg, out bool capped)
+        {
+            capped = false;
+            if (soldTier <= 0 || soldTier == bankTier) return bankRule;
+            var sold = SoldCapacity(soldTier, cfg);
+            if (!sold.HasValue || sold.Value >= bankRule) return bankRule;
+            capped = true;
+            return sold.Value;
+        }
+
         /// <summary>0..1 for the bar. Clamped, so a bank that somehow exceeded its max still draws as full.</summary>
         public static float Percent01(decimal amount, decimal max)
         {

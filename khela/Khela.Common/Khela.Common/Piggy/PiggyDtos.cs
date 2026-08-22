@@ -9,15 +9,18 @@ namespace Khela.Common.Piggy
         /// <summary>The bank is full: pay and take it.</summary>
         Full = 0,
 
-        /// <summary>The bank is full: pay a little more and take double.</summary>
+        /// <summary>The bank is full: pay a little more and take double what it holds.</summary>
         FullDouble = 1,
 
         /// <summary>
-        /// The bank is NOT full: pay a premium and take the full capacity anyway — buying the wait, not the chips.
+        /// The bank is NOT full: pay a premium to take what is in it NOW rather than waiting for it to fill.
         ///
-        /// The reason this needs its own option rather than a flag: it is the one path where the payout is not what
-        /// the bank holds, so a ledger row that only recorded an amount would describe a bank that was mysteriously
-        /// fuller than it ever was.
+        /// It pays exactly what the bank holds, the same as any other option — the premium buys the TIMING, not a
+        /// bigger payout. Paying capacity here was tried and rejected: it let a player with a nearly empty bank buy
+        /// a full one outright, which makes wagering to fill it pointless and guts the premise of the feature.
+        ///
+        /// Still its own option rather than a flag, because it is a different PRICE and the audit has to record
+        /// which offer was sold rather than inferring it from an amount that no longer distinguishes them.
         /// </summary>
         Early = 2,
     }
@@ -123,5 +126,11 @@ namespace Khela.Common.Piggy
 
         /// <summary>The freshly reset bank.</summary>
         public PiggyStateDto Piggy { get; set; }
+
+        /// <summary>
+        /// Server-side review note for the purchase record — set only when the payout was adjusted (a product sold for
+        /// one rung applied to a bank of another). Carried into the store fulfilment's flags; the client ignores it.
+        /// </summary>
+        public string Note { get; set; }
     }
 }

@@ -60,9 +60,12 @@ namespace Khela.Game.Services.Piggy
         /// two differences the verified money earns: it never needs <c>Piggy:BypassPurchase</c>, and it never under-delivers —
         /// a Full/×2 bought while the bank moved underneath the tap (expired, reset) pays the bank's capacity rather than
         /// refusing a charged card. The credit is typed <paramref name="creditType"/> (PaidPurchase for real money).
+        /// <paramref name="soldTier"/> is the rung the product was sold for (its catalog <c>params.tier</c>; 0 = unknown):
+        /// a product for another rung than the bank's caps the payout at the sold rung's capacity — see
+        /// <see cref="PiggyMath.PayoutBase"/> for why that is a money rule, not a nicety.
         /// </summary>
         Task<PiggyBreakResultDto> BreakVerifiedAsync(Guid userId, PiggyBreakOption option, string purchaseId, string priceSku,
-            Guid storePurchaseId, Khela.Game.Database.Models.TransactionType creditType);
+            Guid storePurchaseId, Khela.Game.Database.Models.TransactionType creditType, int soldTier);
     }
 
     /// <summary>
@@ -307,11 +310,11 @@ namespace Khela.Game.Services.Piggy
         /// without a reset lets them sell the same bank again.
         /// </summary>
         public Task<PiggyBreakResultDto> BreakAsync(Guid userId, PiggyBreakOption option, string purchaseId)
-            => BreakCoreAsync(userId, option, purchaseId, verified: false, priceSku: null, storePurchaseId: null, creditType: TransactionType.Purchase);
+            => BreakCoreAsync(userId, option, purchaseId, verified: false, priceSku: null, storePurchaseId: null, creditType: TransactionType.Purchase, soldTier: 0);
 
         public Task<PiggyBreakResultDto> BreakVerifiedAsync(Guid userId, PiggyBreakOption option, string purchaseId, string priceSku,
-            Guid storePurchaseId, TransactionType creditType)
-            => BreakCoreAsync(userId, option, purchaseId, verified: true, priceSku: priceSku, storePurchaseId: storePurchaseId, creditType: creditType);
+            Guid storePurchaseId, TransactionType creditType, int soldTier)
+            => BreakCoreAsync(userId, option, purchaseId, verified: true, priceSku: priceSku, storePurchaseId: storePurchaseId, creditType: creditType, soldTier: soldTier);
 
         /// <summary>
         /// The one break path. <paramref name="verified"/> = the money has been taken by a store and verified by the server
@@ -319,7 +322,7 @@ namespace Khela.Game.Services.Piggy
         /// dev/test path, which is fail-closed behind <c>Piggy:BypassPurchase</c>.
         /// </summary>
         private async Task<PiggyBreakResultDto> BreakCoreAsync(Guid userId, PiggyBreakOption option, string purchaseId,
-            bool verified, string priceSku, Guid? storePurchaseId, TransactionType creditType)
+            bool verified, string priceSku, Guid? storePurchaseId, TransactionType creditType, int soldTier)
         {
             if (string.IsNullOrWhiteSpace(purchaseId))
                 return Fail("A purchase id is required.");
@@ -391,8 +394,33 @@ namespace Khela.Game.Services.Piggy
             // guard to close that: an early break on an empty bank simply buys almost nothing, so nobody takes it.
             //
             // What Early sells is therefore the TIMING, at a higher price for the same chips - not a bigger payout.
-            decimal payout = (paidCapacity ? bank.MaxAmount : banked) * multiplier;
+            //
+            // Then capped at the capacity of the rung the product was SOLD for, when that differs from the bank's
+            // own rung. The store verifies that a product was paid for, not which bank it lands on, and every break
+            // pays out of the player's own bank — so the cheapest rung's product would otherwise buy the biggest bank
+            // at the smallest price. Same rung (the only thing an unmodified client sends) is never capped, so a bank
+            // snapshotted before a ladder edit still pays what the player filled. PiggyMath.PayoutBase has the rest.
+            decimal bankRule = paidCapacity ? bank.MaxAmount : banked;
+            decimal payoutBase = PiggyMath.PayoutBase(bankRule, bank.Tier, soldTier, cfg, out bool cappedToSoldTier);
+            decimal payout = payoutBase * multiplier;
             if (payout <= 0m && !verified) return Fail("There is nothing to pay out.");
+
+            string note = null;
+            if (cappedToSoldTier)
+            {
+                note = $"sold as tier {soldTier} but applied to a tier {bank.Tier} bank — payout capped at the sold rung's capacity " +
+                       $"({payout:N0} paid; the bank rule would have paid {bankRule * multiplier:N0}).";
+                _logger.LogWarning("Piggy break {Option} for {User}: product tier {SoldTier} on a tier {BankTier} bank — capped {From} → {To} (store purchase {Store}).",
+                    option, userId, soldTier, bank.Tier, bankRule * multiplier, payout, storePurchaseId);
+            }
+            else if (soldTier > 0 && soldTier != bank.Tier)
+            {
+                // Mismatch that did not bite (a higher or since-removed rung). Not a money problem — the bank rule
+                // paid — but it is not something an unmodified client produces either, so it goes on the record.
+                note = $"sold as tier {soldTier} but applied to a tier {bank.Tier} bank; the bank rule paid ({payout:N0}).";
+                _logger.LogInformation("Piggy break {Option} for {User}: product tier {SoldTier} on a tier {BankTier} bank, not capped (store purchase {Store}).",
+                    option, userId, soldTier, bank.Tier, storePurchaseId);
+            }
 
             // ---- the purchase itself ----
             //
@@ -417,8 +445,8 @@ namespace Khela.Game.Services.Piggy
             if (prior == null) _db.PiggyBreaks.Add(row);
 
             if (paidCapacity)
-                _logger.LogWarning("Piggy break {Option} for {User}: bank had moved under a VERIFIED purchase (held {Banked}); paying capacity {Max} (store purchase {Store}).",
-                    option, userId, banked, bank.MaxAmount, storePurchaseId);
+                _logger.LogWarning("Piggy break {Option} for {User}: bank had moved under a VERIFIED purchase (held {Banked}); paying capacity {Paid} (store purchase {Store}).",
+                    option, userId, banked, payoutBase, storePurchaseId);
 
             if (payout <= 0m)
             {
@@ -426,7 +454,7 @@ namespace Khela.Game.Services.Piggy
                 row.Status = "Completed"; row.Granted = true; row.CompletedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
                 _logger.LogWarning("Piggy break {Option} for {User}: verified purchase found an EMPTY bank; recorded with no payout (store purchase {Store}).", option, userId, storePurchaseId);
-                return new PiggyBreakResultDto { Ok = true, Amount = 0m, NewChipBalance = await ChipBalanceAsync(userId), Piggy = await GetStateAsync(userId) };
+                return new PiggyBreakResultDto { Ok = true, Amount = 0m, NewChipBalance = await ChipBalanceAsync(userId), Piggy = await GetStateAsync(userId), Note = note };
             }
 
             decimal newBalance;
@@ -491,6 +519,7 @@ namespace Khela.Game.Services.Piggy
                 Amount = payout,
                 NewChipBalance = newBalance,
                 Piggy = await GetStateAsync(userId),
+                Note = note,
             };
         }
 
