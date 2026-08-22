@@ -36,7 +36,14 @@ after JWS verification; every notification recorded in `StoreEvents` idempotentl
 reconciler), `StoreWebhooksController` (`POST /api/store/webhooks/google?token=` fail-closed on `Store:GooglePlay:PubSubToken`;
 `POST /api/store/webhooks/apple` 503 until the Apple verifier is configured), `StoreWebhookTests` — **433/433 green**.
 Idempotent migration script for the VPS generated to `C:\temp\khela\khela-migrations-idempotent-2026-08-22.sql` (the only real
-DROP is the dead `StoreItems` table). Nothing left to build for v1 except the later Web checkout verifier; remaining = ops (§11).
+DROP is the dead `StoreItems` table). **Reviewed + hardened (2026-08-22):** the admin pages were smoke-tested against a real
+login and DB (catalog save → backup → download → reset; purchases ledger + filters), and an adversarial multi-agent review of
+the money path raised 12 findings of which **6 were real and are fixed** (commits `86edafc37`, `1b0cdc337`): a re-driven
+multi-quantity purchase under-delivered; a lapsed Google subscription was processed as a refund (**critical** — golden window
+revoked, uncollected paid rewards expired); the client could name the product when a SKU was unmapped (`$0.99` → whale pack);
+refunding a *renewed* subscription revoked nothing; a refund interrupted mid-reversal was permanently marked handled; a
+quantity-based partial refund clawed back the whole purchase. Suite: **447 green**. Nothing left to build for v1 except the
+later Web checkout verifier; remaining = ops (§11).
 Both codebases and the WGWB reference
 (`D:\Projects\WGWB\WGWB\Assets\_WGWB\Scripts\IAPService.cs` + `ShopService.cs`, Unity IAP 5.2.0, and
 `D:\Projects\WGWB\UNITY_IAP_R8_RELEASE_INCIDENT.md`) were surveyed first. §13 lists every choice made in the merge —
