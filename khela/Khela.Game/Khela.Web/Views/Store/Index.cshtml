@@ -159,7 +159,10 @@
                                 data-lines="@LinesOf(p)" data-effect="@(p.Effect?.Type ?? "none")" data-effectarg="@(p.Effect?.Arg ?? "")"
                                 data-effecttier="@StoreCatalog.PiggyTierOf(p)"
                                 data-from="@(p.Availability?.FromUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")" data-to="@(p.Availability?.ToUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")"
-                                data-maxuser="@(p.Availability?.MaxPerUser ?? 0)" data-maxday="@(p.Availability?.MaxPerUserPerDay ?? 0)" data-minlevel="@(p.Availability?.MinLevel ?? 0)">Edit</button>
+                                data-maxuser="@(p.Availability?.MaxPerUser ?? 0)" data-maxday="@(p.Availability?.MaxPerUserPerDay ?? 0)" data-minlevel="@(p.Availability?.MinLevel ?? 0)"
+                                data-salekind="@(p.Sale == null || p.Sale.Kind == StoreSaleKind.None ? "none" : p.Sale.Kind.ToString())" data-salepct="@(p.Sale?.Percent ?? 0)"
+                                data-salefrom="@(p.Sale?.FromUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")" data-saleto="@(p.Sale?.ToUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")"
+                                data-salelabel="@(p.Sale?.Label ?? "")" data-salesku="@(p.Sale?.SaleProductId ?? "")" data-saleskuof="@(p.SaleSkuOf ?? "")">Edit</button>
                         <form asp-action="Toggle" method="post" style="display:inline">
                             <input type="hidden" name="id" value="@p.Id" />
                             <button class="btn btn-outline" type="submit">@(p.Enabled ? "Take off sale" : "Put on sale")</button>
@@ -284,6 +287,67 @@
     </table>
 </div>
 
+@* ---------------------------------------------------------------- sales ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Sales</h3>
+        <span class="dim" style="font-size:12.5px">time-limited · set on a product in its editor (Sale box) · UTC</span>
+    </div>
+    @if (Model.Sales.Count == 0)
+    {
+        <div class="dim" style="padding:0 16px 16px; font-size:12.5px">
+            No sales. Open a product → <b>Sale</b>: <b>Value bonus</b> (+X% on what it pays; server-side, instant) or
+            <b>Price off</b> (sells a cheaper SKU you created in the consoles; the card shows the regular price struck through).
+        </div>
+    }
+    else
+    {
+        <table class="data-table">
+            <thead><tr><th>Product</th><th>Kind</th><th>%</th><th>Label</th><th>Window (UTC)</th><th>Status</th><th>Price</th><th>chips/$ on sale</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var s in Model.Sales)
+                {
+                    var pill = s.Status == "active" ? "active" : s.Status == "scheduled" ? "pending" : "suspend";
+                    <tr>
+                        <td><a href="#" onclick="openEditById('@s.ProductId'); return false;"><b>@s.ProductId</b></a>
+                            @if (s.Kind == StoreSaleKind.PriceOff) { <div class="dim" style="font-size:11.5px">→ <code>@s.SaleProductId</code>@(s.SkuOk ? "" : " (missing / off)")</div> }
+                        </td>
+                        <td class="dim" style="font-size:12.5px">@(s.Kind == StoreSaleKind.ValueBonus ? "Value bonus" : "Price off")</td>
+                        <td>@(s.Kind == StoreSaleKind.ValueBonus ? "+" : "−")@s.Percent%</td>
+                        <td class="dim" style="font-size:12.5px">@s.Label</td>
+                        <td class="dim" style="font-size:12px">@(s.FromUtc?.ToString("MM-dd HH:mm") ?? "now") → @(s.ToUtc?.ToString("MM-dd HH:mm") ?? "∞")</td>
+                        <td><span class="pill @pill">@s.Status</span></td>
+                        <td class="dim" style="font-size:12.5px">
+                            @if (s.Kind == StoreSaleKind.PriceOff) { <s>@Usd(s.RegularUsd)</s> <text> </text><b>@Usd(s.SaleUsd)</b> }
+                            else { @Usd(s.RegularUsd) }
+                        </td>
+                        <td class="dim" style="font-size:12px">@(s.ChipsPerUsdOnSale > 0m ? Num(s.ChipsPerUsdOnSale) : "")</td>
+                        <td style="text-align:right; white-space:nowrap">
+                            @if (s.Status != "ended")
+                            {
+                                <form asp-action="EndSale" method="post" style="display:inline" onsubmit="return confirm('End the sale on @s.ProductId now?');">
+                                    <input type="hidden" name="id" value="@s.ProductId" />
+                                    <button class="btn btn-outline" type="submit">@(s.Status == "scheduled" ? "Cancel" : "End now")</button>
+                                </form>
+                            }
+                            <form asp-action="ClearSale" method="post" style="display:inline" onsubmit="return confirm('Clear removes the sale RECORD on @s.ProductId. A value-bonus purchase is judged from its own catalog snapshot, so a store payment still pending (cash, up to 3 days) whose receipt arrives after this will pay the BASE amount. Use End now to stop a running sale; clear only when nothing can still be in flight. Continue?');">
+                                <input type="hidden" name="id" value="@s.ProductId" />
+                                <button class="btn btn-outline" type="submit">Clear</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <div class="dim" style="font-size:12px; padding:12px 16px; border-top:1px solid var(--border,#2a3344)">
+            A purchase gets the sale that was running when it was <b>reserved</b> (the receipt's first arrival), read from its own
+            catalog snapshot — plus a @StoreCatalog.SaleGrace.TotalMinutes.ToString("0")-minute grace after the end, so a sale that
+            ends while the player is in the store sheet still pays what the card showed. Ending a sale never touches a purchase
+            already made. The game picks a change up within ~15 s; the client on its next catalog refresh.
+        </div>
+    }
+</div>
+
 @* ---------------------------------------------------------------- sections ---------------------------------------------------------------- *@
 <div class="panel">
     <div class="panel-head">
@@ -384,6 +448,35 @@
                     <label>Min level <input name="MinLevel" id="f_minlevel" type="number" min="0" class="vip-select" /></label>
                     <label class="span2">Images (one url per line, back→front, max 3) <textarea name="Images" id="f_images" rows="2" class="vip-select"></textarea></label>
                 </div>
+                <fieldset style="margin-top:14px; border:1px solid var(--border,#2a3344); border-radius:8px; padding:10px 12px 12px">
+                    <legend class="dim" style="font-size:12px; padding:0 6px">Sale (time-limited)</legend>
+                    <div class="grid2">
+                        <label>Kind
+                            <select name="SaleKind" id="f_salekind" class="vip-select" onchange="saleKindChanged()">
+                                <option value="none">none</option>
+                                <option value="ValueBonus">Value bonus — same SKU, same price, lines pay +X%</option>
+                                <option value="PriceOff">Price off — sells a cheaper SKU, regular price struck through</option>
+                            </select>
+                        </label>
+                        <label>Percent <input name="SalePercent" id="f_salepct" type="number" min="0" max="1000" class="vip-select" /></label>
+                        <label>Starts (UTC, empty = now) <input name="SaleFromUtc" id="f_salefrom" type="datetime-local" class="vip-select" /></label>
+                        <label>Ends (UTC, required) <input name="SaleToUtc" id="f_saleto" type="datetime-local" class="vip-select" /></label>
+                        <label>Ribbon label (empty = the %) <input name="SaleLabel" id="f_salelabel" class="vip-select" maxlength="40" placeholder="WEEKEND" /></label>
+                        <label id="f_salesku_wrap">Sale SKU (price-off only)
+                            <input name="SaleProductId" id="f_salesku" class="vip-select" list="productList" placeholder="chips_03_sale" />
+                        </label>
+                        <datalist id="productList">@foreach (var pp in Model.Config.Products.OrderBy(x => x.Id)) { <option value="@pp.Id"></option> }</datalist>
+                        <label class="span2">This product IS the sale SKU of (its own gate — set automatically when a sale is pointed at it; a declared SKU is never a card and sells only while that regular's sale runs)
+                            <input name="SaleSkuOf" id="f_saleskuof" class="vip-select" list="productList" placeholder="(empty = an ordinary product)" />
+                        </label>
+                    </div>
+                    <div class="dim" style="font-size:11.5px; margin-top:8px">
+                        <b>Value bonus</b> is granted by the server from the purchase's snapshot — instant, reversible, no console work.
+                        <b>Price off</b> cannot change a store price: create the cheaper SKU in both consoles first, add it here as a
+                        product with the <i>identical</i> payload and a lower reference price, then point this sale at it. The card
+                        shows both real store prices. The SKU is buyable only while the sale runs and is never a card of its own.
+                    </div>
+                </fieldset>
                 <div style="display:flex; gap:10px; margin-top:14px; align-items:center">
                     <button type="submit" class="btn btn-primary">Save product</button>
                     <button type="button" class="btn btn-outline" onclick="closeEdit()">Cancel</button>
@@ -424,7 +517,14 @@
             setVal('f_sid_google', d.sidGoogle); setVal('f_sid_apple', d.sidApple); setVal('f_sid_web', d.sidWeb); setVal('f_sid_amazon', d.sidAmazon);
             setVal('f_from', d.from); setVal('f_to', d.to); setVal('f_maxuser', d.maxuser); setVal('f_maxday', d.maxday); setVal('f_minlevel', d.minlevel);
             setVal('f_images', d.images);
+            setVal('f_salekind', d.salekind || 'none'); setVal('f_salepct', d.salepct); setVal('f_salefrom', d.salefrom); setVal('f_saleto', d.saleto);
+            setVal('f_salelabel', d.salelabel); setVal('f_salesku', d.salesku); setVal('f_saleskuof', d.saleskuof); saleKindChanged();
             document.getElementById('editModal').classList.add('open');
+        }
+        function saleKindChanged() {
+            var kind = document.getElementById('f_salekind').value;
+            var wrap = document.getElementById('f_salesku_wrap');
+            if (wrap) wrap.style.opacity = kind === 'PriceOff' ? '1' : '.45';
         }
         function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
         // Open the editor from anywhere that only knows the id (the piggy table) — the catalog row carries the data.

@@ -113,7 +113,70 @@ namespace Khela.Web.Controllers
                 FromUtc = form.FromUtc, ToUtc = form.ToUtc,
                 MaxPerUser = Math.Max(0, form.MaxPerUser), MaxPerUserPerDay = Math.Max(0, form.MaxPerUserPerDay), MinLevel = Math.Max(0, form.MinLevel),
             };
+            // This product's own declaration as somebody's sale SKU (its gate). Canonicalised to the regular's id by the validator.
+            p.SaleSkuOf = Trim(form.SaleSkuOf);
+
+            // Sale: "none" clears it. Everything else is validated by the catalog's own rules on save (SaveConfig).
+            if (string.IsNullOrWhiteSpace(form.SaleKind) || !Enum.TryParse<StoreSaleKind>(form.SaleKind.Trim(), ignoreCase: true, out var saleKind) || saleKind == StoreSaleKind.None)
+                p.Sale = null;
+            else
+            {
+                var skuId = saleKind == StoreSaleKind.PriceOff ? Trim(form.SaleProductId) : null;
+                var sku = skuId == null ? null : cfg.Find(skuId);
+                p.Sale = new StoreSaleDef
+                {
+                    Kind = saleKind, Percent = form.SalePercent, FromUtc = form.SaleFromUtc, ToUtc = form.SaleToUtc,
+                    Label = Trim(form.SaleLabel), SaleProductId = sku?.Id ?? skuId,   // canonical id when it resolves; the validator reports an unknown one
+                };
+                // Pointing a sale at a SKU declares the SKU — the declaration is the SKU's own gate, and it outlives the pointer
+                // (Clear / re-target / delete never leave a discounted SKU quietly buyable). Refused, not silently rewritten, when the
+                // SKU already belongs to another regular.
+                if (sku != null && saleKind == StoreSaleKind.PriceOff)
+                {
+                    if (!string.IsNullOrWhiteSpace(sku.SaleSkuOf) && !string.Equals(sku.SaleSkuOf.Trim(), p.Id, StringComparison.OrdinalIgnoreCase))
+                        return Back($"'{sku.Id}' is already the sale SKU of {sku.SaleSkuOf}. Clear that first.", openEdit: id);
+                    sku.SaleSkuOf = p.Id;
+                }
+            }
             return SaveConfig(cfg, $"Saved '{id}' — live on the next catalog read (~15 s).");
+        }
+
+        /// <summary>End a running (or scheduled) sale now: the window closes at this instant. Purchases already reserved inside
+        /// it still get it (the grant reads the purchase's snapshot + reserve time, with a short grace).</summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult EndSale(string id)
+        {
+            var cfg = Effective();
+            var p = cfg.Find(id);
+            if (p?.Sale == null || p.Sale.Kind == StoreSaleKind.None) return Back("No sale on that product.");
+            var now = DateTime.UtcNow;
+            if (p.Sale.FromUtc.HasValue && p.Sale.FromUtc.Value > now) { p.Sale = null; return SaveConfig(cfg, $"'{id}': the scheduled sale was removed before it started."); }
+            // Never move an end LATER: "End now" on a sale that already ended (a stale page) would re-open the grant grace for
+            // 15 minutes with no card showing a sale.
+            if (p.Sale.ToUtc.HasValue && p.Sale.ToUtc.Value <= now) return Back($"'{id}': that sale already ended at {p.Sale.ToUtc.Value:yyyy-MM-dd HH:mm} UTC.");
+            p.Sale.ToUtc = now;
+            return SaveConfig(cfg, $"'{id}': sale ended at {now:yyyy-MM-dd HH:mm:ss} UTC. Purchases already in flight still get it (≤ {StoreCatalog.SaleGrace.TotalMinutes:0} min grace).");
+        }
+
+        /// <summary>
+        /// Remove the sale RECORD. Refused while purchases could still be in flight (the grace after the end): a value-bonus
+        /// purchase is judged from its snapshot, and a snapshot taken after the record is gone pays the base amount. Pending
+        /// store payments (cash, up to days) have the same exposure — the Sales panel says so; "End now" is the safe way to stop
+        /// a sale. A PriceOff SKU keeps its own declaration, so clearing never leaves it buyable.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult ClearSale(string id)
+        {
+            var cfg = Effective();
+            var p = cfg.Find(id);
+            if (p == null) return Back("Product not found.");
+            if (p.Sale?.ToUtc != null && DateTime.UtcNow < p.Sale.ToUtc.Value + StoreCatalog.SaleGrace)
+                return Back($"'{id}': the sale ended (or ends) at {p.Sale.ToUtc.Value:HH:mm} UTC — purchases in flight still need the record. " +
+                            $"Use End now, or clear it after {p.Sale.ToUtc.Value + StoreCatalog.SaleGrace:HH:mm} UTC.");
+            p.Sale = null;
+            return SaveConfig(cfg, $"'{id}': sale cleared.");
         }
 
         [HttpPost]
@@ -472,6 +535,38 @@ namespace Khela.Web.Controllers
             return rows;
         }
 
+        /// <summary>Every product carrying a sale — scheduled, running or ended — with what it does to the price/value.</summary>
+        private static List<SaleRow> BuildSales(StoreCatalogConfig cfg)
+        {
+            var rows = new List<SaleRow>();
+            var now = DateTime.UtcNow;
+            foreach (var p in cfg.Products.Where(p => p?.Sale != null && p.Sale.Kind != StoreSaleKind.None).OrderBy(p => p.Sale.ToUtc ?? DateTime.MaxValue))
+            {
+                var s = p.Sale;
+                var row = new SaleRow
+                {
+                    ProductId = p.Id, Kind = s.Kind, Percent = s.Percent, Label = s.Label, FromUtc = s.FromUtc, ToUtc = s.ToUtc,
+                    Status = s.FromUtc.HasValue && now < s.FromUtc.Value ? "scheduled" : StoreCatalog.SaleActive(s, now) ? "active" : "ended",
+                    SaleProductId = s.SaleProductId, RegularUsd = p.UsdReference, SaleUsd = p.UsdReference,
+                };
+                decimal chips = (p.Lines ?? new List<RewardGrant>()).Where(l => l != null && l.Kind == RewardKind.Currency && string.Equals(l.Id, "Chips", StringComparison.OrdinalIgnoreCase)).Sum(l => l.Amount);
+                if (s.Kind == StoreSaleKind.ValueBonus)
+                {
+                    var boosted = StoreSaleMath.Boost(chips, s.Percent);
+                    row.ChipsPerUsdOnSale = p.UsdReference > 0m ? boosted / p.UsdReference : 0m;
+                }
+                else if (s.Kind == StoreSaleKind.PriceOff)
+                {
+                    var sku = cfg.Find(s.SaleProductId);
+                    row.SkuOk = sku != null && sku.Enabled;
+                    row.SaleUsd = sku?.UsdReference ?? 0m;
+                    row.ChipsPerUsdOnSale = row.SaleUsd > 0m ? chips / row.SaleUsd : 0m;
+                }
+                rows.Add(row);
+            }
+            return rows;
+        }
+
         private StoreIndexVm BuildIndex(string json = null)
         {
             var cfg = Effective();
@@ -492,6 +587,7 @@ namespace Khela.Web.Controllers
             vm.Warnings.AddRange(StoreCatalog.MissingStoreIds(cfg, enabledPlatforms));
             try
             {
+                vm.Sales = BuildSales(cfg);
                 vm.PiggyLadder = BuildPiggyLadder(cfg);
                 var offers = vm.PiggyLadder.SelectMany(r => r.Offers).ToList();
                 vm.PiggyMissing = offers.Count(o => !o.Exists);
@@ -569,6 +665,35 @@ namespace Khela.Web.Controllers
         public int MaxPerUser { get; set; }
         public int MaxPerUserPerDay { get; set; }
         public int MinLevel { get; set; }
+        /// <summary>"none" | "ValueBonus" | "PriceOff".</summary>
+        public string SaleKind { get; set; }
+        public int SalePercent { get; set; }
+        public DateTime? SaleFromUtc { get; set; }
+        public DateTime? SaleToUtc { get; set; }
+        public string SaleLabel { get; set; }
+        public string SaleProductId { get; set; }
+        /// <summary>This product IS the cheaper SKU of that regular product (its own gate). Set automatically when a sale is pointed at it.</summary>
+        public string SaleSkuOf { get; set; }
+    }
+
+    /// <summary>One sale, as the Sales panel lists it.</summary>
+    public sealed class SaleRow
+    {
+        public string ProductId { get; set; }
+        public StoreSaleKind Kind { get; set; }
+        public int Percent { get; set; }
+        public string Label { get; set; }
+        public DateTime? FromUtc { get; set; }
+        public DateTime? ToUtc { get; set; }
+        /// <summary>"scheduled" | "active" | "ended".</summary>
+        public string Status { get; set; }
+        public string SaleProductId { get; set; }
+        public decimal RegularUsd { get; set; }
+        /// <summary>PriceOff: the SKU's reference price. ValueBonus: the regular price (unchanged).</summary>
+        public decimal SaleUsd { get; set; }
+        /// <summary>Chips/$ during the sale (0 for non-chip products).</summary>
+        public decimal ChipsPerUsdOnSale { get; set; }
+        public bool SkuOk { get; set; } = true;
     }
 
     /// <summary>One rung of the piggy ladder: what it holds, who gets it, and the three products that sell it.</summary>
@@ -608,6 +733,8 @@ namespace Khela.Web.Controllers
         public List<PiggyLadderRow> PiggyLadder { get; set; } = new();
         /// <summary>Rung/option pairs with no product — each one is a bank its owners cannot buy.</summary>
         public int PiggyMissing { get; set; }
+        /// <summary>Every sale in the catalog — scheduled, running, ended.</summary>
+        public List<SaleRow> Sales { get; set; } = new();
         public JsonDocument Status { get; set; }
         public int PurchaseCount { get; set; }
         public int PendingCount { get; set; }
