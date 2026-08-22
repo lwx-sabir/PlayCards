@@ -67,13 +67,24 @@ namespace Khela.Game.Services.Store.Verification
                 {
                     var s = await _google.GetSubscriptionAsync(payload.PurchaseToken, ct);
                     var state = s.SubscriptionState ?? "";
-                    bool active = state.EndsWith("ACTIVE", StringComparison.OrdinalIgnoreCase)
-                               || state.EndsWith("IN_GRACE_PERIOD", StringComparison.OrdinalIgnoreCase)
-                               || state.EndsWith("CANCELED", StringComparison.OrdinalIgnoreCase);   // cancelled = no renewal, still paid until expiry
-                    bool pending = state.EndsWith("_PENDING", StringComparison.OrdinalIgnoreCase);
+                    // A subscription that has merely ENDED (EXPIRED) or is recoverable (ON_HOLD / PAUSED) is still a real,
+                    // paid purchase — it is NOT a revocation, and must stay Valid so the subscription seam runs its
+                    // "window ended" branch. Mapping a natural lapse to Invalid+Revoked made every non-renewing Google
+                    // subscriber look refunded: the golden window was revoked (expiring their uncollected paid rewards) and,
+                    // for any subscription carrying currency lines, the chips were clawed back — for a player the store
+                    // never refunded a cent to. Revocation reaches us only through voidedpurchases / RTDN REVOKED (12).
+                    //
+                    // Order matters: PENDING_PURCHASE_CANCELED ends with "CANCELED", so it must be tested BEFORE the
+                    // ordinary states or an abandoned pending purchase would read as a live one.
+                    bool purchaseAbandoned = state.EndsWith("PENDING_PURCHASE_CANCELED", StringComparison.OrdinalIgnoreCase);
+                    bool pending = !purchaseAbandoned && state.EndsWith("_PENDING", StringComparison.OrdinalIgnoreCase);
+                    bool active = !purchaseAbandoned && !pending
+                               && (state.EndsWith("ACTIVE", StringComparison.OrdinalIgnoreCase)
+                                || state.EndsWith("IN_GRACE_PERIOD", StringComparison.OrdinalIgnoreCase)
+                                || state.EndsWith("CANCELED", StringComparison.OrdinalIgnoreCase));   // cancelled = no renewal, still paid until expiry
                     var v = new ReceiptVerification
                     {
-                        Outcome = active ? VerifyOutcome.Valid : pending ? VerifyOutcome.PendingPayment : VerifyOutcome.Invalid,
+                        Outcome = purchaseAbandoned ? VerifyOutcome.Invalid : pending ? VerifyOutcome.PendingPayment : VerifyOutcome.Valid,
                         Reason = active ? null : $"Subscription state {state}.",
                         StoreProductId = s.ProductId ?? payload.ProductId,
                         StoreTransactionId = payload.PurchaseToken,
@@ -89,7 +100,7 @@ namespace Khela.Game.Services.Store.Verification
                         SubscriptionStartUtc = s.StartTimeUtc,
                         SubscriptionExpiresUtc = s.ExpiryTimeUtc,
                         AutoRenew = s.AutoRenewing,
-                        Revoked = state.EndsWith("EXPIRED", StringComparison.OrdinalIgnoreCase),
+                        Revoked = false,   // never inferred from a lifecycle state — only voidedpurchases / RTDN REVOKED mean revoked
                         RawJson = s.RawJson,
                     };
                     if (v.Outcome == VerifyOutcome.Valid && v.IsTest && !await AcceptTestPurchasesAsync())

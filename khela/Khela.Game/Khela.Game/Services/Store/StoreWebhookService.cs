@@ -152,12 +152,13 @@ namespace Khela.Game.Services.Store
                 else if (row == null) outcome = WebhookOutcome.NoMatch;
                 else if (n.Voided != null)
                 {
-                    await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", $"voided (type {n.Voided.ProductType}, refund {n.Voided.RefundType})", ct);
+                    // refundType 2 = QUANTITY-BASED partial refund: some units came back, not the purchase. Never claw back the whole grant for it.
+                    await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", $"voided (type {n.Voided.ProductType}, refund {n.Voided.RefundType})", partial: n.Voided.RefundType == 2, ct: ct);
                     outcome = WebhookOutcome.Applied;
                 }
                 else if (n.OneTimeProduct != null)
                 {
-                    if (n.OneTimeProduct.NotificationType == 2) { await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", "one-time product cancelled", ct); outcome = WebhookOutcome.Applied; }
+                    if (n.OneTimeProduct.NotificationType == 2) { await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", "one-time product cancelled", ct: ct); outcome = WebhookOutcome.Applied; }
                     else outcome = WebhookOutcome.Ignored;   // PURCHASED: the client redeems; a pending payment completing is picked up by redeem/re-drive
                 }
                 else
@@ -181,7 +182,7 @@ namespace Khela.Game.Services.Store
             switch (notificationType)
             {
                 case 12:   // REVOKED
-                    await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", "subscription revoked", ct);
+                    await _purchases.MarkRefundedAsync(row.Id, "google-rtdn", "subscription revoked", ct: ct);
                     return WebhookOutcome.Applied;
                 case 20:   // PENDING_PURCHASE_CANCELED
                     if (row.Status == StorePurchaseStatus.Pending) { row.Status = StorePurchaseStatus.Invalid; row.LastError = "pending purchase cancelled (RTDN)"; row.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(ct); return WebhookOutcome.Applied; }
@@ -219,7 +220,7 @@ namespace Khela.Game.Services.Store
                 else if (row == null) outcome = WebhookOutcome.NoMatch;
                 else if (t == "REFUND" || t == "REVOKE")
                 {
-                    await _purchases.MarkRefundedAsync(row.Id, "apple-asn", t.ToLowerInvariant() + (n.RevocationUtc.HasValue ? " at " + n.RevocationUtc.Value.ToString("u") : ""), ct);
+                    await _purchases.MarkRefundedAsync(row.Id, "apple-asn", t.ToLowerInvariant() + (n.RevocationUtc.HasValue ? " at " + n.RevocationUtc.Value.ToString("u") : ""), ct: ct);
                     outcome = WebhookOutcome.Applied;
                 }
                 else if (t == "REFUND_REVERSED")

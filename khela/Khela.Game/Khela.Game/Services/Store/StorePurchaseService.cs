@@ -54,8 +54,13 @@ namespace Khela.Game.Services.Store
         /// <summary>Re-drive a stuck row (Pending/Verified/Granted-but-incomplete) from its stored receipt. Used by the reconciler and the admin.</summary>
         Task<RedeemPurchaseResultDto> RedriveAsync(Guid purchaseId, CancellationToken ct = default);
 
-        /// <summary>The store told us a purchase was refunded/voided: mark it and apply the refund policy. Idempotent.</summary>
-        Task<bool> MarkRefundedAsync(Guid purchaseId, string source, string reason, CancellationToken ct = default);
+        /// <summary>
+        /// The store told us a purchase was refunded/voided: reverse what the refund policy allows, then mark the row. Idempotent.
+        /// <paramref name="partial"/> = a QUANTITY-BASED partial refund (Google refundType 2): the store took back some units, not
+        /// the purchase. Balances are never touched in that case — a fraction of a spent correlation id cannot be reversed — so it
+        /// is recorded and flagged for an admin to comp instead.
+        /// </summary>
+        Task<bool> MarkRefundedAsync(Guid purchaseId, string source, string reason, bool partial = false, CancellationToken ct = default);
 
         /// <summary>The purchase row for a store transaction key (Google purchaseToken / Apple transactionId), or null.</summary>
         Task<StorePurchase> FindAsync(StorePlatform platform, string storeTransactionId, CancellationToken ct = default);
@@ -269,10 +274,20 @@ namespace Khela.Game.Services.Store
         /// Play receipt, an Apple JWS, a fake-store order or a web-checkout confirmation. Returns a failure result when the
         /// sold product is unknown to the catalog (evidence kept; admin re-drives after adding it), else null.
         /// </summary>
-        private async Task<RedeemPurchaseResultDto> ApplyVerificationAsync(StorePurchase row, ReceiptVerification verification, StoreCatalogConfig cfg, CancellationToken ct)
+        private async Task<RedeemPurchaseResultDto> ApplyVerificationAsync(StorePurchase row, ReceiptVerification verification, StoreCatalogConfig cfg, CancellationToken ct,
+            StoreProductDef trustedProduct = null)
         {
-            var verifiedProduct = StoreCatalog.ResolveByStoreId(cfg, row.Platform, verification.StoreProductId)
-                                  ?? (string.Equals(row.StoreProductId, verification.StoreProductId, StringComparison.OrdinalIgnoreCase) ? cfg.Find(row.ProductId) : null);
+            // ONLY the store decides what was bought. There is deliberately NO fallback to a CLIENT-supplied ProductId hint:
+            // both ProductId and StoreProductId on a client-reserved row are copied verbatim from the request, and the client
+            // can read its own receipt's store product id — so a hint-based fallback would let a player who bought the $0.99
+            // pack name the $99.99 one and be granted it (plus $99.99 of VIP/Loyalty/XP) whenever a SKU is momentarily
+            // unmapped in the catalog. An unmapped SKU is an operations problem: the evidence is kept below, an admin maps it
+            // in the catalog, and the purchase is re-driven.
+            //
+            // <paramref name="trustedProduct"/> is the ONE exception, and it is not a client value: RedeemVerifiedAsync is
+            // called by SERVER-SIDE adapter code (our own web checkout / a payment webhook) which names the product itself.
+            // Those rails have no third-party store SKU to resolve against, so the adapter's product is the truth there.
+            var verifiedProduct = StoreCatalog.ResolveByStoreId(cfg, row.Platform, verification.StoreProductId) ?? trustedProduct;
             if (verifiedProduct == null)
             {
                 // Paid for something our catalog doesn't know (not yet authored?). Keep the evidence; an admin adds the product and re-drives.
@@ -381,7 +396,9 @@ namespace Khela.Game.Services.Store
             if (row.Status == StorePurchaseStatus.Pending)
             {
                 row.Attempts++;
-                var applyFail = await ApplyVerificationAsync(row, verified, cfg, ct);
+                // `product` came from this server-side adapter call, not from a game client — safe to trust when the rail
+                // has no third-party SKU to resolve against (see ApplyVerificationAsync).
+                var applyFail = await ApplyVerificationAsync(row, verified, cfg, ct, trustedProduct: product);
                 if (applyFail != null) return applyFail;
             }
             return await GrantAsync(row, verified, ct);
@@ -575,7 +592,7 @@ namespace Khela.Game.Services.Store
             return await DriveAsync(row, req, verifier, cfg, ct);
         }
 
-        public async Task<bool> MarkRefundedAsync(Guid purchaseId, string source, string reason, CancellationToken ct = default)
+        public async Task<bool> MarkRefundedAsync(Guid purchaseId, string source, string reason, bool partial = false, CancellationToken ct = default)
         {
             var row = await _db.StorePurchases.FirstOrDefaultAsync(s => s.Id == purchaseId, ct);
             if (row == null) return false;
@@ -583,13 +600,12 @@ namespace Khela.Game.Services.Store
 
             var fulfilment = ReadFulfilment(row);
             var wasGranted = row.Status == StorePurchaseStatus.Granted;
-            row.Status = StorePurchaseStatus.Refunded;
-            row.RefundedAt = DateTime.UtcNow;
-            row.RefundSource = Clamp(source, 32);
-            row.LastError = Clamp("refund: " + (reason ?? source), 500);
-            row.UpdatedAt = DateTime.UtcNow;
-            await SaveQuietlyAsync(ct);
 
+            // The status is written LAST, deliberately. The guard above short-circuits on Status == Refunded, so committing
+            // it first would make a refund that dies mid-reversal permanently "handled" with the money never taken back:
+            // every retry source (webhook re-delivery, the admin queue, the voided poll) would see Refunded and return true.
+            // Doing the reversal first keeps the row re-drivable — RollbackAsync and RevokeGoldenAsync are both idempotent,
+            // so re-running costs nothing.
             if (wasGranted)
             {
                 // Subscription → the golden window closes (collected rewards are never clawed back — PASS_SPEC §5.4).
@@ -599,8 +615,12 @@ namespace Khela.Game.Services.Store
                     {
                         var product = ProductFromRow(row);
                         var passKey = string.IsNullOrWhiteSpace(product?.Effect?.Arg) ? PassCatalog.MonthlyKey : product.Effect.Arg;
-                        var purchaseRef = StoreMath.FitOrHash(!string.IsNullOrWhiteSpace(row.StoreOrderId) ? row.StoreOrderId : row.StoreTransactionId, 96);
-                        await _pass.RevokeGoldenAsync(row.UserId, passKey, purchaseRef, source ?? "refund");
+                        // Revoke EVERY window of this pass, not one purchaseRef. Each renewal was recorded under its own key
+                        // (the initial grant uses the bare order id; a renewal appends its expiry hour), and a renewal also
+                        // moves row.StoreOrderId — so a single-key revoke matches nothing once the subscription has renewed
+                        // even once, leaving a refunded player golden for the rest of the window. A player cannot hold two
+                        // concurrent subscriptions to the same pass, so "all windows of this pass" is the right scope.
+                        await _pass.RevokeGoldenAsync(row.UserId, passKey, null, source ?? "refund");
                     }
                     catch (Exception ex) { _logger.LogWarning(ex, "Golden revoke failed for refunded purchase {Id}", row.Id); }
                 }
@@ -608,7 +628,16 @@ namespace Khela.Game.Services.Store
                 // Currency lines → policy (Store:Refunds:Policy, overlay-aware). Rollback = the wallet's own reversal (compensating
                 // Refund row, never negative); if the chips were already spent it throws → Flag. Piggy/VIP effects are never unwound.
                 var policy = await StoreSwitches.StringAsync(_redis, _config, "Store:Refunds:Policy", _options.CurrentValue.Refunds.Policy);
-                if (string.Equals(policy?.Trim(), "Rollback", StringComparison.OrdinalIgnoreCase))
+                if (partial)
+                {
+                    // A PARTIAL (quantity-based) refund: the store took back some units, not the purchase. We cannot reverse a
+                    // fraction — the wallet reverses a whole correlation id, and re-keying a spent id is forbidden — so we
+                    // never claw back here. Over-flagging costs an admin a minute; over-clawing takes chips the player still
+                    // paid for and cannot be undone.
+                    fulfilment.Flags.Add($"PARTIAL refund ({reason}): balances untouched — comp the delta by hand");
+                    _logger.LogWarning("Store purchase {Id}: PARTIAL refund recorded, balances untouched ({Reason})", row.Id, reason);
+                }
+                else if (string.Equals(policy?.Trim(), "Rollback", StringComparison.OrdinalIgnoreCase))
                 {
                     foreach (var line in fulfilment.Lines.Where(l => l.Kind == (int)RewardKind.Currency && !string.IsNullOrEmpty(l.CorrelationId)))
                     {
@@ -635,8 +664,15 @@ namespace Khela.Game.Services.Store
                     fulfilment.Flags.Add("refund: policy Flag — balances untouched");
                 }
                 row.FulfilmentJson = JsonSerializer.Serialize(fulfilment, StoreCatalog.JsonOptions);
-                await SaveQuietlyAsync(ct);
             }
+
+            // Only now is the refund recorded as handled.
+            row.Status = StorePurchaseStatus.Refunded;
+            row.RefundedAt = DateTime.UtcNow;
+            row.RefundSource = Clamp(source, 32);
+            row.LastError = Clamp((partial ? "partial refund: " : "refund: ") + (reason ?? source), 500);
+            row.UpdatedAt = DateTime.UtcNow;
+            await SaveQuietlyAsync(ct);
 
             _logger.LogWarning("StorePurchaseRefunded {UserId} {ProductId} {Platform} usd {Usd} source {Source} purchase {Id}",
                 row.UserId, row.ProductId, row.Platform, row.UsdReference, source, row.Id);
@@ -668,7 +704,7 @@ namespace Khela.Game.Services.Store
             {
                 if (row.Status == StorePurchaseStatus.Granted)
                 {
-                    await MarkRefundedAsync(row.Id, source, fresh.Reason ?? "revoked by the store", ct);
+                    await MarkRefundedAsync(row.Id, source, fresh.Reason ?? "revoked by the store", ct: ct);
                     return SubscriptionUpdate.Revoked;
                 }
                 return SubscriptionUpdate.NoChange;

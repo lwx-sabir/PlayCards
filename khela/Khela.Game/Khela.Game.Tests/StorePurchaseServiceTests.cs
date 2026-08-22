@@ -390,6 +390,48 @@ namespace Khela.Game.Tests
         }
 
         [Fact]
+        public async Task ClientCannotNameTheProduct_WhenTheStoreSkuIsUnmapped()
+        {
+            // The client sends BOTH ProductId and StoreProductId, and can read its own receipt — so if an unresolvable SKU
+            // fell back to the client's ProductId hint, a player could buy the cheapest pack and name the whale one.
+            // An unmapped SKU must park the purchase (evidence kept, admin maps it, re-drive), never grant a guess.
+            var user = Guid.NewGuid();
+            using var s = NewStack();
+            var req = FakeReceipt("chips_07", NewTxn());       // hint: the $99.99 whale pack …
+            req.StoreProductId = "sku_not_in_catalog";          // … while the receipt is for something else entirely
+
+            var r = await s.Purchases.RedeemAsync(user, req);
+            Assert.False(r.Ok);
+            Assert.Equal(RedeemStatus.ProductUnavailable, r.Status);
+            Assert.Empty(await LedgerAsync(s.Db, user));
+            Assert.Equal(0m, await s.Wallet.GetBalanceAsync(user.ToString(), CurrencyType.Chips));
+
+            var row = await s.Db.StorePurchases.AsNoTracking().SingleAsync(p => p.UserId == user);
+            Assert.NotEqual(StorePurchaseStatus.Granted, row.Status);
+            Assert.Contains("Unknown store product", row.LastError);
+        }
+
+        [Fact]
+        public async Task PartialRefund_NeverTouchesBalances()
+        {
+            // A quantity-based partial refund (Google refundType 2) takes back some units, not the purchase. A fraction of a
+            // spent correlation id cannot be reversed, so the only safe move is to record and flag it.
+            var user = Guid.NewGuid();
+            using var s = NewStack(options: new StoreOptions { Refunds = new StoreOptions.RefundOptions { Policy = "Rollback" } });
+            var r = await s.Purchases.RedeemAsync(user, FakeReceipt("chips_01", NewTxn()));
+            Assert.Equal(RedeemStatus.Granted, r.Status);
+            Assert.Equal(5_000_000m, await s.Wallet.GetBalanceAsync(user.ToString(), CurrencyType.Chips));
+
+            Assert.True(await s.Purchases.MarkRefundedAsync(r.PurchaseId.Value, "google-rtdn", "voided (refund 2)", partial: true));
+
+            Assert.Equal(5_000_000m, await s.Wallet.GetBalanceAsync(user.ToString(), CurrencyType.Chips));   // untouched
+            Assert.Single(await LedgerAsync(s.Db, user));                                                     // no reversal row
+            var row = await s.Db.StorePurchases.AsNoTracking().SingleAsync(p => p.Id == r.PurchaseId);
+            Assert.Equal(StorePurchaseStatus.Refunded, row.Status);
+            Assert.Contains("PARTIAL refund", row.FulfilmentJson);
+        }
+
+        [Fact]
         public async Task MultiQuantity_SurvivesARedrive_AndPaysEveryUnit()
         {
             // Google sells consumables in QUANTITIES. A grant interrupted after verification is re-driven WITHOUT

@@ -166,17 +166,31 @@ namespace Khela.Game.Services.Store
                         {
                             if (string.IsNullOrWhiteSpace(v.PurchaseToken)) continue;
                             var eventId = "voided:" + StoreMath.FitOrHash(v.OrderId ?? v.PurchaseToken, 120);
-                            if (await db.StoreEvents.AnyAsync(e => e.Platform == StorePlatform.GooglePlay && e.EventId == eventId, ct)) continue;
+                            // Skip only events already CARRIED OUT. Stamping ProcessedAt up front (as this did) meant a pass
+                            // that died between the marker and the refund suppressed itself forever — the void was recorded as
+                            // handled and the money never came back. The marker is written unprocessed, the refund is applied,
+                            // and only then is it stamped; the poll deliberately overlaps a day, so the retry lands.
+                            var ev = await db.StoreEvents.FirstOrDefaultAsync(e => e.Platform == StorePlatform.GooglePlay && e.EventId == eventId, ct);
+                            if (ev != null && ev.ProcessedAt != null) continue;
                             var row = await db.StorePurchases.AsNoTracking().FirstOrDefaultAsync(s => s.Platform == StorePlatform.GooglePlay && s.StoreTransactionId == v.PurchaseToken, ct);
-                            db.StoreEvents.Add(new StoreEvent
+                            if (ev == null)
                             {
-                                Platform = StorePlatform.GooglePlay, EventId = eventId, EventType = "voided",
-                                StoreTransactionId = v.PurchaseToken, PurchaseId = row?.Id,
-                                RawJson = System.Text.Json.JsonSerializer.Serialize(v), ReceivedAt = DateTime.UtcNow, ProcessedAt = DateTime.UtcNow,
-                                Error = row == null ? "no matching purchase row" : null,
-                            });
+                                ev = new StoreEvent
+                                {
+                                    Platform = StorePlatform.GooglePlay, EventId = eventId, EventType = "voided",
+                                    StoreTransactionId = v.PurchaseToken, PurchaseId = row?.Id,
+                                    RawJson = System.Text.Json.JsonSerializer.Serialize(v), ReceivedAt = DateTime.UtcNow,
+                                    Error = row == null ? "no matching purchase row" : null,
+                                };
+                                db.StoreEvents.Add(ev);
+                                try { await db.SaveChangesAsync(ct); }
+                                catch (DbUpdateException) { db.ChangeTracker.Clear(); continue; }   // a concurrent pass owns this one
+                            }
+                            // The list request leaves IncludeQuantityBasedPartialRefund off, so everything here is a FULL void.
+                            if (row != null && await purchases.MarkRefundedAsync(row.Id, "google-voided", $"voided source {v.VoidedSource} reason {v.VoidedReason}", ct: ct)) summary.Refunded++;
+                            ev.PurchaseId ??= row?.Id;
+                            ev.ProcessedAt = DateTime.UtcNow;
                             await db.SaveChangesAsync(ct);
-                            if (row != null && await purchases.MarkRefundedAsync(row.Id, "google-voided", $"voided source {v.VoidedSource} reason {v.VoidedReason}", ct)) summary.Refunded++;
                         }
                         try { await _redis.GetDatabase().StringSetAsync(VoidedSinceKey, now.ToString("O")); } catch { }
                     }
@@ -236,7 +250,7 @@ namespace Khela.Game.Services.Store
                     if (parts.Length == 0 || !Guid.TryParse(parts[0], out var id)) continue;
                     var source = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]) ? parts[1] : "admin";
                     var reason = parts.Length > 2 ? parts[2] : "manual";
-                    try { if (await purchases.MarkRefundedAsync(id, source, reason, ct)) summary.Refunded++; }
+                    try { if (await purchases.MarkRefundedAsync(id, source, reason, ct: ct)) summary.Refunded++; }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { summary.Errors++; _logger.LogWarning(ex, "Admin refund failed for {Id}", id); }
                 }

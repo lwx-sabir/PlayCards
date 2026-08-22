@@ -121,7 +121,7 @@ namespace Khela.Game.Controllers
         [HttpPost("admin/refund/{id:guid}")]
         [Authorize(Policy = "Admin")]
         public async Task<IActionResult> AdminRefund(Guid id, [FromQuery] string reason = null, CancellationToken ct = default)
-            => Ok(new { ok = await _purchases.MarkRefundedAsync(id, "admin", reason ?? "manual", ct) });
+            => Ok(new { ok = await _purchases.MarkRefundedAsync(id, "admin", reason ?? "manual", ct: ct) });
 
         /// <summary>Purchases ledger (newest first) with simple filters.</summary>
         [HttpGet("admin/purchases")]
