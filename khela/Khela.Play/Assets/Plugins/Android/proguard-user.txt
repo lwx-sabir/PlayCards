@@ -1,0 +1,32 @@
+# R8 / ProGuard keep rules for minified RELEASE builds.
+#
+# WHY THIS FILE EXISTS
+# `AndroidMinifyRelease` is 0 today, so nothing is stripped and these rules are inert. They are here as INSURANCE:
+# the day minify is turned on, their absence silently kills in-app purchases in the Play build only — and it looks
+# like a store/config problem, not a code-stripping one. This exact failure cost a full debug cycle on WGWB; the
+# post-mortem is D:\Projects\WGWB\UNITY_IAP_R8_RELEASE_INCIDENT.md.
+#
+# Unity IAP reaches Google Play Billing's Java classes BY NAME over JNI. Nothing in Java references them, so R8
+# considers them unreachable and deletes them; the app then fails at Connect()/FetchProducts() with an empty
+# catalog and every purchase button dead.
+#
+# These rules only take effect with Player Settings -> Publishing Settings -> "Custom Proguard File" ticked.
+#
+# VERIFY AFTER A RELEASE BUILD (both must hold):
+#   Library/Bee/Android/Prj/IL2CPP/Gradle/launcher/build/outputs/mapping/release/usage.txt
+#     must NOT list com.android.billingclient.api.BillingClient   (usage.txt = code that was REMOVED)
+#   .../mapping/release/mapping.txt
+#     must still contain the billing class names unrenamed
+# Seeing the billing resources inside the AAB does NOT prove the runtime API survived R8.
+
+# ---- Google Play Billing (Unity IAP loads these by class name through JNI) ----
+-keep class com.android.billingclient.** { *; }
+-keep interface com.android.billingclient.** { *; }
+
+# Harmless when absent; preserves the Java-side Unity Purchasing bridges when present.
+-keep class com.unity.purchasing.** { *; }
+
+# Preserve classes exposing native methods to Unity.
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

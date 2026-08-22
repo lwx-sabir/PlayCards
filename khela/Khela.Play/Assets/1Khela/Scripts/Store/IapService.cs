@@ -491,28 +491,31 @@ namespace PlayCard.Store
 
         /// <summary>
         /// Tell the store which of our accounts is buying (Google obfuscated account id = sha256 of the user id; Apple
-        /// appAccountToken = the user id). A fraud SIGNAL on the server, never a gate. In Unity IAP 5.2.0 these live on the
-        /// STORE extended services — <c>IGooglePlayStoreExtendedService.SetObfuscatedAccountId(string)</c> and the Apple
-        /// store service's <c>SetAppAccountToken</c> — reached through <c>UnityIAPServices.Store()</c>, not through the purchase
-        /// service's <c>.Google/.Apple</c> (those only carry upgrade/receipt helpers). Behind a define until the exact accessor is
-        /// confirmed in the Editor against the installed package; the server treats a missing binding as "unknown", not as fraud.
+        /// appAccountToken = the user id). The store echoes it back on the receipt and the server compares it — a fraud SIGNAL,
+        /// never a gate (the money was paid either way, so a mismatch is flagged, not refused).
+        ///
+        /// In Unity IAP 5.x these live on the STORE extended services, reached via <c>UnityIAPServices.DefaultStore()</c> —
+        /// NOT on the purchase service's <c>.Google/.Apple</c>, which only carry upgrade/receipt helpers:
+        /// <c>IGooglePlayStoreExtendedService.SetObfuscatedAccountId(string)</c> and
+        /// <c>IAppleStoreExtendedService.SetAppAccountToken(Guid)</c>. Best-effort throughout: a store that does not expose
+        /// the extension simply leaves the binding unset, and the server reads that as "unknown".
         /// </summary>
         private void BindAccountToStore()
         {
-#if KHELA_IAP_ACCOUNT_BINDING
             try
             {
                 var userId = AccountManager.Instance != null ? AccountManager.Instance.UserId : null;
                 if (string.IsNullOrEmpty(userId) || storeController == null) return;
-                var store = UnityIAPServices.Store();
+                var store = UnityIAPServices.DefaultStore();
+                if (store == null) return;
 #if UNITY_ANDROID
-                store?.Google?.SetObfuscatedAccountId(Sha256Hex(userId));
+                // Google's field is capped at 64 chars and must not be the raw account id — a sha256 hex is exactly 64.
+                store.Google?.SetObfuscatedAccountId(Sha256Hex(userId));
 #elif UNITY_IOS || UNITY_TVOS || UNITY_VISIONOS || UNITY_STANDALONE_OSX
-                if (Guid.TryParse(userId, out var g)) store?.Apple?.SetAppAccountToken(g);
+                if (Guid.TryParse(userId, out var appAccountToken)) store.Apple?.SetAppAccountToken(appAccountToken);
 #endif
             }
-            catch (Exception ex) { Debug.LogWarning($"[IapService] account binding failed: {ex.Message}"); }
-#endif
+            catch (Exception ex) { Debug.LogWarning($"[IapService] account binding skipped: {ex.Message}"); }
         }
 
         private static string Sha256Hex(string s)
