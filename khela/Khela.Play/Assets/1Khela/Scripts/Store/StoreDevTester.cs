@@ -41,6 +41,16 @@ namespace PlayCard.Store
             LogState();
         }
 
+        /// <summary>Re-run Unity IAP start-up — use after a <c>Failed</c> state (e.g. the catalog wasn't up when the app booted).</summary>
+        [ContextMenu("Store ▸ Initialize (retry)")]
+        public void InitializeStore()
+        {
+            var iap = IapService.Instance;
+            if (iap == null) { Debug.LogWarning("[StoreDevTester] no IapService yet — is the app signed in?"); return; }
+            Debug.Log($"[StoreDevTester] re-initializing from state {iap.State}…");
+            iap.Initialize();
+        }
+
         [ContextMenu("Store ▸ Buy product")]
         public void Buy()
         {

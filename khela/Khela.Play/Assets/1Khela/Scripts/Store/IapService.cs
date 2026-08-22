@@ -84,6 +84,8 @@ namespace PlayCard.Store
         [SerializeField] private bool fetchExistingPurchasesAfterProducts = true;
         [Tooltip("How many times to re-ask the store for the product list before declaring Failed.")]
         [SerializeField] private int productFetchAttempts = 3;
+        [Tooltip("How many times to re-ask the SERVER for the catalog during start-up before giving up (it retries again on app focus).")]
+        [SerializeField] private int catalogFetchAttempts = 5;
         [Tooltip("Reconnect automatically when the store disconnects / the app regains focus.")]
         [SerializeField] private bool reconnectOnFocus = true;
 
@@ -100,6 +102,7 @@ namespace PlayCard.Store
         private InitializationState initializationState = InitializationState.Uninitialized;
         private string lastStatusMessage = string.Empty;
         private bool initializeStarted;
+        private bool initializing;
         private bool hasCompletedInitialProductFetch;
         private int productFetchTries;
         private int connectTries;
@@ -164,7 +167,13 @@ namespace PlayCard.Store
 
         private void OnApplicationFocus(bool hasFocus)
         {
-            if (!hasFocus || !reconnectOnFocus || storeController == null) return;
+            if (!hasFocus || !reconnectOnFocus) return;
+            if (initializationState == InitializationState.Failed && storeController == null)
+            {
+                Initialize();   // start-up never got as far as a store controller (no catalog yet) — try the whole thing again
+                return;
+            }
+            if (storeController == null) return;
             if (initializationState == InitializationState.Disconnected || initializationState == InitializationState.Failed)
             {
                 connectTries = 0;
@@ -172,25 +181,41 @@ namespace PlayCard.Store
             }
         }
 
-        /// <summary>Start Unity IAP (idempotent). Waits for sign-in, fetches the server catalog, connects, fetches products and pending orders.</summary>
+        /// <summary>
+        /// Start Unity IAP: wait for sign-in, fetch the server catalog, connect, fetch products and pending orders.
+        /// Safe to call repeatedly — it no-ops while a run is in flight or once the store is Ready, and RE-RUNS after a
+        /// failure. (It used to latch on first call, so one bad startup killed purchasing until the app restarted.)
+        /// </summary>
         public void Initialize()
         {
-            if (initializeStarted) return;
+            if (initializing) return;
+            if (initializationState == InitializationState.Ready || initializationState == InitializationState.Unsupported) return;
+            initializing = true;
             initializeStarted = true;
             StartCoroutine(InitializeWhenReady());
         }
+
+        /// <summary>
+        /// Signed in ENOUGH to fetch the catalog — which means a token, not merely <c>IsReady</c>. The catalog call
+        /// early-returns without one, so waiting on IsReady alone raced sign-in and produced an empty catalog and a
+        /// dead store. No AccountManager at all (a scene without auth) counts as "go ahead".
+        /// </summary>
+        private static bool SignedIn()
+            => AccountManager.Instance == null
+            || (AccountManager.Instance.IsReady && !string.IsNullOrEmpty(AccountManager.Instance.JwtToken));
 
         private IEnumerator InitializeWhenReady()
         {
             if (!StorePlatformResolver.UnityIapSupported)
             {
                 SetState(InitializationState.Unsupported, $"Unity IAP is not available on {StorePlatformResolver.Current}.");
+                initializing = false;
                 yield break;
             }
 
             SetState(InitializationState.WaitingForCatalog, "Waiting for sign-in.");
             float waited = 0f;
-            while (AccountManager.Instance != null && !AccountManager.Instance.IsReady && waited < signInWaitSeconds)
+            while (!SignedIn() && waited < signInWaitSeconds)
             {
                 waited += Time.unscaledDeltaTime;
                 yield return null;
@@ -198,12 +223,26 @@ namespace PlayCard.Store
 
             // The server catalog names the products (and their store ids for this platform). Use the disk cache if the
             // network is slow so the store can connect immediately; the real list replaces it on the next refresh.
+            //
+            // RETRIED, not one-shot: the catalog is a network call made moments after sign-in, and treating a single miss
+            // as terminal left the store dead for the whole session even though the products arrived seconds later.
             StoreCatalog.Instance.LoadCached();
-            var refresh = StoreCatalog.Instance.RefreshAsync(force: true);
-            while (!refresh.IsCompleted) yield return null;
-            if (!StoreCatalog.Instance.Loaded || StoreCatalog.Instance.Products.Count == 0)
+            int attempts = Mathf.Max(1, catalogFetchAttempts);
+            bool haveCatalog = false;
+            for (int attempt = 1; attempt <= attempts; attempt++)
             {
-                SetState(InitializationState.Failed, "No store catalog available.");
+                var refresh = StoreCatalog.Instance.RefreshAsync(force: true);
+                while (!refresh.IsCompleted) yield return null;
+                if (StoreCatalog.Instance.Loaded && StoreCatalog.Instance.Products.Count > 0) { haveCatalog = true; break; }
+                if (attempt == attempts) break;
+                SetState(InitializationState.WaitingForCatalog, $"Catalog unavailable — retrying ({attempt}/{attempts}).");
+                yield return new WaitForSecondsRealtime(Mathf.Min(10f, 2f * attempt));
+            }
+            if (!haveCatalog)
+            {
+                // Recoverable, and it says so: Initialize() may be called again (the app-focus hook does it automatically).
+                SetState(InitializationState.Failed, "No store catalog available — will retry on focus, or call Initialize() again.");
+                initializing = false;
                 yield break;
             }
 
@@ -211,6 +250,7 @@ namespace PlayCard.Store
             SubscribeStoreCallbacks();
             storeController.ProcessPendingOrdersOnPurchasesFetched(false);   // we drive pending orders ourselves (server redeem first)
             ConnectStoreAsync();
+            initializing = false;
         }
 
         private void CreateStoreController()
