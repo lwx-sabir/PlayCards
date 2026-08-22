@@ -55,6 +55,13 @@ namespace PlayCard.Store
         private bool _diskLoaded;
         private DateTime _fetchedAtUtc;
 
+        /// <summary>
+        /// The server's clock, extrapolated from the last fetch — what sale countdowns tick against. The device clock
+        /// decides nothing (the server enforces every window); this only keeps the ribbon honest when the phone's clock is off.
+        /// </summary>
+        public DateTime ServerNowUtc
+            => Current == null || _fetchedAtUtc == DateTime.MinValue ? DateTime.UtcNow : Current.ServerTimeUtc + (DateTime.UtcNow - _fetchedAtUtc);
+
         private static string CachePath => Path.Combine(Application.persistentDataPath, "store_catalog.json");
 
         /// <summary>Load the last catalog from disk (once). Returns true if something was loaded. Cheap; safe to call repeatedly.</summary>
