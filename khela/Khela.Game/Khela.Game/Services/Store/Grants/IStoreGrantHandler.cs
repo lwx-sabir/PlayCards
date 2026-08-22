@@ -39,6 +39,14 @@ namespace Khela.Game.Services.Store.Grants
     /// <summary>What the fulfilment actually did (persisted as <c>StorePurchases.FulfilmentJson</c>).</summary>
     public sealed class StoreFulfilment
     {
+        /// <summary>
+        /// How many of the product the store says were bought (Google Play sells consumables in quantities). PERSISTED here
+        /// rather than read from the verification on each pass, because a re-drive of an interrupted grant does NOT re-verify
+        /// (the row is already Verified, so there is no <c>ReceiptVerification</c> in hand) and a quantity read from a null
+        /// verification would silently fall back to 1 — under-delivering a purchase the player already paid for.
+        /// </summary>
+        public int Quantity { get; set; } = 1;
+
         public List<StoreFulfilledLine> Lines { get; set; } = new List<StoreFulfilledLine>();
         public string EffectType { get; set; }
         public string EffectArg { get; set; }

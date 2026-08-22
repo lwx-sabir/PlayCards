@@ -152,3 +152,4 @@ mono_crash.*
 
 # Runtime config snapshots written by ConfigBackupService (server state, not source)
 khela/Khela.Game/Khela.Game/App_Data/
+khela/Khela.Game/Khela.Web/App_Data/

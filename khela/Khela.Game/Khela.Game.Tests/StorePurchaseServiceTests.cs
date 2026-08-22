@@ -390,6 +390,65 @@ namespace Khela.Game.Tests
         }
 
         [Fact]
+        public async Task MultiQuantity_SurvivesARedrive_AndPaysEveryUnit()
+        {
+            // Google sells consumables in QUANTITIES. A grant interrupted after verification is re-driven WITHOUT
+            // re-verifying (the row is already Verified, so there is no ReceiptVerification in hand) — the quantity must
+            // therefore come from the persisted fulfilment record. Reading it from the (null) verification would pay 1×
+            // for a purchase of 3 and silently under-deliver.
+            var user = Guid.NewGuid();
+            using var s = NewStack();
+            var id = Guid.NewGuid();
+            var txn = "fake:qty-" + Guid.NewGuid().ToString("N");
+            s.Db.StorePurchases.Add(new StorePurchase
+            {
+                Id = id, UserId = user, Platform = StorePlatform.Fake, ProductId = "chips_01", StoreProductId = "chips_01",
+                StoreTransactionId = txn, StoreOrderId = txn, ProductType = StoreProductType.Consumable,
+                Status = StorePurchaseStatus.Verified,      // verified, grant interrupted: exactly the re-drive case
+                IsTest = true, Environment = "Fake", UsdReference = 1.99m,
+                CatalogSnapshotJson = JsonSerializer.Serialize(StoreCatalog.Defaults().Find("chips_01"), StoreCatalog.JsonOptions),
+                FulfilmentJson = "{\"Quantity\":3}",         // what ApplyVerificationAsync persisted at verify time
+                VerifiedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow.AddMinutes(-5),
+            });
+            await s.Db.SaveChangesAsync();
+
+            var r = await s.Purchases.RedriveAsync(id);
+            Assert.True(r.Ok, r.Error);
+            Assert.Equal(RedeemStatus.Granted, r.Status);
+            Assert.Equal(15_000_000m, r.NewChipBalance);          // 3 × 5,000,000 — not 5,000,000
+
+            var ledger = await LedgerAsync(s.Db, user);
+            Assert.Single(ledger);
+            Assert.Equal(15_000_000m, ledger[0].Amount);
+            Assert.Equal(TransactionType.PaidPurchase, ledger[0].Type);
+
+            // and a second re-drive is a pure replay — the line's correlation id is already recorded
+            var again = await s.Purchases.RedriveAsync(id);
+            Assert.Equal(RedeemStatus.AlreadyGranted, again.Status);
+            Assert.Single(await LedgerAsync(s.Db, user));
+        }
+
+        [Fact]
+        public async Task MultiQuantity_IsPersistedAtVerification_SoAnInterruptedGrantKeepsIt()
+        {
+            var user = Guid.NewGuid();
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string> { ["Store:Web:Enabled"] = "true" }).Build();
+            using var s = NewStack(config);
+            var txn = "web-qty-" + Guid.NewGuid().ToString("N");
+            var verified = new ReceiptVerification
+            {
+                Outcome = VerifyOutcome.Valid, StoreProductId = "chips_01", StoreTransactionId = txn, StoreOrderId = txn,
+                Quantity = 4, Environment = "Production",
+            };
+            var r = await s.Purchases.RedeemVerifiedAsync(user, StorePlatform.Web, "chips_01", verified);
+            Assert.Equal(RedeemStatus.Granted, r.Status);
+            Assert.Equal(20_000_000m, r.NewChipBalance);          // 4 × 5,000,000
+
+            var row = await s.Db.StorePurchases.AsNoTracking().SingleAsync(p => p.Id == r.PurchaseId);
+            Assert.Contains("\"Quantity\": 4", row.FulfilmentJson);   // persisted, so a re-drive cannot lose it
+        }
+
+        [Fact]
         public async Task RedeemVerified_ServerSideEvent_GrantsWithoutAClientReceipt()
         {
             // A web checkout (bKash / Stripe / …) confirms server-to-server: its adapter turns the provider's confirmation into a

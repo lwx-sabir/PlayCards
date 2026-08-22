@@ -304,8 +304,29 @@ namespace Khela.Game.Services.Store
             row.Status = StorePurchaseStatus.Verified;
             row.LastError = null;
             if (verification.Acknowledged == true) row.AcknowledgedAt ??= DateTime.UtcNow;
+
+            // Persist the QUANTITY the store reported, now, while we still have the verification. A grant interrupted after
+            // this point is re-driven WITHOUT re-verifying (the row is no longer Pending), so a quantity kept only in the
+            // verification object would fall back to 1 on the retry and under-deliver a paid purchase.
+            if (verification.Quantity > 1)
+            {
+                var f = ReadFulfilment(row);
+                if (f.Quantity < verification.Quantity)
+                {
+                    f.Quantity = verification.Quantity;
+                    row.FulfilmentJson = JsonSerializer.Serialize(f, StoreCatalog.JsonOptions);
+                }
+            }
             await SaveQuietlyAsync(ct);
             return null;
+        }
+
+        /// <summary>The purchase's fulfilment record, or a fresh one. Never null.</summary>
+        private static StoreFulfilment ReadFulfilment(StorePurchase row)
+        {
+            if (string.IsNullOrWhiteSpace(row.FulfilmentJson)) return new StoreFulfilment();
+            try { return JsonSerializer.Deserialize<StoreFulfilment>(row.FulfilmentJson, StoreCatalog.JsonOptions) ?? new StoreFulfilment(); }
+            catch { return new StoreFulfilment(); }
         }
 
         public async Task<RedeemPurchaseResultDto> RedeemVerifiedAsync(Guid userId, StorePlatform platform, string productId, ReceiptVerification verified,
@@ -372,7 +393,14 @@ namespace Khela.Game.Services.Store
             var product = ProductFromRow(row);
             if (product == null) return Fail(RedeemStatus.ProductUnavailable, "This product is not available right now.", row, transient: true);
 
-            var fulfilment = string.IsNullOrWhiteSpace(row.FulfilmentJson) ? new StoreFulfilment() : (JsonSerializer.Deserialize<StoreFulfilment>(row.FulfilmentJson, StoreCatalog.JsonOptions) ?? new StoreFulfilment());
+            var fulfilment = ReadFulfilment(row);
+
+            // QUANTITY comes from the PERSISTED fulfilment record, never from `verification` alone: on a re-drive of an
+            // interrupted grant the row is already Verified, so `verification` is null and a multi-quantity purchase
+            // (Google sells consumables in quantities) would be paid out once instead of N times.
+            if (verification != null && verification.Quantity > fulfilment.Quantity) fulfilment.Quantity = verification.Quantity;
+            int quantity = Math.Max(1, fulfilment.Quantity);
+
             var ctx = new StoreGrantContext
             {
                 UserId = row.UserId,
@@ -414,7 +442,7 @@ namespace Khela.Game.Services.Store
                             fulfilment.Flags.Add($"line {i}: refused ({line.Id} {line.Amount})");
                             continue;
                         }
-                        var amount = line.Amount * Math.Max(1, verification?.Quantity ?? 1);
+                        var amount = line.Amount * quantity;
                         var txn = await _wallet.CreditAsync(row.UserId.ToString(), currency, amount, ctx.CreditType, key, new WalletContext
                         {
                             Description = ctx.Description,
@@ -435,6 +463,9 @@ namespace Khela.Game.Services.Store
                 // 2. the effect
                 if (product.Effect != null && !string.IsNullOrWhiteSpace(product.Effect.Type) && fulfilment.EffectType == null)
                 {
+                    // An effect runs ONCE however many units were bought (a piggy bank cannot be broken three times by one
+                    // order). Flag it so an admin can comp the difference rather than the player silently losing units.
+                    if (quantity > 1) fulfilment.Flags.Add($"quantity {quantity}: the effect '{product.Effect.Type}' was applied once — comp the remainder by hand");
                     if (!_handlers.TryGetValue(product.Effect.Type.Trim(), out var handler))
                         throw new InvalidOperationException($"No grant handler for effect '{product.Effect.Type}'.");
                     await handler.GrantAsync(ctx, fulfilment, ct);
@@ -550,7 +581,7 @@ namespace Khela.Game.Services.Store
             if (row == null) return false;
             if (row.Status == StorePurchaseStatus.Refunded || row.Status == StorePurchaseStatus.Revoked) return true;   // idempotent
 
-            var fulfilment = string.IsNullOrWhiteSpace(row.FulfilmentJson) ? new StoreFulfilment() : (JsonSerializer.Deserialize<StoreFulfilment>(row.FulfilmentJson, StoreCatalog.JsonOptions) ?? new StoreFulfilment());
+            var fulfilment = ReadFulfilment(row);
             var wasGranted = row.Status == StorePurchaseStatus.Granted;
             row.Status = StorePurchaseStatus.Refunded;
             row.RefundedAt = DateTime.UtcNow;
@@ -688,7 +719,7 @@ namespace Khela.Game.Services.Store
 
         private async Task<RedeemPurchaseResultDto> AlreadyGrantedAsync(StorePurchase row, CancellationToken ct)
         {
-            var fulfilment = string.IsNullOrWhiteSpace(row.FulfilmentJson) ? new StoreFulfilment() : (JsonSerializer.Deserialize<StoreFulfilment>(row.FulfilmentJson, StoreCatalog.JsonOptions) ?? new StoreFulfilment());
+            var fulfilment = ReadFulfilment(row);
             return await ResultAsync(row, RedeemStatus.AlreadyGranted, fulfilment, ct);
         }
 
