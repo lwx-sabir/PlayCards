@@ -136,7 +136,7 @@
             @foreach (var p in Model.Config.Products.OrderBy(p => sections.IndexOf(p.Section ?? "")).ThenBy(p => p.SortOrder))
             {
                 <tr>
-                    <td><b>@p.Id</b>@if (!string.IsNullOrWhiteSpace(p.Badge)) { <span class="dim" style="font-size:11px"> · @p.Badge</span> }</td>
+                    <td><b>@p.Id</b>@if (!string.IsNullOrWhiteSpace(p.Badge)) { <span class="dim" style="font-size:11px"> · @p.Badge</span> }@if (!string.IsNullOrWhiteSpace(p.Badge2)) { <span class="dim" style="font-size:11px"> · @p.Badge2</span> }</td>
                     <td>@p.Section</td>
                     <td class="dim" style="font-size:12px">@p.ProductType</td>
                     <td class="dim" style="font-size:12.5px">@LinesOf(p)@(p.BonusPercent > 0 ? $" (+{p.BonusPercent}%)" : "")</td>
@@ -151,7 +151,7 @@
                         <button type="button" class="btn btn-outline" onclick="openEdit(this)"
                                 data-id="@p.Id" data-enabled="@p.Enabled.ToString().ToLower()" data-type="@p.ProductType"
                                 data-section="@p.Section" data-sort="@p.SortOrder" data-title="@p.Title" data-desc="@p.Description"
-                                data-badge="@p.Badge" data-bonus="@p.BonusPercent" data-featured="@p.Featured.ToString().ToLower()"
+                                data-badge="@p.Badge" data-badge2="@p.Badge2" data-bonus="@p.BonusPercent" data-featured="@p.Featured.ToString().ToLower()"
                                 data-usd="@p.UsdReference.ToString(CultureInfo.InvariantCulture)"
                                 data-images="@string.Join("\n", p.Images ?? new List<string>())"
                                 data-sid-google="@StoreId(p, StorePlatform.GooglePlay)" data-sid-apple="@StoreId(p, StorePlatform.AppStore)"
@@ -422,7 +422,8 @@
                     <label>Sort order <input name="SortOrder" id="f_sort" type="number" class="vip-select" /></label>
                     <label>Reference price (USD) <input name="UsdReference" id="f_usd" type="number" step="0.01" min="0" class="vip-select" /></label>
                     <label>Title <input name="Title" id="f_title" class="vip-select" maxlength="100" /></label>
-                    <label>Badge <input name="Badge" id="f_badge" class="vip-select" maxlength="32" placeholder="BEST VALUE" /></label>
+                    <label>Ribbon badge (the corner banner) <input name="Badge" id="f_badge" class="vip-select" maxlength="32" placeholder="2X VALUE" /></label>
+                    <label>Corner badge (the hex mark) <input name="Badge2" id="f_badge2" class="vip-select" maxlength="32" placeholder="POPULAR" /></label>
                     <label>Bonus % <input name="BonusPercent" id="f_bonus" type="number" min="0" class="vip-select" /></label>
                     <label class="span2">Description <input name="Description" id="f_desc" class="vip-select" maxlength="500" /></label>
                     <label class="span2">Pays (reward lines: <code>Chips 5000000, Kash 50</code>; XP 100; effect-only products leave it empty)
@@ -512,7 +513,7 @@
             setVal('f_id', d.id); document.getElementById('emSub').textContent = d.id;
             setChk('f_enabled', d.enabled); setChk('f_featured', d.featured);
             setVal('f_type', d.type); setVal('f_section', d.section); setVal('f_sort', d.sort);
-            setVal('f_usd', d.usd); setVal('f_title', d.title); setVal('f_badge', d.badge); setVal('f_bonus', d.bonus); setVal('f_desc', d.desc);
+            setVal('f_usd', d.usd); setVal('f_title', d.title); setVal('f_badge', d.badge); setVal('f_badge2', d.badge2); setVal('f_bonus', d.bonus); setVal('f_desc', d.desc);
             setVal('f_lines', d.lines); setVal('f_effect', d.effect || 'none'); setVal('f_effectarg', d.effectarg); setVal('f_effecttier', d.effecttier);
             setVal('f_sid_google', d.sidGoogle); setVal('f_sid_apple', d.sidApple); setVal('f_sid_web', d.sidWeb); setVal('f_sid_amazon', d.sidAmazon);
             setVal('f_from', d.from); setVal('f_to', d.to); setVal('f_maxuser', d.maxuser); setVal('f_maxday', d.maxday); setVal('f_minlevel', d.minlevel);

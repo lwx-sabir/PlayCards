@@ -106,7 +106,10 @@ namespace Khela.Common.Store
         public int SortOrder { get; set; }
         public string Title { get; set; }
         public string Description { get; set; }
+        /// <summary>The card's RIBBON text ("2X VALUE", "BEST VALUE").</summary>
         public string Badge { get; set; }
+        /// <summary>A second, independent badge for the card's other corner (crown / "POPULAR") — see <c>StoreProductDef.Badge2</c>.</summary>
+        public string Badge2 { get; set; }
         public int BonusPercent { get; set; }
         public bool Featured { get; set; }
         public List<string> Images { get; set; }

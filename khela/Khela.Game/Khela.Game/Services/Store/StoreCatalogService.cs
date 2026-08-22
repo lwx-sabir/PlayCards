@@ -260,6 +260,7 @@ namespace Khela.Game.Services.Store
                     Title = p.Title,
                     Description = p.Description,
                     Badge = p.Badge,
+                    Badge2 = p.Badge2,
                     BonusPercent = p.BonusPercent,
                     Featured = p.Featured,
                     Images = p.Images?.ToList() ?? new List<string>(),

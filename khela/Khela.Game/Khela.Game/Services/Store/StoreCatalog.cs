@@ -88,7 +88,14 @@ namespace Khela.Game.Services.Store
         public int SortOrder { get; set; }
         public string Title { get; set; }
         public string Description { get; set; }
+        /// <summary>The card's RIBBON text ("2X VALUE", "BEST VALUE") — the banner across a corner.</summary>
         public string Badge { get; set; }
+        /// <summary>
+        /// A SECOND, independent badge for the card's other corner (the crown / thumbs-up hex): a card commonly wears two
+        /// marks that mean different things — "2× value" is about the price, "most popular" is about other players — and one
+        /// string could only ever carry one of them.
+        /// </summary>
+        public string Badge2 { get; set; }
         public int BonusPercent { get; set; }
         public bool Featured { get; set; }
         public List<string> Images { get; set; } = new List<string>();
@@ -502,6 +509,7 @@ namespace Khela.Game.Services.Store
                 if ((p.Title ?? "").Length > MaxTitleLength) return $"{id}: title longer than {MaxTitleLength}.";
                 if ((p.Description ?? "").Length > MaxDescriptionLength) return $"{id}: description longer than {MaxDescriptionLength}.";
                 if ((p.Badge ?? "").Length > MaxBadgeLength) return $"{id}: badge longer than {MaxBadgeLength}.";
+                if ((p.Badge2 ?? "").Length > MaxBadgeLength) return $"{id}: corner badge longer than {MaxBadgeLength}.";
                 if (p.BonusPercent < 0) return $"{id}: bonus % can't be negative.";
                 if (p.UsdReference < 0m) return $"{id}: reference price can't be negative.";
                 if (p.Images != null)

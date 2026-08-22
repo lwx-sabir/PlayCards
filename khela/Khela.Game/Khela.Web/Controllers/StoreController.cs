@@ -89,6 +89,7 @@ namespace Khela.Web.Controllers
             p.Title = Trim(form.Title);
             p.Description = Trim(form.Description);
             p.Badge = Trim(form.Badge);
+            p.Badge2 = Trim(form.Badge2);
             p.BonusPercent = Math.Max(0, form.BonusPercent);
             p.Featured = form.Featured;
             p.UsdReference = form.UsdReference;
@@ -647,6 +648,7 @@ namespace Khela.Web.Controllers
         public string Title { get; set; }
         public string Description { get; set; }
         public string Badge { get; set; }
+        public string Badge2 { get; set; }
         public int BonusPercent { get; set; }
         public bool Featured { get; set; }
         public decimal UsdReference { get; set; }

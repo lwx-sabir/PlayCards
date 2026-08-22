@@ -33,8 +33,14 @@ namespace PlayCard.Store
         [SerializeField] private List<TMP_Text> amountTexts = new List<TMP_Text>();
         [Tooltip("Bonus % badge text (e.g. +33%). Hidden when 0.")]
         [SerializeField] private List<TMP_Text> bonusTexts = new List<TMP_Text>();
-        [Tooltip("Badge text (e.g. BEST VALUE). Hidden when empty.")]
+        [Tooltip("RIBBON badge text (e.g. 2X VALUE) — the corner banner. Hidden when empty.")]
         [SerializeField] private List<TMP_Text> badgeTexts = new List<TMP_Text>();
+        [Tooltip("Root of the ribbon (the banner graphic). Hidden when the ribbon text is empty. Optional.")]
+        [SerializeField] private GameObject badgeRoot;
+        [Tooltip("CORNER badge text (e.g. POPULAR) — the hex mark, independent of the ribbon. Hidden when empty.")]
+        [SerializeField] private List<TMP_Text> badge2Texts = new List<TMP_Text>();
+        [Tooltip("Root of the corner badge (the hex graphic). Hidden when the corner text is empty. Optional.")]
+        [SerializeField] private GameObject badge2Root;
         [Tooltip("Shown with the server's reason when the player can't buy this right now (limit reached, level gate…).")]
         [SerializeField] private List<TMP_Text> reasonTexts = new List<TMP_Text>();
         [SerializeField] private GameObject loadingRoot;
@@ -187,12 +193,10 @@ namespace PlayCard.Store
                 t.text = product.BonusPercent > 0 ? string.Format(CultureInfo.InvariantCulture, bonusFormat, product.BonusPercent) : "";
                 t.gameObject.SetActive(product.BonusPercent > 0);
             }
-            foreach (var t in badgeTexts)
-            {
-                if (t == null) continue;
-                t.text = product.Badge ?? "";
-                t.gameObject.SetActive(!string.IsNullOrWhiteSpace(product.Badge));
-            }
+            // Two independent marks: the ribbon says something about the PRICE ("2X VALUE"), the corner hex about other
+            // players ("POPULAR"). A card commonly wears both, so they are separate catalog fields, not one string.
+            SetBadge(badgeTexts, badgeRoot, product.Badge);
+            SetBadge(badge2Texts, badge2Root, product.Badge2);
         }
 
         private void UpdateVisualState()
@@ -299,6 +303,18 @@ namespace PlayCard.Store
                 if (t == null) continue;
                 t.text = text;
                 t.gameObject.SetActive(true);
+            }
+        }
+
+        private static void SetBadge(List<TMP_Text> texts, GameObject root, string value)
+        {
+            bool on = !string.IsNullOrWhiteSpace(value);
+            if (root != null && root.activeSelf != on) root.SetActive(on);
+            foreach (var t in texts)
+            {
+                if (t == null) continue;
+                t.text = value ?? "";
+                t.gameObject.SetActive(on);
             }
         }
 
