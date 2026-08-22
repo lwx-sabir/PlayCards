@@ -194,9 +194,28 @@ namespace Khela.Game.Services.Store
             var now = DateTime.UtcNow;
 
             var sold = cfg.Products.Where(p => p != null && p.Enabled && StoreCatalog.StoreIdFor(p, platform) != null).ToList();
+            var soldIds = new HashSet<string>(sold.Select(p => p.Id), StringComparer.OrdinalIgnoreCase);
+
+            // PriceOff sale SKUs (ANY window): listed so the store fetches their price and they can be bought by id, but never a
+            // card of their own — the regular product's card sells them while its sale runs. `gates` carries, per sold SKU, the
+            // regular it belongs to + the sale that sells it; `partner` pairs each id with its twin so purchase counts are MERGED
+            // across the pair (regular + SKU are one offer for limits).
+            var gates = new Dictionary<string, SaleSkuGate>(StringComparer.OrdinalIgnoreCase);
+            var partner = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in sold)
+            {
+                var gate = StoreCatalog.GateFor(cfg, p);
+                if (gate?.Regular == null) continue;
+                gates[p.Id] = gate;
+                partner[p.Id] = gate.Regular.Id;
+                partner[gate.Regular.Id] = p.Id;
+            }
+            foreach (var p in cfg.Products)   // a regular whose SKU is NOT sold here still owns that SKU's past purchases
+                if (p?.Sale != null && p.Sale.Kind == StoreSaleKind.PriceOff && !string.IsNullOrWhiteSpace(p.Sale.SaleProductId) && !partner.ContainsKey(p.Id))
+                { partner[p.Id] = p.Sale.SaleProductId.Trim(); partner[p.Sale.SaleProductId.Trim()] = p.Id; }
 
             // One query for every count this user has on these products (total + today) instead of one per card.
-            var ids = sold.Select(p => p.Id).ToList();
+            var ids = sold.Select(p => p.Id).Concat(partner.Values).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var dayStart = now.Date;
             var counts = ids.Count == 0
                 ? new List<PurchaseCount>()
@@ -213,9 +232,23 @@ namespace Khela.Game.Services.Store
             foreach (var p in sold.OrderBy(p => p.SortOrder).ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase))
             {
                 byId.TryGetValue(p.Id, out var count);
-                var reason = Ineligible(p, count?.Total ?? 0, count?.Today ?? 0, level, now);
+                int total = count?.Total ?? 0, today = count?.Today ?? 0;
+                if (partner.TryGetValue(p.Id, out var twinId) && byId.TryGetValue(twinId, out var twin)) { total += twin.Total; today += twin.Today; }
+                gates.TryGetValue(p.Id, out var gate);   // non-null ⇒ p is somebody's cheaper SKU
+                var reason = Ineligible(p, total, today, level, now, gate);
                 if (!storeOn) reason ??= "The store is closed right now.";
                 else if (!platformOn) reason ??= "Purchases are not available on this platform yet.";
+
+                // The sale running on THIS product right now, as the card shows it. A PriceOff whose SKU isn't sold on this
+                // platform (no store id / disabled) shows no sale at all — a card pointing at a product the store can't price
+                // would be a dead button.
+                StoreSaleDto saleDto = null;
+                var sale = StoreCatalog.ActiveSale(p, now);
+                if (sale != null && sale.Kind == StoreSaleKind.ValueBonus)
+                    saleDto = new StoreSaleDto { Kind = sale.Kind, Percent = sale.Percent, EndsAtUtc = sale.ToUtc ?? DateTime.MaxValue, Label = sale.Label, Lines = StoreSaleMath.Apply(p.Lines, sale.Percent) };
+                else if (sale != null && sale.Kind == StoreSaleKind.PriceOff && !string.IsNullOrWhiteSpace(sale.SaleProductId) && soldIds.Contains(sale.SaleProductId.Trim()))
+                    saleDto = new StoreSaleDto { Kind = sale.Kind, Percent = sale.Percent, EndsAtUtc = sale.ToUtc ?? DateTime.MaxValue, Label = sale.Label,
+                                                 SaleProductId = cfg.Find(sale.SaleProductId)?.Id ?? sale.SaleProductId.Trim() };   // canonical: the client matches ids ordinally
 
                 products.Add(new StoreProductDto
                 {
@@ -236,10 +269,12 @@ namespace Khela.Game.Services.Store
                     AvailableToUtc = p.Availability?.ToUtc,
                     Purchasable = reason == null,
                     Reason = reason,
-                    PurchasedCount = count?.Total ?? 0,
+                    PurchasedCount = total,   // regular + its sale SKU together: one offer, one count
                     MaxPerUser = p.Availability?.MaxPerUser ?? 0,
                     MaxPerUserPerDay = p.Availability?.MaxPerUserPerDay ?? 0,
                     MinLevel = p.Availability?.MinLevel ?? 0,
+                    Sale = saleDto,
+                    SaleOf = gate?.Regular?.Id,
                 });
             }
 
@@ -275,13 +310,20 @@ namespace Khela.Game.Services.Store
 
             var now = DateTime.UtcNow;
             var dayStart = now.Date;
+
+            // A regular and its PriceOff sale SKU are ONE offer for limits: count both. The gate (non-null for a sale SKU) also
+            // restricts it to its sale's window and makes it inherit the regular's rules (see Ineligible).
+            var gate = StoreCatalog.GateFor(cfg, p);
+            var twinId = gate?.Regular?.Id
+                      ?? (p.Sale != null && p.Sale.Kind == StoreSaleKind.PriceOff && !string.IsNullOrWhiteSpace(p.Sale.SaleProductId) ? cfg.Find(p.Sale.SaleProductId)?.Id : null);
+            var ids = twinId == null ? new[] { p.Id } : new[] { p.Id, twinId };
             var rows = await _db.StorePurchases.AsNoTracking()
-                .Where(s => s.UserId == userId && s.ProductId == p.Id && s.Status == StorePurchaseStatus.Granted)
+                .Where(s => s.UserId == userId && ids.Contains(s.ProductId) && s.Status == StorePurchaseStatus.Granted)
                 .Select(s => s.CreatedAt).ToListAsync();
             result.PurchasedCount = rows.Count;
             int today = rows.Count(t => t >= dayStart);
 
-            result.Reason = Ineligible(p, rows.Count, today, await LevelAsync(userId), now);
+            result.Reason = Ineligible(p, rows.Count, today, await LevelAsync(userId), now, gate);
             result.Ok = result.Reason == null;
             return result;
         }
@@ -305,9 +347,28 @@ namespace Khela.Game.Services.Store
 
         private Task<bool> AllowRandomPayloadsAsync() => StoreSwitches.BoolAsync(_redis, _config, "Store:AllowRandomPayloads", false);
 
-        /// <summary>Why a product can't be bought by this player right now — null when it can. Pure on its inputs.</summary>
-        public static string Ineligible(StoreProductDef p, int totalCount, int todayCount, int level, DateTime nowUtc)
+        /// <summary>
+        /// Why a product can't be bought by this player right now — null when it can. Pure on its inputs.
+        /// <paramref name="gate"/> is set when <paramref name="p"/> is a PriceOff SALE SKU: it is buyable only while its
+        /// regular's sale points at it and runs, and it inherits the REGULAR's rules (level, per-player limits, window) on top
+        /// of its own — the pair is ONE offer, so <paramref name="totalCount"/>/<paramref name="todayCount"/> must already be the
+        /// regular's and the SKU's purchases added together. Otherwise a "max 1 per player" pack would be one at full price plus
+        /// N at the discount.
+        /// </summary>
+        public static string Ineligible(StoreProductDef p, int totalCount, int todayCount, int level, DateTime nowUtc, SaleSkuGate gate = null)
         {
+            if (gate != null)
+            {
+                var w = gate.Sale;
+                if (w == null) return "This offer has ended.";                                       // a declared SKU with no live sale is unsellable, not free
+                if (w.FromUtc.HasValue && nowUtc < w.FromUtc.Value) return "Not available yet.";
+                if (w.ToUtc.HasValue && nowUtc >= w.ToUtc.Value) return "This offer has ended.";
+                if (gate.Regular != null)
+                {
+                    var inherited = Ineligible(gate.Regular, totalCount, todayCount, level, nowUtc);   // the regular's own rules, same merged counts
+                    if (inherited != null) return inherited;
+                }
+            }
             var a = p.Availability ?? new StoreAvailabilityDef();
             if (a.FromUtc.HasValue && nowUtc < a.FromUtc.Value) return "Not available yet.";
             if (a.ToUtc.HasValue && nowUtc >= a.ToUtc.Value) return "This offer has ended.";

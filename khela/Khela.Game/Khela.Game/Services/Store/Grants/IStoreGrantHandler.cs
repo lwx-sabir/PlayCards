@@ -53,6 +53,17 @@ namespace Khela.Game.Services.Store.Grants
         public PiggyBreakResultDto Piggy { get; set; }
         public PassPurchaseResultDto Pass { get; set; }
         public bool? VipBoosterApplied { get; set; }
+        /// <summary>
+        /// The sale this purchase was granted under, if any — "ValueBonus +50% (WEEKEND)" or "PriceOff SKU of chips_03". The
+        /// explanation for line amounts that differ from the catalog's; read from the snapshot at grant, never re-derived.
+        /// </summary>
+        public string Sale { get; set; }
+        /// <summary>
+        /// The STORE's purchase time as the verifier reported it (Google <c>purchaseTimeMillis</c>, Apple <c>purchaseDate</c>),
+        /// persisted at verification like <see cref="Quantity"/> — a re-drive has no verification in hand — because it decides
+        /// which sale a value-bonus purchase was bought under. Null when the rail gave none (the row's reserve time is used).
+        /// </summary>
+        public DateTime? PurchasedAtUtc { get; set; }
         /// <summary>Anomalies worth an admin's eye (limit exceeded at redeem, account-binding mismatch, capacity paid on a moved bank…).</summary>
         public List<string> Flags { get; set; } = new List<string>();
         public DateTime? CompletedAtUtc { get; set; }

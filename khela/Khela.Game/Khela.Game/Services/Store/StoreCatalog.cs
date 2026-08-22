@@ -43,6 +43,37 @@ namespace Khela.Game.Services.Store
     }
 
     /// <summary>
+    /// A time-limited sale on one product (docs/IAP_SPEC.md §3.4). Two kinds, because the stores own the price:
+    /// <list type="bullet">
+    /// <item><b>ValueBonus</b> — same SKU, same price, every currency/XP line pays +<see cref="Percent"/>%. Granted from the
+    /// purchase's catalog SNAPSHOT at its reserve time, so a receipt that lands after the window still pays what the card
+    /// promised (<see cref="StoreCatalog.SaleGrace"/>).</item>
+    /// <item><b>PriceOff</b> — the card sells <see cref="SaleProductId"/>, a second catalog product priced lower in the
+    /// consoles, with the regular price struck through. <see cref="Percent"/> is display only; the sale SKU's store price is
+    /// the truth. The sale SKU must deliver the IDENTICAL payload (validated) and is never a card of its own.</item>
+    /// </list>
+    /// One sale per product; <see cref="FromUtc"/> may be in the future (scheduled). Windows are UTC.
+    /// </summary>
+    public sealed class StoreSaleDef
+    {
+        public StoreSaleKind Kind { get; set; }
+        public int Percent { get; set; }
+        public DateTime? FromUtc { get; set; }
+        public DateTime? ToUtc { get; set; }
+        /// <summary>Optional ribbon text. Empty = the percent.</summary>
+        public string Label { get; set; }
+        /// <summary>PriceOff only: the cheaper SKU's catalog id.</summary>
+        public string SaleProductId { get; set; }
+    }
+
+    /// <summary>What gates a PriceOff sale SKU: the regular it belongs to, and the sale that currently sells it (null = unsellable right now).</summary>
+    public sealed class SaleSkuGate
+    {
+        public StoreProductDef Regular { get; set; }
+        public StoreSaleDef Sale { get; set; }
+    }
+
+    /// <summary>
     /// One product in the server-owned catalog. <see cref="Id"/> is the stable id Reza types on a button; the per-platform
     /// store-product ids live in <see cref="StoreIds"/> (a platform with no entry does not sell it; the Fake store always
     /// sells everything under <see cref="Id"/>). What it pays = <see cref="Lines"/> (currency / XP / … as <see cref="RewardGrant"/>
@@ -68,6 +99,15 @@ namespace Khela.Game.Services.Store
         public List<RewardGrant> Lines { get; set; } = new List<RewardGrant>();
         public StoreEffectDef Effect { get; set; }
         public StoreAvailabilityDef Availability { get; set; } = new StoreAvailabilityDef();
+        /// <summary>The product's sale (active, scheduled or past), or null. Travels into the purchase snapshot, which is what the grant reads.</summary>
+        public StoreSaleDef Sale { get; set; }
+        /// <summary>
+        /// Set on a PriceOff SALE SKU: the id of the regular product it is the cheaper twin of. This is the SKU's OWN gate —
+        /// a product that declares it is sold ONLY while that regular's PriceOff sale points at it and is running, whatever
+        /// happens to the pointer (cleared, re-targeted, the regular deleted). Without it an admin "Clear" would leave a
+        /// discounted SKU quietly buyable by id forever. Set by the admin when a sale is pointed at the SKU; validated both ways.
+        /// </summary>
+        public string SaleSkuOf { get; set; }
 
         /// <summary>Chips paid per USD of reference price — the number the value guard compares (0 for effect-only products).</summary>
         public decimal ChipsPerUsd()
@@ -116,6 +156,18 @@ namespace Khela.Game.Services.Store
         public const string EffectGoldenPass = "GoldenPass";
         public const string EffectVipBooster = "VipBooster";
         public const string PiggyTierParam = "tier";
+
+        public const int MaxSaleLabelLength = 40;
+        /// <summary>ValueBonus ceiling. +1000% is already "pay 1, get 11"; anything above it is a typo, not a promotion.</summary>
+        public const int MaxValueBonusPercent = 1000;
+
+        /// <summary>
+        /// How long after a sale ENDS a purchase still gets it. The promise is made when the card is tapped; the purchase is
+        /// reserved when the receipt comes back, after the store sheet — so a sale that ends while the player is typing a
+        /// password must still pay what the card showed. Fifteen minutes covers every sheet; a pending (cash) payment
+        /// reserves on its first attempt, right after the sheet, so it is covered too.
+        /// </summary>
+        public static readonly TimeSpan SaleGrace = TimeSpan.FromMinutes(15);
 
         /// <summary>Store product ids: lowercase letters, digits, '_' and '.' (the intersection of what Play and the App Store accept).</summary>
         private static readonly Regex IdPattern = new Regex("^[a-z0-9_.]+$", RegexOptions.Compiled);
@@ -297,6 +349,104 @@ namespace Khela.Game.Services.Store
             return cfg.Products.FirstOrDefault(p => p != null && string.Equals(StoreIdFor(p, platform), storeId, StringComparison.OrdinalIgnoreCase));
         }
 
+        // ---------------------------------------------------------------- sales
+
+        /// <summary>
+        /// Is <paramref name="sale"/> running at <paramref name="atUtc"/>? <paramref name="grace"/> extends the END by
+        /// <see cref="SaleGrace"/> — used when GRANTING (the promise was made before the receipt), never when showing.
+        /// </summary>
+        public static bool SaleActive(StoreSaleDef sale, DateTime atUtc, bool grace = false)
+        {
+            if (sale == null || sale.Kind == StoreSaleKind.None || sale.Percent <= 0) return false;
+            if (sale.FromUtc.HasValue && atUtc < sale.FromUtc.Value) return false;
+            if (sale.ToUtc.HasValue)
+            {
+                // Saturate: an end authored at DateTime.MaxValue must not overflow in the GRANT path (a throw there leaves a paid
+                // purchase re-driving forever).
+                var end = sale.ToUtc.Value;
+                if (grace) end = end > DateTime.MaxValue - SaleGrace ? DateTime.MaxValue : end + SaleGrace;
+                if (atUtc >= end) return false;
+            }
+            return true;
+        }
+
+        /// <summary>The product's sale if it is running at <paramref name="atUtc"/>, else null.</summary>
+        public static StoreSaleDef ActiveSale(StoreProductDef product, DateTime atUtc, bool grace = false)
+            => product?.Sale != null && SaleActive(product.Sale, atUtc, grace) ? product.Sale : null;
+
+        /// <summary>The regular product whose PriceOff sale sells <paramref name="productId"/> as its cheaper SKU (any window), or null.
+        /// Resolved from the SKU's own declaration (<see cref="StoreProductDef.SaleSkuOf"/>) first, then from a regular's pointer.</summary>
+        public static StoreProductDef RegularFor(StoreCatalogConfig cfg, string productId)
+        {
+            if (cfg?.Products == null || string.IsNullOrWhiteSpace(productId)) return null;
+            var id = productId.Trim();
+            var sku = cfg.Find(id);
+            if (!string.IsNullOrWhiteSpace(sku?.SaleSkuOf))
+            {
+                var declared = cfg.Find(sku.SaleSkuOf);
+                if (declared != null && !ReferenceEquals(declared, sku)) return declared;
+            }
+            return cfg.Products.FirstOrDefault(p => p?.Sale != null && p.Sale.Kind == StoreSaleKind.PriceOff
+                && string.Equals(p.Sale.SaleProductId?.Trim(), id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Is <paramref name="product"/> a PriceOff sale SKU? If so, the regular it belongs to and the sale that currently
+        /// sells it (null when the regular has no PriceOff sale pointing at it — the SKU is then unsellable, not free).
+        /// Null when the product is an ordinary one. Pure.
+        /// </summary>
+        public static SaleSkuGate GateFor(StoreCatalogConfig cfg, StoreProductDef product)
+        {
+            if (cfg == null || product == null) return null;
+            var regular = RegularFor(cfg, product.Id);
+            if (regular == null) return null;
+            var sale = regular.Sale != null && regular.Sale.Kind == StoreSaleKind.PriceOff
+                    && string.Equals(regular.Sale.SaleProductId?.Trim(), product.Id, StringComparison.OrdinalIgnoreCase)
+                ? regular.Sale : null;
+            return new SaleSkuGate { Regular = regular, Sale = sale };
+        }
+
+        /// <summary>
+        /// The instant a value-bonus sale is judged against for a purchase: the STORE's purchase time when the verifier
+        /// reported one, else the row's reserve time. The store's time is the truth — a receipt that reaches us hours later
+        /// (a pending/cash payment, an app killed before the redeem, a restore) was still paid when the card showed the
+        /// bonus; and one paid BEFORE a scheduled sale and redeemed inside it was not. The earlier of the two, so a store
+        /// clock ahead of ours can never push a purchase into a window it was not bought in.
+        /// </summary>
+        public static DateTime SaleDecisionTime(DateTime createdAtUtc, DateTime? purchasedAtUtc)
+            => purchasedAtUtc.HasValue && purchasedAtUtc.Value < createdAtUtc ? purchasedAtUtc.Value : createdAtUtc;
+
+        /// <summary>
+        /// Do two products deliver the same thing — same reward lines, same effect? A PriceOff SKU must: a "sale" that pays
+        /// differently is a different product wearing a discount, and the card would be promising one thing and selling another.
+        /// </summary>
+        public static bool SamePayload(StoreProductDef a, StoreProductDef b)
+        {
+            if (a == null || b == null) return false;
+            var la = NormalLines(a.Lines);
+            var lb = NormalLines(b.Lines);
+            if (la.Count != lb.Count) return false;
+            for (int i = 0; i < la.Count; i++)
+            {
+                if (la[i].Kind != lb[i].Kind) return false;
+                if (!string.Equals(la[i].Id?.Trim(), lb[i].Id?.Trim(), StringComparison.OrdinalIgnoreCase)) return false;
+                if (la[i].Amount != lb[i].Amount) return false;
+            }
+            return string.Equals(EffectKey(a.Effect), EffectKey(b.Effect), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<RewardGrant> NormalLines(IEnumerable<RewardGrant> lines)
+            => (lines ?? Enumerable.Empty<RewardGrant>()).Where(l => l != null)
+                .OrderBy(l => (int)l.Kind).ThenBy(l => l.Id ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(l => l.Amount).ToList();
+
+        private static string EffectKey(StoreEffectDef e)
+        {
+            if (e == null || string.IsNullOrWhiteSpace(e.Type)) return "";
+            var ps = (e.Params ?? new Dictionary<string, string>()).OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv => kv.Key.Trim() + "=" + (kv.Value ?? "").Trim());
+            return e.Type.Trim() + "|" + (e.Arg ?? "").Trim() + "|" + string.Join(",", ps);
+        }
+
         /// <summary>The best chips-per-USD among enabled chip products — the bar a piggy offer must clear (value guard).</summary>
         public static decimal BestChipsPerUsd(StoreCatalogConfig cfg)
             => cfg?.Products == null ? 0m : cfg.Products.Where(p => p != null && p.Enabled).Select(p => p.ChipsPerUsd()).DefaultIfEmpty(0m).Max();
@@ -424,12 +574,73 @@ namespace Khela.Game.Services.Store
                     }
                 }
 
+                // sale
+                if (p.Sale != null && p.Sale.Kind != StoreSaleKind.None)
+                {
+                    var s = p.Sale;
+                    if (!Enum.IsDefined(typeof(StoreSaleKind), s.Kind)) return $"{id}: unknown sale kind.";
+                    if ((s.Label ?? "").Length > MaxSaleLabelLength) return $"{id}: sale label longer than {MaxSaleLabelLength}.";
+                    if (!s.ToUtc.HasValue) return $"{id}: a sale needs an end (to). A sale with no end is a price change — edit the product instead.";
+                    if (s.FromUtc.HasValue && s.ToUtc <= s.FromUtc) return $"{id}: the sale ends before it starts.";
+                    if (p.ProductType == StoreProductType.Subscription) return $"{id}: a subscription can't carry a sale (introductory offers are a console feature).";
+                    switch (s.Kind)
+                    {
+                        case StoreSaleKind.ValueBonus:
+                            if (s.Percent < 1 || s.Percent > MaxValueBonusPercent) return $"{id}: value bonus must be 1–{MaxValueBonusPercent}%.";
+                            if (!lines.Any(l => l != null && (l.Kind == RewardKind.Currency || l.Kind == RewardKind.Xp)))
+                                return $"{id}: a value bonus needs a currency or XP line to boost — an effect-only product can't carry one.";
+                            break;
+                        case StoreSaleKind.PriceOff:
+                            if (s.Percent < 1 || s.Percent > 99) return $"{id}: price-off must be 1–99%.";
+                            if (string.IsNullOrWhiteSpace(s.SaleProductId)) return $"{id}: price-off needs the sale SKU (the cheaper product's id).";
+                            var sku = cfg.Find(s.SaleProductId);
+                            if (sku == null) return $"{id}: sale SKU '{s.SaleProductId}' is not in the catalog.";
+                            if (string.Equals(sku.Id, id, StringComparison.OrdinalIgnoreCase)) return $"{id}: a product can't be its own sale SKU.";
+                            if (sku.ProductType != p.ProductType) return $"{id}: sale SKU '{sku.Id}' is a different product type.";
+                            if (!SamePayload(p, sku)) return $"{id}: sale SKU '{sku.Id}' must pay exactly what {id} pays (same lines, same effect).";
+                            if (p.UsdReference <= 0m) return $"{id}: price the product before putting it on sale.";
+                            if (sku.UsdReference <= 0m || sku.UsdReference >= p.UsdReference) return $"{id}: sale SKU '{sku.Id}' must have a LOWER reference price than {id} ({p.UsdReference:0.00}).";
+                            if (sku.Sale != null && sku.Sale.Kind != StoreSaleKind.None) return $"{id}: sale SKU '{sku.Id}' can't carry a sale of its own.";
+                            // The SKU must declare itself (its own gate) — a plain product can never be pressed into service as a discount.
+                            if (!string.Equals(sku.SaleSkuOf?.Trim(), id, StringComparison.OrdinalIgnoreCase))
+                                return $"{id}: sale SKU '{sku.Id}' must declare 'sale SKU of {id}' (the editor sets this when you point a sale at it).";
+                            s.SaleProductId = sku.Id;   // canonical — the wire value must equal the SKU's listed id exactly (the client matches ordinally)
+                            break;
+                    }
+                }
+
+                // A declared sale SKU: its regular must exist and be a different product; it can't carry a sale of its own; and if
+                // its regular currently runs a PriceOff, that sale must point back at it. A regular with NO sale is legal — the
+                // SKU is then simply unsellable (gated), which is exactly what "Clear" leaves behind.
+                if (!string.IsNullOrWhiteSpace(p.SaleSkuOf))
+                {
+                    var regular = cfg.Find(p.SaleSkuOf);
+                    if (regular == null) return $"{id}: declares itself the sale SKU of '{p.SaleSkuOf}', which is not in the catalog.";
+                    if (string.Equals(regular.Id, id, StringComparison.OrdinalIgnoreCase)) return $"{id}: can't be its own regular product.";
+                    if (p.Sale != null && p.Sale.Kind != StoreSaleKind.None) return $"{id}: a sale SKU can't carry a sale of its own.";
+                    if (regular.Sale != null && regular.Sale.Kind == StoreSaleKind.PriceOff
+                        && !string.Equals(regular.Sale.SaleProductId?.Trim(), id, StringComparison.OrdinalIgnoreCase))
+                        return $"{id}: declares itself the sale SKU of {regular.Id}, but {regular.Id}'s sale points at '{regular.Sale.SaleProductId}'.";
+                    p.SaleSkuOf = regular.Id;   // canonical
+                }
+
                 if (lines.Count == 0 && p.Effect == null) return $"{id}: grants nothing (no lines, no effect).";
                 if (p.ProductType == StoreProductType.Subscription && p.Effect == null) return $"{id}: a subscription must carry an effect.";
 
                 var a = p.Availability ?? new StoreAvailabilityDef();
                 if (a.MaxPerUser < 0 || a.MaxPerUserPerDay < 0 || a.MinLevel < 0) return $"{id}: availability limits can't be negative.";
                 if (a.FromUtc.HasValue && a.ToUtc.HasValue && a.ToUtc <= a.FromUtc) return $"{id}: availability window ends before it starts.";
+            }
+
+            // One SKU can serve ONE sale: two regular products pointing at the same cheaper SKU would leave the catalog unable to
+            // say whose sale a purchase of it belonged to, and the card lookup (SaleOf) ambiguous.
+            var skuOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in cfg.Products)
+            {
+                if (p?.Sale == null || p.Sale.Kind != StoreSaleKind.PriceOff || string.IsNullOrWhiteSpace(p.Sale.SaleProductId)) continue;
+                var sku = p.Sale.SaleProductId.Trim();
+                if (skuOwners.TryGetValue(sku, out var other)) return $"{p.Id}: sale SKU '{sku}' is already the sale SKU of {other}.";
+                skuOwners[sku] = p.Id;
             }
             return null;
         }

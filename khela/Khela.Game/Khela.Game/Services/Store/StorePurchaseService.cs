@@ -323,14 +323,16 @@ namespace Khela.Game.Services.Store
             // Persist the QUANTITY the store reported, now, while we still have the verification. A grant interrupted after
             // this point is re-driven WITHOUT re-verifying (the row is no longer Pending), so a quantity kept only in the
             // verification object would fall back to 1 on the retry and under-deliver a paid purchase.
-            if (verification.Quantity > 1)
+            // Same for the STORE's purchase time: it decides which sale a value-bonus purchase was bought under (the receipt may
+            // reach us hours after the payment — pending/cash, an app killed before the redeem, a restore). Persisted once, here,
+            // so every later drive judges the same instant.
+            if (verification.Quantity > 1 || verification.PurchaseTimeUtc.HasValue)
             {
                 var f = ReadFulfilment(row);
-                if (f.Quantity < verification.Quantity)
-                {
-                    f.Quantity = verification.Quantity;
-                    row.FulfilmentJson = JsonSerializer.Serialize(f, StoreCatalog.JsonOptions);
-                }
+                bool changed = false;
+                if (f.Quantity < verification.Quantity) { f.Quantity = verification.Quantity; changed = true; }
+                if (!f.PurchasedAtUtc.HasValue && verification.PurchaseTimeUtc.HasValue) { f.PurchasedAtUtc = verification.PurchaseTimeUtc; changed = true; }
+                if (changed) row.FulfilmentJson = JsonSerializer.Serialize(f, StoreCatalog.JsonOptions);
             }
             await SaveQuietlyAsync(ct);
             return null;
@@ -446,6 +448,31 @@ namespace Khela.Game.Services.Store
             {
                 // 1. plain reward lines — currency straight through the wallet as PaidPurchase; other kinds via the reward granters
                 var lines = product.Lines ?? new List<RewardGrant>();
+
+                // A VALUE-BONUS sale pays from the purchase's SNAPSHOT, judged at the instant the STORE says it was bought (the
+                // verifier's purchase time, persisted on the row; the reserve time when the store gave none) + grace: what the
+                // card promised when it was tapped, whatever the catalog says now and however late the receipt arrives —
+                // a pending/cash payment, an app killed before the redeem, a restore. Deterministic on (snapshot, persisted
+                // time), so a re-drive pays the same amounts under the same line keys; a refund reverses the persisted
+                // (boosted) lines. `product` IS the snapshot (ProductFromRow), never the live catalog.
+                var decidedAt = StoreCatalog.SaleDecisionTime(row.CreatedAt, fulfilment.PurchasedAtUtc);
+                var sale = StoreCatalog.ActiveSale(product, decidedAt, grace: true);
+                if (sale != null && sale.Kind == StoreSaleKind.ValueBonus)
+                {
+                    lines = StoreSaleMath.Apply(lines, sale.Percent);
+                    fulfilment.Sale ??= $"ValueBonus +{sale.Percent}%" + (string.IsNullOrWhiteSpace(sale.Label) ? "" : $" ({sale.Label.Trim()})");
+                }
+                else if (fulfilment.Sale == null)
+                {
+                    // A PriceOff SKU grants its own (identical) lines; only the record needs to say why this SKU exists.
+                    try
+                    {
+                        var regular = StoreCatalog.RegularFor(await _catalog.GetConfigAsync(), product.Id);
+                        if (regular != null) fulfilment.Sale = $"PriceOff SKU of {regular.Id}";
+                    }
+                    catch { /* informational only */ }
+                }
+
                 for (int i = 0; i < lines.Count; i++)
                 {
                     var line = lines[i];

@@ -196,6 +196,44 @@ code defaults are **test placeholders**, not the design; Reza sizes the real lad
 Prerequisite batch (DECISIONS E-09): stake tiers extended to the 1M room + tournament lobby. The Golden pass's
 store ids are owned here; `PassProgram.GoldenProductIdApple/Google` become display-only and the validator warns on mismatch.
 
+### 3.2 Sales — time-limited (built 2026-08-22; `StoreSaleDef` on a product, `StoreSaleDto` on the wire)
+One `sale` per product, UTC window, `from` optional (scheduled) / `to` **required** (a sale with no end is a price change —
+edit the product). Two kinds, because **the stores own the price** — a server can make a product pay more, it cannot make
+Google/Apple charge less:
+
+| kind | what it does | who does it | the truth at grant |
+|---|---|---|---|
+| **ValueBonus** `+X%` | same SKU, same price; every currency/XP line pays `floor(amount × (100+X)/100)` (`StoreSaleMath`, **one formula in Khela.Common** so the card and the ledger can't drift; chest/cosmetic/item lines untouched) | server only — instant, reversible | the purchase's **catalog snapshot**, judged at **the store's purchase time** (`ReceiptVerification.PurchaseTimeUtc`, persisted in `FulfilmentJson.PurchasedAtUtc` at verification like `Quantity` — a re-drive has no verification in hand; the reserve time `row.CreatedAt` when the rail gave none; never later than the reserve — `StoreCatalog.SaleDecisionTime`) + `StoreCatalog.SaleGrace` (15 min) after the end. So a cash/pending payment, an app killed before the redeem, a restore — all *bought* while the card showed the bonus — still get it, and one bought before a scheduled sale and redeemed inside it does not. Deterministic ⇒ re-drives pay the same under the same line keys; a refund reverses the persisted (boosted) lines. Recorded in `FulfilmentJson.Sale` |
+| **PriceOff** `−X%` | the card sells `saleProductId` — a second catalog product priced lower **in the consoles** — with the regular price struck through; `X` is display only, the SKU's store price is the truth | admin creates the SKU in both consoles + as a product here | the sale SKU is a normal product: grants its own (identical) lines; `FulfilmentJson.Sale = "PriceOff SKU of …"` |
+
+**The sale SKU's own gate — `StoreProductDef.SaleSkuOf`.** A PriceOff SKU *declares* which regular it belongs to (the editor sets
+it when a sale is pointed at it; the validator requires it both ways and canonicalises ids). The declaration — not the
+regular's pointer — is what gates the SKU: it is sold **only while its regular's PriceOff points at it and runs**, and inherits the
+**regular's rules** (level, per-player limits, window) on top of its own, with purchase counts **merged across the pair** (regular +
+SKU are one offer — otherwise "max 1 per player" is one at full price plus N at the discount). So "Clear", a re-target, or
+deleting the regular can never leave a discounted SKU quietly buyable by id: it becomes *unsellable*, not free ("This offer has
+ended."); re-targeting a regular at a new SKU while the old one still declares it is refused. Validator: ValueBonus 1–1000 % and
+needs a currency/XP line (effect-only products can't carry one); PriceOff 1–99 %, the SKU must exist, same `productType`,
+**identical payload** (`SamePayload`: lines order-insensitive + effect incl. params), a **lower** `usdReference` than a priced
+regular, carry no sale of its own (no chains), declare this regular; a declared SKU's regular must exist and be another product;
+no sale on a Subscription (intro offers are a console feature). Catalog DTO: the regular carries `Sale {Kind, Percent, EndsAtUtc,
+Label, Lines (ValueBonus: the boosted lines) | SaleProductId (canonical id)}` **only while active**; a PriceOff whose SKU isn't sold
+on that platform shows no sale (a card pointing at nothing). The sale SKU is **always listed** (so Unity IAP fetches its price;
+`IapService` builds its definitions once at init) with `SaleOf = <regular id>` — never a card of its own; `PurchasedCount` is the
+merged count. **Client:** `StorePurchaseButton.ActiveProductId` (the SKU a tap buys — only when the store has actually priced the
+sale SKU; a SKU added mid-session has no store product until the next app start, so the card keeps selling the regular with no
+ribbon rather than going dead), the SKU it *sent* is remembered until its result lands (a sale ending mid-sheet can't drop the
+processing state), the cached price resets when the active SKU changes, ribbon (`Label` or ±X%), struck regular price — both
+numbers are **real store prices** in the buyer's currency, never a fabricated "was" — and a countdown against
+`StoreCatalog.ServerNowUtc` (device clock decides nothing; at zero it forces a catalog refresh, throttled to 20 s). **Admin:** Sale
+box in the product editor (+ "this product is the sale SKU of"), a **Sales** panel (scheduled / active / ended, chips/$ on sale).
+**End now** closes the window at this instant (refused on a sale that already ended — an end is never moved later, which would
+re-open the grant grace); **Clear** removes the record and is refused inside the grace; the panel warns that a purchase reserved
+after a Clear is judged from a snapshot without the sale (a cash payment still pending at the store would then pay the base
+amount) — End now is the safe way to stop a sale. Ending a sale never touches a purchase already made. Tests: `StoreSaleTests`
+(formula, window + grace, the decision time incl. late receipts, every validator rule incl. the SKU gate, round-trip, sale-SKU
+eligibility + inherited merged limits).
+
 ## 4. Data model (migration `AddStoreTables`)
 
 ### 4.1 `StorePurchases` — one row per store transaction; THE money event (`OperatorId` mandatory, money-path-red-lines)

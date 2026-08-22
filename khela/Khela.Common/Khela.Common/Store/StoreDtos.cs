@@ -65,6 +65,36 @@ namespace Khela.Common.Store
         public int SortOrder { get; set; }
     }
 
+    /// <summary>
+    /// How a time-limited sale changes a product. Persisted in the catalog document and sent on the wire — append only.
+    /// The two kinds exist because the stores own the PRICE: a server can make a product pay more, but it cannot make
+    /// Google or Apple charge less — a lower price is a different SKU in their consoles.
+    /// </summary>
+    public enum StoreSaleKind
+    {
+        None = 0,
+        /// <summary>Same SKU, same price, every currency/XP line pays <c>+Percent%</c>. Server-side, instant, reversible.</summary>
+        ValueBonus = 1,
+        /// <summary>The card sells a second SKU priced lower in the consoles (<see cref="StoreSaleDto.SaleProductId"/>); the regular price shows struck through.</summary>
+        PriceOff = 2,
+    }
+
+    /// <summary>A sale that is ACTIVE right now on a product, as the client should show it. Absent = no sale.</summary>
+    public sealed class StoreSaleDto
+    {
+        public StoreSaleKind Kind { get; set; }
+        /// <summary>ValueBonus: the bonus applied to the lines. PriceOff: the advertised discount (display only — the SKU's store price is the truth).</summary>
+        public int Percent { get; set; }
+        /// <summary>When the sale ends (server clock). Count down from <see cref="StoreCatalogDto.ServerTimeUtc"/>, never the device clock.</summary>
+        public DateTime EndsAtUtc { get; set; }
+        /// <summary>Optional ribbon text ("WEEKEND", "DIWALI"). Empty = show the percent.</summary>
+        public string Label { get; set; }
+        /// <summary>ValueBonus: what the product pays DURING the sale — the exact amounts the server will grant (<see cref="StoreSaleMath"/>).</summary>
+        public List<RewardGrant> Lines { get; set; }
+        /// <summary>PriceOff: the SKU to buy instead of this product's own. Its localized price is the sale price.</summary>
+        public string SaleProductId { get; set; }
+    }
+
     /// <summary>One product as ONE platform sees it: our stable id, the store-product id to buy on this platform,
     /// what it pays (for display — the server grants from its own catalog, never from this), and per-user availability.</summary>
     public sealed class StoreProductDto
@@ -94,6 +124,14 @@ namespace Khela.Common.Store
         public int MaxPerUser { get; set; }
         public int MaxPerUserPerDay { get; set; }
         public int MinLevel { get; set; }
+        /// <summary>The sale active on this product RIGHT NOW, or null. Drives the ribbon, the struck price and the countdown.</summary>
+        public StoreSaleDto Sale { get; set; }
+        /// <summary>
+        /// Set when this product exists only as the cheaper SKU of another product's PriceOff sale: the id of that regular
+        /// product. Such a product is NEVER a card of its own — the regular product's card sells it while the sale is on.
+        /// It is still listed so the store fetches its price and it can be bought by id.
+        /// </summary>
+        public string SaleOf { get; set; }
     }
 
     public sealed class StoreCatalogDto
