@@ -53,6 +53,16 @@ namespace Khela.Game.Services.Piggy
         /// would mint chips every time one arrived.
         /// </param>
         Task<PiggyBreakResultDto> BreakAsync(Guid userId, PiggyBreakOption option, string purchaseId);
+
+        /// <summary>
+        /// Buy the bank with a purchase the STORE has already verified (docs/IAP_SPEC.md §5.2 g). Same payout rules, same
+        /// one-transaction shape and the same idempotency on <paramref name="purchaseId"/> as <see cref="BreakAsync"/>, with
+        /// two differences the verified money earns: it never needs <c>Piggy:BypassPurchase</c>, and it never under-delivers —
+        /// a Full/×2 bought while the bank moved underneath the tap (expired, reset) pays the bank's capacity rather than
+        /// refusing a charged card. The credit is typed <paramref name="creditType"/> (PaidPurchase for real money).
+        /// </summary>
+        Task<PiggyBreakResultDto> BreakVerifiedAsync(Guid userId, PiggyBreakOption option, string purchaseId, string priceSku,
+            Guid storePurchaseId, Khela.Game.Database.Models.TransactionType creditType);
     }
 
     /// <summary>
@@ -296,13 +306,26 @@ namespace Khela.Game.Services.Piggy
         /// failure that costs real money in both directions: a reset without a payout robs the player, and a payout
         /// without a reset lets them sell the same bank again.
         /// </summary>
-        public async Task<PiggyBreakResultDto> BreakAsync(Guid userId, PiggyBreakOption option, string purchaseId)
+        public Task<PiggyBreakResultDto> BreakAsync(Guid userId, PiggyBreakOption option, string purchaseId)
+            => BreakCoreAsync(userId, option, purchaseId, verified: false, priceSku: null, storePurchaseId: null, creditType: TransactionType.Purchase);
+
+        public Task<PiggyBreakResultDto> BreakVerifiedAsync(Guid userId, PiggyBreakOption option, string purchaseId, string priceSku,
+            Guid storePurchaseId, TransactionType creditType)
+            => BreakCoreAsync(userId, option, purchaseId, verified: true, priceSku: priceSku, storePurchaseId: storePurchaseId, creditType: creditType);
+
+        /// <summary>
+        /// The one break path. <paramref name="verified"/> = the money has been taken by a store and verified by the server
+        /// (the store spine), so the purchase gate is satisfied and the bank must never under-deliver; unverified = the
+        /// dev/test path, which is fail-closed behind <c>Piggy:BypassPurchase</c>.
+        /// </summary>
+        private async Task<PiggyBreakResultDto> BreakCoreAsync(Guid userId, PiggyBreakOption option, string purchaseId,
+            bool verified, string priceSku, Guid? storePurchaseId, TransactionType creditType)
         {
             if (string.IsNullOrWhiteSpace(purchaseId))
                 return Fail("A purchase id is required.");
 
             var cfg = await EffectiveAsync();
-            if (!cfg.Enabled) return Fail("The piggy bank is not available.");
+            if (!cfg.Enabled && !verified) return Fail("The piggy bank is not available.");
 
             // ---- already paid? Return the original outcome rather than doing anything again ----
             var prior = await _db.PiggyBreaks.FirstOrDefaultAsync(b => b.PurchaseId == purchaseId);
@@ -330,19 +353,27 @@ namespace Khela.Game.Services.Piggy
             if (Expire(bank, DateTime.UtcNow, cfg)) await _db.SaveChangesAsync();
 
             bool full = PiggyMath.CanBreak(bank.Amount, bank.MaxAmount, cfg);
+            bool paidCapacity = false;   // a VERIFIED Full/×2 found the bank moved underneath the tap → pay capacity, never refuse
 
             switch (option)
             {
                 case PiggyBreakOption.Full:
                 case PiggyBreakOption.FullDouble:
-                    if (!full) return Fail("The piggy bank is not full yet.");
+                    if (!full)
+                    {
+                        if (!verified) return Fail("The piggy bank is not full yet.");
+                        // The store already charged for a full bank. The window expired / the bank reset between the tap and the
+                        // receipt — principle 4 (never under-deliver): pay what the offer promised, the bank's capacity.
+                        paidCapacity = true;
+                    }
                     break;
 
                 case PiggyBreakOption.Early:
                     // Refused when it IS full, not merely pointless: the early offer costs more, so selling it to
                     // somebody who already qualifies for the cheaper one is taking money for nothing.
-                    if (full) return Fail("The bank is already full - take the full offer.");
-                    if (bank.Amount <= 0m) return Fail("There is nothing in the piggy bank yet.");
+                    // (A VERIFIED early purchase on a now-full bank still pays what it holds — the money is taken.)
+                    if (full && !verified) return Fail("The bank is already full - take the full offer.");
+                    if (bank.Amount <= 0m && !verified) return Fail("There is nothing in the piggy bank yet.");
                     break;
 
                 default:
@@ -352,19 +383,28 @@ namespace Khela.Game.Services.Piggy
             decimal banked = bank.Amount;
             decimal multiplier = option == PiggyBreakOption.FullDouble ? 2m : 1m;
 
-            // Early buys the bank's CAPACITY, not its contents - the player is paying to skip the wait, which is why
-            // its payout is the one figure here that is not simply what the bank held.
-            decimal payout = option == PiggyBreakOption.Early ? bank.MaxAmount : banked * multiplier;
-            if (payout <= 0m) return Fail("There is nothing to pay out.");
+            // WHAT THE BANK HOLDS, times the multiplier. Every option, including the early one.
+            //
+            // Early used to pay the bank's CAPACITY, which meant a player with a nearly empty bank could buy a full
+            // one outright - and that guts the whole premise, because if a full bank is purchasable at any moment
+            // then wagering to fill it is pointless. Paying only what is actually in there needs no minimum-fill
+            // guard to close that: an early break on an empty bank simply buys almost nothing, so nobody takes it.
+            //
+            // What Early sells is therefore the TIMING, at a higher price for the same chips - not a bigger payout.
+            decimal payout = (paidCapacity ? bank.MaxAmount : banked) * multiplier;
+            if (payout <= 0m && !verified) return Fail("There is nothing to pay out.");
 
             // ---- the purchase itself ----
             //
-            // FAIL CLOSED. With no receipt validation wired yet, the only way through is the explicit dev switch,
+            // FAIL CLOSED. Without a verified purchase the only way through is the explicit dev switch,
             // and a free break is precisely the thing that turns this feature into a chip faucet.
-            if (!cfg.BypassPurchase)
+            if (!verified && !cfg.BypassPurchase)
                 return Fail("Purchase verification is not available yet.");
 
-            var correlationId = "piggy:break:" + purchaseId;
+            // Wallet correlation id (≤ 64): a store purchase keys on its own row id (a Play purchase token is 150+ chars);
+            // the dev path keeps its short order id. Never re-key a spent id.
+            var correlationId = storePurchaseId.HasValue ? "piggy:break:" + storePurchaseId.Value.ToString("N") : "piggy:break:" + purchaseId;
+            if (correlationId.Length > 64) correlationId = "piggy:break:" + Services.Store.StoreMath.Sha256Hex(purchaseId).Substring(0, 48);
             var row = prior ?? new PiggyBreak { UserId = userId, PurchaseId = purchaseId };
 
             row.Tier = bank.Tier;
@@ -372,9 +412,22 @@ namespace Khela.Game.Services.Piggy
             row.BankedAmount = banked;
             row.Option = option.ToString();
             row.Multiplier = multiplier;
-            row.PriceSku = PiggyMath.TierFor(await LevelAsync(userId), cfg).PriceSku ?? "";
+            row.PriceSku = priceSku ?? PiggyMath.TierFor(await LevelAsync(userId), cfg).PriceSku ?? "";
             row.Status = "Pending";
             if (prior == null) _db.PiggyBreaks.Add(row);
+
+            if (paidCapacity)
+                _logger.LogWarning("Piggy break {Option} for {User}: bank had moved under a VERIFIED purchase (held {Banked}); paying capacity {Max} (store purchase {Store}).",
+                    option, userId, banked, bank.MaxAmount, storePurchaseId);
+
+            if (payout <= 0m)
+            {
+                // Verified money, empty bank: record the sale with nothing to pay rather than loop forever; the store flags it for a comp.
+                row.Status = "Completed"; row.Granted = true; row.CompletedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                _logger.LogWarning("Piggy break {Option} for {User}: verified purchase found an EMPTY bank; recorded with no payout (store purchase {Store}).", option, userId, storePurchaseId);
+                return new PiggyBreakResultDto { Ok = true, Amount = 0m, NewChipBalance = await ChipBalanceAsync(userId), Piggy = await GetStateAsync(userId) };
+            }
 
             decimal newBalance;
 
@@ -384,11 +437,11 @@ namespace Khela.Game.Services.Piggy
             await using (var tx = await _db.Database.BeginTransactionAsync())
             {
                 var txn = await _wallet.CreditAsync(userId.ToString(), CurrencyType.Chips, payout,
-                    TransactionType.Purchase, correlationId,
+                    creditType, correlationId,
                     new WalletContext
                     {
                         Description = "Piggy bank (" + row.Option + ")",
-                        ExternalRef = purchaseId,
+                        ExternalRef = purchaseId.Length <= 128 ? purchaseId : Services.Store.StoreMath.FitOrHash(purchaseId, 128),
                     });
 
                 if (txn == null)

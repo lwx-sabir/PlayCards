@@ -1,0 +1,331 @@
+@using System.Globalization
+@using System.Linq
+@using Khela.Common.Store
+@using Khela.Game.Services.Pass
+@using Khela.Game.Services.Store
+@using Khela.Web.Controllers
+@model StoreIndexVm
+@{
+    ViewData["Title"] = "Store";
+    ViewData["Crumb"] = "Store";
+    ViewData["Nav"] = "store";
+    string Usd(decimal d) => "$" + d.ToString("0.00", CultureInfo.InvariantCulture);
+    string Num(decimal d) => d.ToString("#,0.##", CultureInfo.InvariantCulture);
+    string StoreId(StoreProductDef p, StorePlatform platform) => StoreCatalog.StoreIdFor(p, platform) ?? "";
+    string LinesOf(StoreProductDef p) => PassRewardText.Format(p.Lines);
+    string EffectOf(StoreProductDef p) => p.Effect == null ? "" : p.Effect.Type + (string.IsNullOrWhiteSpace(p.Effect.Arg) ? "" : " " + p.Effect.Arg) + (StoreCatalog.PiggyTierOf(p) > 0 ? " t" + StoreCatalog.PiggyTierOf(p) : "");
+    string Perusd(StoreProductDef p) { var v = p.ChipsPerUsd(); return v > 0m ? Num(v) + "/$" : ""; }
+    string Avail(StoreProductDef p)
+    {
+        var a = p.Availability; if (a == null) return "";
+        var parts = new List<string>();
+        if (a.MaxPerUser > 0) parts.Add("max " + a.MaxPerUser + "/player");
+        if (a.MaxPerUserPerDay > 0) parts.Add("max " + a.MaxPerUserPerDay + "/day");
+        if (a.MinLevel > 0) parts.Add("lvl " + a.MinLevel + "+");
+        if (a.FromUtc.HasValue || a.ToUtc.HasValue) parts.Add((a.FromUtc?.ToString("MM-dd") ?? "…") + "→" + (a.ToUtc?.ToString("MM-dd") ?? "…"));
+        return string.Join(" · ", parts);
+    }
+    var sections = Model.Config.Sections.OrderBy(s => s.SortOrder).Select(s => s.Key).ToList();
+    var platformsShown = new[] { StorePlatform.GooglePlay, StorePlatform.AppStore, StorePlatform.Fake, StorePlatform.Web };
+}
+
+<h1 class="page-title">Store</h1>
+<p class="page-sub">
+    The real-money catalog the game sells from (docs/IAP_SPEC.md §3). One stable product id per card, a store-product id per
+    platform (empty = not sold there; the Editor's fake store sells everything), what it pays as reward lines, optional effect
+    (piggy break · golden pass · VIP booster). Validated exactly as the game validates: <b>Tokens can never be sold</b>, random payloads
+    are refused unless switched on, every effect needs a handler. The catalog is read by the game from Redis <code>khela:store</code>
+    (~15 s cache); a purchase keeps its own snapshot, so editing here never rewrites what was already sold.
+    <strong>@(Model.Overridden ? "A saved catalog is live." : "Using the built-in catalog (the §3.1 ladder).")</strong>
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+@* ---------------------------------------------------------------- status + switches ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Platforms</h3>
+        <span class="dim" style="font-size:12.5px">
+            switches live in Settings ▸ Store · credentials live in the game server's appsettings · status is published by the game every reconcile pass
+        </span>
+    </div>
+    <div style="display:flex; gap:18px; flex-wrap:wrap; padding:14px 16px; align-items:flex-start">
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Store</div>
+            <span class="pill @(Model.StoreEnabled ? "active" : "suspend")">@(Model.StoreEnabled ? "OPEN" : "CLOSED")</span>
+        </div>
+        @foreach (var platform in platformsShown)
+        {
+            bool on = Model.PlatformEnabled.TryGetValue(platform, out var e) && e;
+            bool registered = false, configured = false; bool known = false;
+            if (Model.Status != null && Model.Status.RootElement.TryGetProperty("platforms", out var arr))
+            {
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.TryGetProperty("platform", out var pn) && pn.GetString() == platform.ToString())
+                    {
+                        known = true;
+                        registered = item.TryGetProperty("registered", out var r) && r.GetBoolean();
+                        configured = item.TryGetProperty("configured", out var c) && c.GetBoolean();
+                    }
+                }
+            }
+            <div>
+                <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">@platform</div>
+                <span class="pill @(on ? "active" : "suspend")">@(on ? "switch ON" : "switch OFF")</span>
+                @if (known)
+                {
+                    <span class="pill @(registered && configured ? "active" : registered ? "pending" : "suspend")" title="registered = the game process built a verifier for it; configured = its credentials loaded">
+                        @(registered ? (configured ? "verifier ready" : "no credentials") : "not registered")
+                    </span>
+                }
+            </div>
+        }
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Purchases</div>
+            <a class="btn btn-outline" asp-action="Purchases">@Model.PurchaseCount.ToString("#,0") total · @Model.PendingCount pending</a>
+        </div>
+        <div>
+            <div class="dim" style="font-size:11.5px; text-transform:uppercase; letter-spacing:.04em">Revenue 30d (ref USD, real only)</div>
+            <b>@Usd(Model.RevenueUsd30d)</b>
+        </div>
+    </div>
+    @if (Model.Status != null)
+    {
+        var root = Model.Status.RootElement;
+        <div class="dim" style="font-size:12px; padding:0 16px 14px">
+            Game status @(root.TryGetProperty("atUtc", out var at) ? at.GetString() : "") ·
+            package <code>@(root.TryGetProperty("googlePackageName", out var pk) ? pk.GetString() : "")</code> ·
+            Play service account @(root.TryGetProperty("googleServiceAccountConfigured", out var sa) && sa.GetBoolean() ? "configured" : "MISSING (Store:GooglePlay:ServiceAccountJsonPath)") ·
+            Apple root cert @(root.TryGetProperty("appleRootCertConfigured", out var ac) && ac.GetBoolean() ? "configured" : "missing") ·
+            refund policy <code>@(root.TryGetProperty("refundPolicyConfig", out var rp) ? rp.GetString() : "")</code> (appsettings; Settings ▸ Store overrides) ·
+            last voided poll @(root.TryGetProperty("lastVoidedPollUtc", out var lv) && lv.ValueKind == System.Text.Json.JsonValueKind.String ? lv.GetString() : "never")
+        </div>
+    }
+    else
+    {
+        <div class="dim" style="font-size:12px; padding:0 16px 14px">No status from the game server yet — it publishes one after its first reconcile pass (~20 s after boot).</div>
+    }
+    @if (Model.Warnings.Count > 0)
+    {
+        <div style="padding:0 16px 14px">
+            @foreach (var w in Model.Warnings)
+            {
+                <div style="color:var(--warn,#fbbf24); font-size:12.5px">⚠ @w</div>
+            }
+        </div>
+    }
+</div>
+
+@* ---------------------------------------------------------------- catalog ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head">
+        <h3>Catalog</h3>
+        <span class="dim" style="font-size:12.5px">@Model.Config.Products.Count product(s) · best chip pack @Num(Model.BestChipsPerUsd) chips/$ · @(Model.Config.Enabled ? "" : "CATALOG GLOBALLY OFF")</span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Id</th><th>Section</th><th>Type</th><th>Pays</th><th>Effect</th><th>Ref $</th><th>chips/$</th><th>Play</th><th>App Store</th><th>Limits</th><th>State</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var p in Model.Config.Products.OrderBy(p => sections.IndexOf(p.Section ?? "")).ThenBy(p => p.SortOrder))
+            {
+                <tr>
+                    <td><b>@p.Id</b>@if (!string.IsNullOrWhiteSpace(p.Badge)) { <span class="dim" style="font-size:11px"> · @p.Badge</span> }</td>
+                    <td>@p.Section</td>
+                    <td class="dim" style="font-size:12px">@p.ProductType</td>
+                    <td class="dim" style="font-size:12.5px">@LinesOf(p)@(p.BonusPercent > 0 ? $" (+{p.BonusPercent}%)" : "")</td>
+                    <td class="dim" style="font-size:12.5px">@EffectOf(p)</td>
+                    <td>@Usd(p.UsdReference)</td>
+                    <td class="dim" style="font-size:12px">@Perusd(p)</td>
+                    <td class="dim" style="font-size:12px">@StoreId(p, StorePlatform.GooglePlay)</td>
+                    <td class="dim" style="font-size:12px">@StoreId(p, StorePlatform.AppStore)</td>
+                    <td class="dim" style="font-size:12px">@Avail(p)</td>
+                    <td><span class="pill @(p.Enabled ? "active" : "suspend")">@(p.Enabled ? "On sale" : "Off")</span></td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <button type="button" class="btn btn-outline" onclick="openEdit(this)"
+                                data-id="@p.Id" data-enabled="@p.Enabled.ToString().ToLower()" data-type="@p.ProductType"
+                                data-section="@p.Section" data-sort="@p.SortOrder" data-title="@p.Title" data-desc="@p.Description"
+                                data-badge="@p.Badge" data-bonus="@p.BonusPercent" data-featured="@p.Featured.ToString().ToLower()"
+                                data-usd="@p.UsdReference.ToString(CultureInfo.InvariantCulture)"
+                                data-images="@string.Join("\n", p.Images ?? new List<string>())"
+                                data-sid-google="@StoreId(p, StorePlatform.GooglePlay)" data-sid-apple="@StoreId(p, StorePlatform.AppStore)"
+                                data-sid-web="@StoreId(p, StorePlatform.Web)" data-sid-amazon="@StoreId(p, StorePlatform.Amazon)"
+                                data-lines="@LinesOf(p)" data-effect="@(p.Effect?.Type ?? "none")" data-effectarg="@(p.Effect?.Arg ?? "")"
+                                data-effecttier="@StoreCatalog.PiggyTierOf(p)"
+                                data-from="@(p.Availability?.FromUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")" data-to="@(p.Availability?.ToUtc?.ToString("yyyy-MM-ddTHH:mm") ?? "")"
+                                data-maxuser="@(p.Availability?.MaxPerUser ?? 0)" data-maxday="@(p.Availability?.MaxPerUserPerDay ?? 0)" data-minlevel="@(p.Availability?.MinLevel ?? 0)">Edit</button>
+                        <form asp-action="Toggle" method="post" style="display:inline">
+                            <input type="hidden" name="id" value="@p.Id" />
+                            <button class="btn btn-outline" type="submit">@(p.Enabled ? "Take off sale" : "Put on sale")</button>
+                        </form>
+                        <form asp-action="Delete" method="post" style="display:inline" onsubmit="return confirm('Delete @p.Id? Disable instead if it was ever on sale.');">
+                            <input type="hidden" name="id" value="@p.Id" />
+                            <button class="btn btn-outline" type="submit">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <form asp-action="Create" method="post" style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
+        <b style="font-size:13px">New product</b>
+        <input name="id" placeholder="id (a-z 0-9 _ .) e.g. chips_08" class="vip-select" style="width:220px" />
+        <select name="section" class="vip-select">
+            @foreach (var s in sections) { <option value="@s">@s</option> }
+        </select>
+        <button class="btn btn-primary" type="submit">Create</button>
+        <span class="dim" style="font-size:12px">Starts off-sale with a 1M chips line; the store-product ids default to the id on every platform. Create the SAME ids in Play Console / App Store Connect.</span>
+    </form>
+</div>
+
+@* ---------------------------------------------------------------- backups + raw JSON ---------------------------------------------------------------- *@
+<div class="panel">
+    <div class="panel-head"><h3>Backups</h3><span class="dim" style="font-size:12.5px">before each save · never auto-deleted</span></div>
+    <table class="data-table">
+        <thead><tr><th>Taken (UTC)</th><th>File</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var b in Model.Backups)
+            {
+                <tr>
+                    <td>@b.TakenUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td class="dim" style="font-size:12.5px">@b.FileName</td>
+                    <td class="dim" style="font-size:12.5px">@($"{b.Bytes / 1024.0:0.0} KB")</td>
+                    <td style="text-align:right; white-space:nowrap">
+                        <a class="btn btn-outline" asp-action="Download" asp-route-file="@b.FileName">Download</a>
+                        <form asp-action="Restore" method="post" style="display:inline">
+                            <input type="hidden" name="file" value="@b.FileName" />
+                            <button class="btn btn-outline" type="submit">Load into editor</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            @if (Model.Backups.Count == 0)
+            {
+                <tr><td colspan="4" class="dim" style="padding:18px 16px">No snapshots yet — one is written the first time you save.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">bulk edits, sections, restores — the exact document the game reads</span></div>
+    <form asp-action="SaveJson" method="post">
+        <textarea name="json" rows="18" class="json-editor" spellcheck="false">@Model.Json</textarea>
+        <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
+            <button type="submit" class="btn btn-primary">Save JSON</button>
+            <span class="dim" style="font-size:12px">Validated as the game would; a saved document is live within ~15 s. Sections (the shop tabs) are edited here.</span>
+        </div>
+    </form>
+    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in catalog? The current one is backed up first.');" style="margin-top:10px">
+        <button type="submit" class="btn btn-outline">Reset to defaults</button>
+    </form>
+</div>
+
+@* ---------------------------------------------------------------- edit modal ---------------------------------------------------------------- *@
+<div id="editModal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="emTitle" style="width:min(760px,96vw)">
+        <div class="modal-head">
+            <div><div id="emTitle" class="modal-title">Edit product</div><div class="dim" style="font-size:12px" id="emSub"></div></div>
+            <button type="button" class="modal-close" onclick="closeEdit()" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form asp-action="Save" method="post" id="emForm">
+                <input type="hidden" name="Id" id="f_id" />
+                <div class="grid2">
+                    <label>Enabled (on sale) <input type="checkbox" name="Enabled" value="true" id="f_enabled" /></label>
+                    <label>Featured <input type="checkbox" name="Featured" value="true" id="f_featured" /></label>
+                    <label>Type
+                        <select name="ProductType" id="f_type" class="vip-select">
+                            <option>Consumable</option><option>NonConsumable</option><option>Subscription</option>
+                        </select>
+                    </label>
+                    <label>Section <input name="Section" id="f_section" class="vip-select" list="sectionList" /></label>
+                    <datalist id="sectionList">@foreach (var s in sections) { <option value="@s"></option> }</datalist>
+                    <label>Sort order <input name="SortOrder" id="f_sort" type="number" class="vip-select" /></label>
+                    <label>Reference price (USD) <input name="UsdReference" id="f_usd" type="number" step="0.01" min="0" class="vip-select" /></label>
+                    <label>Title <input name="Title" id="f_title" class="vip-select" maxlength="100" /></label>
+                    <label>Badge <input name="Badge" id="f_badge" class="vip-select" maxlength="32" placeholder="BEST VALUE" /></label>
+                    <label>Bonus % <input name="BonusPercent" id="f_bonus" type="number" min="0" class="vip-select" /></label>
+                    <label class="span2">Description <input name="Description" id="f_desc" class="vip-select" maxlength="500" /></label>
+                    <label class="span2">Pays (reward lines: <code>Chips 5000000, Kash 50</code>; XP 100; effect-only products leave it empty)
+                        <input name="Lines" id="f_lines" class="vip-select" /></label>
+                    <label>Effect
+                        <select name="EffectType" id="f_effect" class="vip-select">
+                            <option value="none">none</option>
+                            <option value="@StoreCatalog.EffectPiggyBreak">PiggyBreak (arg: Full · FullDouble · Early; tier)</option>
+                            <option value="@StoreCatalog.EffectGoldenPass">GoldenPass (arg: pass key, e.g. monthly)</option>
+                            <option value="@StoreCatalog.EffectVipBooster">VipBooster (arg: Time · LevelUp)</option>
+                        </select>
+                    </label>
+                    <label>Effect arg <input name="EffectArg" id="f_effectarg" class="vip-select" /></label>
+                    <label>Piggy tier (PiggyBreak only) <input name="EffectTier" id="f_effecttier" type="number" min="0" class="vip-select" /></label>
+                    <label>Play store id <input name="StoreIdGooglePlay" id="f_sid_google" class="vip-select" /></label>
+                    <label>App Store id <input name="StoreIdAppStore" id="f_sid_apple" class="vip-select" /></label>
+                    <label>Web id <input name="StoreIdWeb" id="f_sid_web" class="vip-select" /></label>
+                    <label>Amazon id <input name="StoreIdAmazon" id="f_sid_amazon" class="vip-select" /></label>
+                    <label>Available from (UTC) <input name="FromUtc" id="f_from" type="datetime-local" class="vip-select" /></label>
+                    <label>Available to (UTC) <input name="ToUtc" id="f_to" type="datetime-local" class="vip-select" /></label>
+                    <label>Max per player (0 = ∞) <input name="MaxPerUser" id="f_maxuser" type="number" min="0" class="vip-select" /></label>
+                    <label>Max per player per day (0 = ∞) <input name="MaxPerUserPerDay" id="f_maxday" type="number" min="0" class="vip-select" /></label>
+                    <label>Min level <input name="MinLevel" id="f_minlevel" type="number" min="0" class="vip-select" /></label>
+                    <label class="span2">Images (one url per line, back→front, max 3) <textarea name="Images" id="f_images" rows="2" class="vip-select"></textarea></label>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:14px; align-items:center">
+                    <button type="submit" class="btn btn-primary">Save product</button>
+                    <button type="button" class="btn btn-outline" onclick="closeEdit()">Cancel</button>
+                    <span class="dim" style="font-size:12px">Empty store id = not sold on that platform. The game grants what is HERE; the store only prices it.</span>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+    .json-editor { width:100%; min-height:320px; background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:8px; padding:12px; font-family:ui-monospace,Consolas,"Courier New",monospace; font-size:12.5px; line-height:1.5; resize:vertical; }
+    .vip-select { background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:6px; padding:6px 8px; font-size:13px; width:100%; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; }
+    .grid2 label { display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--muted,#9aa4b2); }
+    .grid2 label input[type=checkbox] { width:auto; align-self:flex-start; }
+    .grid2 .span2 { grid-column:1 / span 2; }
+    .modal-overlay { position:fixed; inset:0; background:rgba(2,6,16,.62); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal-card { background:var(--panel,#131a2a); border:1px solid var(--border,#2a3344); border-radius:14px; box-shadow:0 24px 70px rgba(0,0,0,.55); overflow:hidden; max-height:92vh; display:flex; flex-direction:column; }
+    .modal-head { display:flex; justify-content:space-between; align-items:flex-start; padding:16px 18px; border-bottom:1px solid var(--border,#2a3344); }
+    .modal-title { font-weight:600; font-size:16px; }
+    .modal-close { background:none; border:none; color:var(--text,#e6e9ef); font-size:24px; cursor:pointer; line-height:1; }
+    .modal-body { padding:16px 18px 18px; overflow:auto; }
+</style>
+
+@section Scripts {
+    <script>
+        function setVal(id, v) { var el = document.getElementById(id); if (!el) return; el.value = v == null ? '' : v; }
+        function setChk(id, v) { var el = document.getElementById(id); if (!el) return; el.checked = (v === 'true'); }
+        function openEdit(btn) {
+            var d = btn.dataset;
+            setVal('f_id', d.id); document.getElementById('emSub').textContent = d.id;
+            setChk('f_enabled', d.enabled); setChk('f_featured', d.featured);
+            setVal('f_type', d.type); setVal('f_section', d.section); setVal('f_sort', d.sort);
+            setVal('f_usd', d.usd); setVal('f_title', d.title); setVal('f_badge', d.badge); setVal('f_bonus', d.bonus); setVal('f_desc', d.desc);
+            setVal('f_lines', d.lines); setVal('f_effect', d.effect || 'none'); setVal('f_effectarg', d.effectarg); setVal('f_effecttier', d.effecttier);
+            setVal('f_sid_google', d.sidGoogle); setVal('f_sid_apple', d.sidApple); setVal('f_sid_web', d.sidWeb); setVal('f_sid_amazon', d.sidAmazon);
+            setVal('f_from', d.from); setVal('f_to', d.to); setVal('f_maxuser', d.maxuser); setVal('f_maxday', d.maxday); setVal('f_minlevel', d.minlevel);
+            setVal('f_images', d.images);
+            document.getElementById('editModal').classList.add('open');
+        }
+        function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
+        document.querySelectorAll('.modal-overlay').forEach(function (ov) { ov.addEventListener('click', function (e) { if (e.target === this) this.classList.remove('open'); }); });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(function (m) { m.classList.remove('open'); }); });
+        (function () {
+            var openId = '@(Model.EditId ?? "")';
+            if (!openId) return;
+            var btn = document.querySelector('button[data-id="' + openId.replace(/"/g, '') + '"]');
+            if (btn) openEdit(btn);
+        })();
+    </script>
+}

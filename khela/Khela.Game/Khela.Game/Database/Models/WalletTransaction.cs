@@ -19,7 +19,10 @@ namespace Khela.Game.Database.Models
         Purchase,
         Refund,
         Bonus,
-        AdminAdjustment
+        AdminAdjustment,
+        /// <summary>Real-money STORE purchase credit (IAP / web store) — distinct from <see cref="Purchase"/>, which is an in-game spend
+        /// (e.g. the cosmetics debit in Kash). Revenue queries sum PaidPurchase only. Append-only: value 6 (TransactionTypeTests).</summary>
+        PaidPurchase
     }
 
     [Table("WalletTransactions")]

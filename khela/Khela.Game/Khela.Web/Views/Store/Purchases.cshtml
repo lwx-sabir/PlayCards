@@ -1,0 +1,116 @@
+@using System.Globalization
+@using Khela.Common.Store
+@using Khela.Game.Database.Models
+@using Khela.Web.Controllers
+@model StorePurchasesVm
+@{
+    ViewData["Title"] = "Store purchases";
+    ViewData["Crumb"] = "Store · Purchases";
+    ViewData["Nav"] = "store";
+    string Usd(decimal d) => "$" + d.ToString("0.00", CultureInfo.InvariantCulture);
+    string Trunc(string s, int n) => string.IsNullOrEmpty(s) ? "" : (s.Length <= n ? s : s.Substring(0, n) + "…");
+    string Price(StorePurchaseRow r) => r.ClientPriceMicros.HasValue ? $"{(r.ClientPriceMicros.Value / 1_000_000m).ToString("0.00", CultureInfo.InvariantCulture)} {r.ClientPriceCurrency}" : "";
+    string StatusClass(StorePurchaseStatus s) => s switch
+    {
+        StorePurchaseStatus.Granted => "active",
+        StorePurchaseStatus.Invalid => "suspend",
+        StorePurchaseStatus.Refunded => "suspend",
+        StorePurchaseStatus.Revoked => "suspend",
+        StorePurchaseStatus.Expired => "suspend",
+        _ => "pending"
+    };
+}
+
+<h1 class="page-title">Store purchases</h1>
+<p class="page-sub">
+    Every real-money transaction the server has seen (<code>StorePurchases</code>) — reserve → verify → grant, test purchases flagged,
+    refunds and voids. Read-only here; <b>Re-drive</b> and <b>Refund</b> on a purchase are queued for the game server, which is the only
+    process that moves money. Search by player (name / email / user id), purchase id, store order id or product id.
+</p>
+
+@if (!string.IsNullOrEmpty(Model.Saved))
+{
+    <div class="panel" style="border-left:3px solid var(--ok,#34d399); margin-bottom:14px"><div style="padding:12px 16px; color:var(--ok,#34d399)">@Model.Saved</div></div>
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="panel" style="border-left:3px solid var(--bad,#f87171); margin-bottom:14px"><div style="padding:12px 16px; color:var(--bad,#f87171)">@Model.Error</div></div>
+}
+
+<form asp-action="Purchases" method="get" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px">
+    <input type="text" name="q" value="@Model.Query" placeholder="player, email, user id, purchase id, order id, product id…" class="vip-select" style="width:340px" />
+    <select name="status" class="vip-select">
+        <option value="">any status</option>
+        @foreach (var s in Enum.GetValues<StorePurchaseStatus>())
+        {
+            <option value="@s" selected="@(Model.Status == s)">@s</option>
+        }
+    </select>
+    <select name="platform" class="vip-select">
+        <option value="">any platform</option>
+        @foreach (var p in new[] { StorePlatform.GooglePlay, StorePlatform.AppStore, StorePlatform.Fake, StorePlatform.Web, StorePlatform.Amazon })
+        {
+            <option value="@p" selected="@(Model.Platform == p)">@p</option>
+        }
+    </select>
+    <select name="test" class="vip-select">
+        <option value="" selected="@(string.IsNullOrEmpty(Model.Test))">real + test</option>
+        <option value="real" selected="@(Model.Test == "real")">real only</option>
+        <option value="test" selected="@(Model.Test == "test")">test only</option>
+    </select>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a class="btn btn-outline" asp-action="Index">← Catalog</a>
+</form>
+
+@if (Model.NotFound)
+{
+    <div class="panel"><div style="padding:16px" class="dim">No player matches that search.</div></div>
+}
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Ledger</h3>
+        <span class="dim" style="font-size:12.5px">
+            @Model.Total.ToString("#,0") purchase(s) · revenue @Usd(Model.RevenueUsd) (ref USD, real, granted+refunded) · refunded @Usd(Model.RefundedUsd)
+        </span>
+    </div>
+    <table class="data-table">
+        <thead><tr><th>Time (UTC)</th><th>Player</th><th>Product</th><th>Platform</th><th>Ref $</th><th>Store price</th><th>Status</th><th>Order</th><th>Note</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var r in Model.Rows)
+            {
+                <tr>
+                    <td class="dim" style="font-size:12px; white-space:nowrap">@r.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@(string.IsNullOrEmpty(r.PlayerName) ? Trunc(r.UserId.ToString(), 8) : r.PlayerName)</td>
+                    <td><b>@r.ProductId</b><div class="dim" style="font-size:11px">@r.StoreProductId · @r.ProductType</div></td>
+                    <td class="dim" style="font-size:12px">@r.Platform@(r.IsTest ? " · TEST" : "")@(string.IsNullOrEmpty(r.Environment) ? "" : " · " + r.Environment)</td>
+                    <td>@Usd(r.UsdReference)</td>
+                    <td class="dim" style="font-size:12px">@Price(r)</td>
+                    <td>
+                        <span class="pill @StatusClass(r.Status)">@r.Status</span>
+                        @if (r.Status == StorePurchaseStatus.Granted && r.CompletedAt == null) { <span class="pill pending">incomplete</span> }
+                        @if (r.Platform == StorePlatform.GooglePlay && r.Status == StorePurchaseStatus.Granted && r.AcknowledgedAt == null) { <span class="pill pending" title="not yet acknowledged with Google (3-day auto-refund backstop pending)">unacked</span> }
+                    </td>
+                    <td class="dim" style="font-size:11.5px">@Trunc(r.StoreOrderId, 26)</td>
+                    <td class="dim" style="font-size:11.5px">@(r.Attempts > 1 ? $"{r.Attempts} attempts · " : "")@Trunc(r.LastError, 48)</td>
+                    <td style="text-align:right"><a class="btn btn-outline" asp-action="Purchase" asp-route-id="@r.Id">Open</a></td>
+                </tr>
+            }
+            @if (Model.Rows.Count == 0)
+            {
+                <tr><td colspan="10" class="dim" style="padding:18px 16px">No purchases match.</td></tr>
+            }
+        </tbody>
+    </table>
+    <div class="table-foot">
+        <span class="dim" style="font-size:12.5px">Page @(Model.Page + 1) · showing @(Model.Rows.Count == 0 ? 0 : Model.Page * Model.PageSize + 1)–@(Model.Page * Model.PageSize + Model.Rows.Count) of @Model.Total.ToString("#,0")</span>
+        <div class="pager">
+            @if (Model.HasPrev) { <a class="btn btn-outline" asp-action="Purchases" asp-route-q="@Model.Query" asp-route-status="@Model.Status" asp-route-platform="@Model.Platform" asp-route-test="@Model.Test" asp-route-page="@(Model.Page - 1)">‹ Prev</a> }
+            @if (Model.HasNext) { <a class="btn btn-outline" asp-action="Purchases" asp-route-q="@Model.Query" asp-route-status="@Model.Status" asp-route-platform="@Model.Platform" asp-route-test="@Model.Test" asp-route-page="@(Model.Page + 1)">Next ›</a> }
+        </div>
+    </div>
+</div>
+
+<style>
+    .vip-select { background:var(--panel-2,#1a2030); color:var(--text,#e6e9ef); border:1px solid var(--border,#2a3344); border-radius:6px; padding:6px 8px; font-size:13px; }
+</style>

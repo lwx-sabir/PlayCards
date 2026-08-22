@@ -70,6 +70,20 @@ namespace Khela.Web.Controllers
         {
             ("Table:HeartbeatIntervalSeconds", "Heartbeat interval (seconds)"),
         };
+        // The in-app store (docs/IAP_SPEC.md §7.1): switches the game reads LIVE from the overlay (StoreSwitches). Credentials stay in
+        // the game server's appsettings. Turning a platform ON here additionally needs its verifier configured — the Store page
+        // shows what the game process actually registered.
+        private static readonly (string Key, string Label, string Help)[] StoreFlagDefs =
+        {
+            ("Store:Enabled", "Store open", "Master switch. Off = every redeem answers StoreDisabled (the client keeps orders pending), catalog shows nothing purchasable."),
+            ("Store:GooglePlay:Enabled", "Google Play", "Android purchases. Needs the Play service-account JSON on the game server to actually verify."),
+            ("Store:AppStore:Enabled", "App Store", "iOS/macOS purchases (StoreKit 2). Needs the Apple root certificate (+ API key for refresh) on the game server."),
+            ("Store:Fake:Enabled", "Fake store (Editor)", "Unity's fake store — honoured ONLY when the game runs in the Development environment; harmless elsewhere."),
+            ("Store:Web:Enabled", "Web checkout", "The later web store feed. No verifier yet — leave off."),
+            ("Store:GooglePlay:AcceptTestPurchases", "Accept licence-tester purchases", "Play licence testers pay nothing; their purchases grant normally, flagged IsTest, excluded from revenue and spend hooks."),
+            ("Store:TestPurchasesFeedSpend", "Test purchases feed VIP/LP spend", "Normally off: a free tester purchase must not buy VIP status."),
+            ("Store:AllowRandomPayloads", "Allow random (chest) payloads for real money", "Off until the loot-box / odds-disclosure question is settled. The catalog validator refuses chest lines while this is off."),
+        };
 
         [HttpGet]
         public IActionResult Index() => View(BuildModel());
@@ -229,6 +243,32 @@ namespace Khela.Web.Controllers
         /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveStore()
+        {
+            try
+            {
+                var entries = new List<HashEntry>();
+                // Checkboxes post nothing when unchecked — write every flag explicitly so a switch can be turned OFF as well as on.
+                foreach (var d in StoreFlagDefs)
+                    entries.Add(new HashEntry(d.Key, Request.Form[d.Key].Count > 0 ? "true" : "false"));
+                var policy = Request.Form["Store:Refunds:Policy"].ToString().Trim();
+                if (policy is "Rollback" or "Flag") entries.Add(new HashEntry("Store:Refunds:Policy", policy));
+                var xp = Request.Form["Store:XpPerUsd"].ToString().Trim();
+                if (decimal.TryParse(xp, NumberStyles.Any, CultureInfo.InvariantCulture, out var xpv) && xpv >= 0m)
+                    entries.Add(new HashEntry("Store:XpPerUsd", xpv.ToString(CultureInfo.InvariantCulture)));
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, entries.ToArray());
+                TempData["Saved"] = Request.Form["Store:Enabled"].Count > 0
+                    ? "Store settings saved — live on the next request (the game reads these switches per call)."
+                    : "Store settings saved — ⚠️ THE STORE IS CLOSED: every purchase attempt answers StoreDisabled until it is reopened.";
+            }
+            catch
+            {
+                TempData["Error"] = "Could not reach Redis to save settings.";
+            }
+            return RedirectToAction(nameof(Index));
+        }
+        [HttpPost]
+        [ValidateAntiForgeryToken]
         public async Task<IActionResult> Export()
         {
             var groups = Request.Form["groups"].ToString();
@@ -257,7 +297,8 @@ namespace Khela.Web.Controllers
                                               || key.StartsWith("Vip:", StringComparison.OrdinalIgnoreCase))) ||
                         (Want("rewards")     && key.StartsWith("Rewards:", StringComparison.OrdinalIgnoreCase)) ||
                         (Want("game")        && (key.StartsWith("Blackjack:", StringComparison.OrdinalIgnoreCase)
-                                              || key.StartsWith("Table:", StringComparison.OrdinalIgnoreCase)));
+                                              || key.StartsWith("Table:", StringComparison.OrdinalIgnoreCase))) ||
+                        (Want("store")       && key.StartsWith("Store:", StringComparison.OrdinalIgnoreCase));
 
                     if (take) settings[key] = (string)e.Value;
                 }
@@ -274,6 +315,7 @@ namespace Khela.Web.Controllers
                 await TakeDoc("daily", "khela:daily");
                 await TakeDoc("missions", "khela:missions");
                 await TakeDoc("chests", "khela:chests");
+                await TakeDoc("store", "khela:store");
             }
             catch
             {
@@ -331,6 +373,9 @@ namespace Khela.Web.Controllers
             return File(System.Text.Encoding.UTF8.GetBytes(json), "application/json", "khela-settings.json");
         }
 
+        // Which store flags are ON when neither Redis nor appsettings says anything — mirrors StoreOptions' defaults.
+        private static bool StoreDefaultOn(string key)
+            => key is "Store:Enabled" or "Store:GooglePlay:Enabled" or "Store:Fake:Enabled" or "Store:GooglePlay:AcceptTestPurchases";
         private SettingsVm BuildModel()
         {
             // Effective value = Redis override (khela:settings) ?? appsettings default — exactly what the engine reads.
@@ -357,6 +402,9 @@ namespace Khela.Web.Controllers
                 PiggyEnabled = Flag(Eff("Piggy:Enabled")),
                 PiggyBypassPurchase = Flag(Eff("Piggy:BypassPurchase")),
                 PiggyMode = string.IsNullOrWhiteSpace(Eff("Piggy:Mode")) ? "Wager" : Eff("Piggy:Mode"),
+                StoreFlags = StoreFlagDefs.Select(d => new StoreFlag(d.Key, d.Label, d.Help, Flag(Eff(d.Key)) || (string.IsNullOrEmpty(Eff(d.Key)) && StoreDefaultOn(d.Key)))).ToList(),
+                StoreRefundPolicy = string.IsNullOrWhiteSpace(Eff("Store:Refunds:Policy")) ? "Rollback" : Eff("Store:Refunds:Policy"),
+                StoreXpPerUsd = string.IsNullOrWhiteSpace(Eff("Store:XpPerUsd")) ? "0" : Eff("Store:XpPerUsd"),
                 // The EFFECTIVE ladder: what the admin authored if it parses, else the built-in one — so the editor
                 // always shows what the server is actually running rather than an empty table.
                 PiggyTiers = Khela.Game.Services.Piggy.PiggyConfig.ParseTiers(
@@ -369,6 +417,7 @@ namespace Khela.Web.Controllers
     /// because most knobs are durations where 0 is meaningless, but an on/off flag needs 0 or it becomes a switch
     /// that can only be turned on.</summary>
     public sealed record SettingDef(string Key, string Label, string Help, string Step, int Min = 1);
+    public sealed record StoreFlag(string Key, string Label, string Help, bool On);
 
     public sealed class SettingsVm
     {
@@ -380,6 +429,9 @@ namespace Khela.Web.Controllers
         public bool PiggyBypassPurchase { get; set; }
         public string PiggyMode { get; set; } = "Wager";
         public List<Khela.Game.Services.Piggy.PiggyTier> PiggyTiers { get; set; } = new();
+        public List<StoreFlag> StoreFlags { get; set; } = new();
+        public string StoreRefundPolicy { get; set; } = "Rollback";
+        public string StoreXpPerUsd { get; set; } = "0";
         public string? Saved { get; set; }
         public string? Error { get; set; }
     }

@@ -27,6 +27,11 @@ namespace Khela.Game.Services.Loyalty
         /// serializes concurrent attempts, a ledger row + step-flags make a crash mid-redeem recover on retry, the LP
         /// debit is an atomic balance-guarded UPDATE, and the chip credit rides the wallet's CorrelationId idempotency.</summary>
         Task<RedeemResultDto> RedeemAsync(Guid userId, string itemId, string idemKey);
+
+        /// <summary>Rail-agnostic purchase hook (Progression Spec §4): the LP drip on a VERIFIED real-money purchase
+        /// (<c>Loyalty:LpPerUsd</c> × VIP multiplier). Idempotent on <paramref name="idemKey"/>. Inert while <c>LpPerUsd</c> = 0.
+        /// Returns the LP granted.</summary>
+        Task<long> RecordPurchaseAsync(Guid userId, decimal usdSpent, string idemKey);
     }
 
     /// <summary>
@@ -73,6 +78,30 @@ namespace Khela.Game.Services.Loyalty
                 if (profile == null) return 0;
                 var mult = _vip.ComboMultiplier(profile.VipTier, profile.VipLevel);   // VIP tier + level boost LP earning (the benefit track)
                 var lp = LoyaltyMath.LpFromWager(cleanWager, mult, cfg);
+                if (lp <= 0) return 0;
+
+                profile.LoyaltyPoints += lp;
+                profile.LifetimeLoyaltyPoints += lp;
+                profile.UpdatedAt = DateTime.UtcNow;
+                try { await _db.SaveChangesAsync(); return lp; }
+                catch (DbUpdateConcurrencyException) when (attempt < 4) { _db.ChangeTracker.Clear(); continue; }
+            }
+        }
+
+        public async Task<long> RecordPurchaseAsync(Guid userId, decimal usdSpent, string idemKey)
+        {
+            if (!_cfg.Enabled || usdSpent <= 0m || string.IsNullOrEmpty(idemKey)) return 0;
+            var cfg = await EffectiveCfgAsync();
+            if (cfg.LpPerUsd <= 0m) return 0;   // dormant until the drip is switched on — checked before the idempotency mark so turning it on later still pays
+            if (!await _redis.GetDatabase().StringSetAsync($"loypur:{idemKey}", "1", TimeSpan.FromDays(60), When.NotExists))
+                return 0;
+
+            for (int attempt = 1; ; attempt++)
+            {
+                var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
+                if (profile == null) return 0;
+                var mult = _vip.ComboMultiplier(profile.VipTier, profile.VipLevel);
+                var lp = LoyaltyMath.LpFromPurchase(usdSpent, mult, cfg);
                 if (lp <= 0) return 0;
 
                 profile.LoyaltyPoints += lp;

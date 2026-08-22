@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using Best.HTTP;
 using Khela.Common.Blackjack;
+using Khela.Common.Store;
 using PlayCard.Account;
 using PlayCard.Core;
 using PlayCard.Game.Dtos;
@@ -201,6 +202,30 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<DealerEnvelope>> GetDealerAsync(string dealerId = null)
             => SendAsync<DealerEnvelope>(HttpMethod.Get,
                 string.IsNullOrEmpty(dealerId) ? "/api/shop/cosmetics/dealer" : $"/api/shop/cosmetics/dealer/{dealerId}");
+
+        // ---- Store (real-money IAP; docs/IAP_SPEC.md §5) ----
+        /// <summary>The store catalog as THIS platform sees it: our product ids, the store-product id to buy on this
+        /// platform, what each pays (display only — the server grants from its own catalog), per-user availability.</summary>
+        public Task<ApiResult<StoreCatalogDto>> GetStoreCatalogAsync(StorePlatform platform)
+            => SendAsync<StoreCatalogDto>(HttpMethod.Get, $"/api/store/catalog?platform={(int)platform}");
+
+        /// <summary>"May I buy this now?" — asked BEFORE the store sheet opens, so limits are enforced where a refusal costs nothing.</summary>
+        public Task<ApiResult<StoreIntentResultDto>> StoreIntentAsync(string productId, StorePlatform platform)
+            => SendAsync<StoreIntentResultDto>(HttpMethod.Post, "/api/store/intent", new StoreIntentRequest { ProductId = productId, Platform = platform });
+
+        /// <summary>Hand the store receipt to the server: it verifies with the store and credits the wallet. Idempotent on the
+        /// store transaction (a replay answers AlreadyGranted). Routed through <c>BalanceChangingAsync</c> so every balance HUD
+        /// repaints from <see cref="StoreRedeemResultData.NewChipBalance"/> the instant it lands.</summary>
+        public Task<ApiResult<StoreRedeemResultData>> RedeemPurchaseAsync(RedeemPurchaseRequest request)
+            => BalanceChangingAsync<StoreRedeemResultData>(HttpMethod.Post, "/api/store/redeem", request);
+
+        /// <summary>Restore purchases: a batch of receipts through the same idempotent path.</summary>
+        public Task<ApiResult<StoreRestoreResultDto>> RestorePurchasesAsync(StoreRestoreRequest request)
+            => BalanceChangingAsync<StoreRestoreResultDto>(HttpMethod.Post, "/api/store/restore", request);
+
+        /// <summary>My purchase history (support / restore UI).</summary>
+        public Task<ApiResult<List<StorePurchaseDto>>> GetStorePurchasesAsync(int take = 50)
+            => SendAsync<List<StorePurchaseDto>>(HttpMethod.Get, $"/api/store/purchases?take={take}");
 
         /// <summary>Another player's PUBLIC profile (GET /api/profile/{userId}). 404/null if blocked or not found.</summary>
         public Task<ApiResult<PublicProfileData>> GetPublicProfileAsync(string userId)

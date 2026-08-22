@@ -270,6 +270,25 @@ builder.Services.AddScoped<IGiftService, GiftService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IReportsService, ReportsService>();
 builder.Services.AddScoped<Khela.Game.Services.Cosmetics.ICosmeticsService, Khela.Game.Services.Cosmetics.CosmeticsService>();   // cosmetics shop: catalog/purchases/entitlement gate (docs/AVATAR_SHOP_SPEC.md)
+builder.Services.AddScoped<Khela.Game.Services.Store.IStoreCatalogService, Khela.Game.Services.Store.StoreCatalogService>();   // store catalog (Redis khela:store doc + defaults; per-platform, per-user availability) — docs/IAP_SPEC.md §3
+builder.Services.Configure<Khela.Game.Services.Store.StoreOptions>(builder.Configuration.GetSection(Khela.Game.Services.Store.StoreOptions.Section));
+// Store verifiers — one per platform, registered only where this host can run them (docs/IAP_SPEC.md §6):
+//   Fake  → Development ONLY (the environment gate is deliberate: the Redis overlay can flip config, not IHostEnvironment);
+//   GooglePlay / AppStore → registered when their config section says Enabled; "configured" (credentials present) is checked per request.
+builder.Services.AddSingleton<Khela.Game.Services.Store.Verification.IGooglePlayGateway, Khela.Game.Services.Store.Verification.GooglePlayGateway>();
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Store:Fake:Enabled", true))
+    builder.Services.AddSingleton<Khela.Game.Services.Store.Verification.IStoreReceiptVerifier>(sp => new Khela.Game.Services.Store.Verification.FakeStoreReceiptVerifier(true));
+if (builder.Configuration.GetValue("Store:GooglePlay:Enabled", true))
+    builder.Services.AddSingleton<Khela.Game.Services.Store.Verification.IStoreReceiptVerifier, Khela.Game.Services.Store.Verification.GooglePlayReceiptVerifier>();
+if (builder.Configuration.GetValue("Store:AppStore:Enabled", false))
+    builder.Services.AddSingleton<Khela.Game.Services.Store.Verification.IStoreReceiptVerifier, Khela.Game.Services.Store.Verification.AppStoreReceiptVerifier>();
+builder.Services.AddSingleton<Khela.Game.Services.Store.Verification.StoreVerifierRegistry>();
+builder.Services.AddScoped<Khela.Game.Services.Store.Grants.IStoreGrantHandler, Khela.Game.Services.Store.Grants.PiggyBreakGrantHandler>();
+builder.Services.AddScoped<Khela.Game.Services.Store.Grants.IStoreGrantHandler, Khela.Game.Services.Store.Grants.VipBoosterGrantHandler>();
+builder.Services.AddScoped<Khela.Game.Services.Store.Grants.IStoreGrantHandler, Khela.Game.Services.Store.Grants.GoldenPassGrantHandler>();
+builder.Services.AddScoped<Khela.Game.Services.Store.IStorePurchaseService, Khela.Game.Services.Store.StorePurchaseService>();   // the purchase spine: intent / redeem / restore / refund
+builder.Services.AddScoped<Khela.Game.Services.Store.IStoreWebhookService, Khela.Game.Services.Store.StoreWebhookService>();   // Google RTDN + Apple Server Notifications v2 → StoreEvents (idempotent) → refund policy / subscription seam
+builder.Services.AddHostedService<Khela.Game.Services.Store.StoreReconciliationService>();   // re-drive stuck purchases, Google ack backstop, voided poll, subscription refresh, admin re-drive queue
 var app = builder.Build();
 
 app.UseSerilogRequestLogging();   // one tidy log line per HTTP request (method, path, status, elapsed)

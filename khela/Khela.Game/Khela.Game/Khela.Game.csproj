@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="FirebaseAdmin" Version="3.1.0" />
+    <PackageReference Include="Google.Apis.AndroidPublisher.v3" Version="1.75.0.4246" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.19" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.19" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />
@@ -22,6 +23,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.14.0" />
+    <PackageReference Include="Mimo.AppStoreServerLibrary" Version="0.1.1" />
     <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="StackExchange.Redis" Version="2.9.11" />
@@ -39,10 +41,7 @@
        avoids a duplicate-Content error whether or not the Web SDK already auto-includes *.json. -->
   <ItemGroup>
     <Content Remove="firebase-service-account.json" />
-    <Content Include="firebase-service-account.json"
-             Condition="Exists('firebase-service-account.json')"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="firebase-service-account.json" Condition="Exists('firebase-service-account.json')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

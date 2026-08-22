@@ -1,7 +1,43 @@
 # IAP / Store — server + client spec (merged)
 
 *Status (2026-08-22): SPEC, merged from two independent plans written the same night (`IAP_SPEC.md` "A" and
-`IAP_STORE_PLAN.md` "B"; B is folded in here and deleted). Nothing is built yet. Both codebases and the WGWB reference
+`IAP_STORE_PLAN.md` "B"; B is folded in here and deleted). **Build log:** slice 1 (§12-1 contract + catalog + schema +
+`PaidPurchase`) is written — `Khela.Common/Store/StoreDtos.cs`, `Services/Store/StoreCatalog.cs` + `StoreCatalogService.cs`
+(+ `StoreSwitches`), `Database/Models/StorePurchase.cs` (+ `StoreEvent`), `TransactionType.PaidPurchase = 6`, dead
+`StoreItems` dropped, migration `20260821234835_AddStoreTables` generated (**not yet applied** to any DB — apply local +
+VPS), 17 tests green (`StoreCatalogTests`, `TransactionTypeTests`). **Spine slice also written (same day):** `StoreOptions`
+(`Store` appsettings section, added), `StoreMath`, `Verification/` (`IStoreReceiptVerifier` + registry, `FakeStoreReceiptVerifier`
+Development-only, `GooglePlayGateway` + `GooglePlayReceiptVerifier` over `Google.Apis.AndroidPublisher.v3`, `AppStoreReceiptVerifier`
+over `Mimo.AppStoreServerLibrary` (built, ships disabled)), `Grants/` (`IStoreGrantHandler` + Piggy/VipBooster/GoldenPass handlers),
+`StorePurchaseService` (intent / redeem reserve→verify→grant→complete / restore / history / redrive / refund policy),
+`StoreReconciliationService` (re-drive, Google ack backstop, voided poll, subscription refresh, admin re-drive queue),
+`StoreController` (`/api/store/*` + admin endpoints), `PiggyService.BreakVerifiedAsync` (additive; the dev path is untouched),
+`LoyaltyService.RecordPurchaseAsync`, DI in `Program.cs`. Tests: `StoreMathTests` + `StorePurchaseServiceTests` (real MySQL:
+replay, 8-way race, invalid, pending, crash-and-redrive, kill switches, refund Rollback/Flag, restore, history) — **427/427 green**.
+**Client slice written (same day, unverified in the Editor — Unity was closed):** `Packages/manifest.json` += `com.unity.purchasing`
+5.2.0, `Assets/Resources/BillingMode.json`, fresh `Assets/Plugins/Khela.Common.dll` (Release), `Game/Net/StoreModels.cs`
+(`StoreRedeemResultData : IChipBalanceResult`), `BlackjackRestClient` += `GetStoreCatalogAsync / StoreIntentAsync /
+RedeemPurchaseAsync` (via `BalanceChangingAsync`) `/ RestorePurchasesAsync / GetStorePurchasesAsync`, `Scripts/Store/`
+`StorePlatformResolver`, `StoreCatalog` (singleton + disk cache), `IapService` (WGWB surface, self-bootstraps, redeem-then-confirm,
+pending-before-auth queue, bounded redeem retries, reconnect), `StorePurchaseButton` (WGWB port), `Bridges/PiggyPurchaseBridge`
+(→ `PiggyBreakDirector.PlayBreak(serverPayout)` / `PiggyPanel.CancelBreak`), `Bridges/PassPurchaseBridge`. API names checked
+against the 5.2.0 package source in WGWB's PackageCache; Reza compiled it in the Editor. **Admin slice written (same day):**
+Khela.Web `Controllers/StoreController.cs` + `Views/Store/{Index,Purchases,Purchase}.cshtml` — catalog editor over `khela:store`
+(product table, edit modal with every field incl. per-platform store ids, lines as pass-ladder text, effect, availability; backups;
+raw JSON; value-guard + missing-store-id warnings), Platforms panel (the game publishes `khela:store:status` each reconcile pass),
+Purchases ledger (filters, revenue totals, detail page with fulfilment / verifier / snapshot / receipt / events) with **queued**
+Re-drive (`khela:store:redrive`) and Refund (`khela:store:refund`) executed by the game's reconciler; Settings ▸ Store tab
+(`Store:*` switches + refund policy + XpPerUsd on the overlay — the game now reads them live via `StoreSwitches`), Transfer group
+"store"; sidebar entry. Razor compiles; 427/427 tests. Runtime smoke of the pages pending (the web app's DB is the VPS, which
+has no `StorePurchases` table until the migration is applied there). **Webhooks written (same day):** `StoreWebhookService`
+(Pub/Sub push parser → `GoogleDeveloperNotification`; Apple `AppleNotification` flattened by `AppStoreReceiptVerifier.DecodeNotificationAsync`
+after JWS verification; every notification recorded in `StoreEvents` idempotently; refunds/voids/revokes → `MarkRefundedAsync`
+(refund policy); subscription events → the shared `IStorePurchaseService.ApplySubscriptionUpdateAsync` seam also used by the
+reconciler), `StoreWebhooksController` (`POST /api/store/webhooks/google?token=` fail-closed on `Store:GooglePlay:PubSubToken`;
+`POST /api/store/webhooks/apple` 503 until the Apple verifier is configured), `StoreWebhookTests` — **433/433 green**.
+Idempotent migration script for the VPS generated to `C:\temp\khela\khela-migrations-idempotent-2026-08-22.sql` (the only real
+DROP is the dead `StoreItems` table). Nothing left to build for v1 except the later Web checkout verifier; remaining = ops (§11).
+Both codebases and the WGWB reference
 (`D:\Projects\WGWB\WGWB\Assets\_WGWB\Scripts\IAPService.cs` + `ShopService.cs`, Unity IAP 5.2.0, and
 `D:\Projects\WGWB\UNITY_IAP_R8_RELEASE_INCIDENT.md`) were surveyed first. §13 lists every choice made in the merge —
 those are the defaults; §14 is the brainstorm list.*
@@ -143,9 +179,14 @@ tables. These are the store **minimums**; the upper rungs keep value/$ rising bu
 
 Piggy pacing to make "3 days" true at every stake: `PiggyTier` gets its own `RatePercent` (tier 1 ≈ 500%, falling as
 stakes rise — accrual mints nothing, it is pure pacing) and `Piggy:MaxAccrualPerDayPercent` 25 → 34 (25 = a 4-day floor).
-Prerequisite batch (DECISIONS E-09): stake tiers extended to the 1M room + tournament lobby; level-up / daily / pass /
-mission / chest / loyalty / starter / gift amounts re-denominated so the entry pack isn't dust and the free flow isn't a
-Kash faucet (see §14). The Golden pass's
+**Free-flow policy (Reza, 2026-08-22):** the everyday chip drip (login reward, free pass, objectives) is a deliberate
+**floor of ~20–50k chips/day**; the rest of a free player's chips comes from later in-game systems (collectible card packs
+exchangeable for chips, etc. — rewarded in play, never sold for money, so no odds-disclosure issue; each is another
+attributed mint path through `IWalletService`). **Kash is given rarely, not never** — small amounts on milestones / rare
+drops / occasional gifts, never an everyday line. The Kash numbers in today's `DailyCatalog` / `PassCatalog` / `ChestCatalog`
+code defaults are **test placeholders**, not the design; Reza sizes the real ladders (in the admin editors, which write
+`khela:daily` / `khela:pass` / `khela:chests`) when the Kash lane goes live, using 1 Kash ≈ $0.02 as the yardstick.
+Prerequisite batch (DECISIONS E-09): stake tiers extended to the 1M room + tournament lobby. The Golden pass's
 store ids are owned here; `PassProgram.GoldenProductIdApple/Google` become display-only and the validator warns on mismatch.
 
 ## 4. Data model (migration `AddStoreTables`)
@@ -243,6 +284,14 @@ idempotent — that pair makes a crash between grant and confirm safe; confirmin
 purchase); **pending orders can arrive before auth is ready** (`OnPurchasesFetched` fires at `Connect`) → queue until
 `AccountManager.IsReady`, bounded; one redeem per transaction id in flight; receipt/token never at Info level; account
 binding = `SetObfuscatedAccountId(sha256(userId))` / `SetAppAccountToken(Guid userId)`, mismatch logged, grant anyway.
+
+**Rail-agnostic entry (Reza, 2026-08-22: "the receipt/grant layer shouldn't care whether the purchase came from a store receipt
+or my web checkout").** The spine's core is `IStorePurchaseService.RedeemVerifiedAsync(user, platform, productId, ReceiptVerification
+verified, evidence…)`: reserve → apply → grant from an ALREADY-VERIFIED purchase event. `RedeemAsync` (client receipt) is exactly
+that with a store verifier in front; a web checkout (bKash / Nagad / Stripe / Paddle) confirms server-to-server, so its webhook
+handler builds the `ReceiptVerification` (product, provider transaction id, amount, test flag, subscription window) and calls
+`RedeemVerifiedAsync` directly — no client, no receipt, same row, same idempotency, same catalog snapshot, effects, refund policy
+and spend hooks, gated by the same `Store:Web:Enabled` switch. Everything after the verifier is provider-blind by construction.
 
 ### 5.3 `POST /api/store/restore {platform, receipts[]}` — subscriptions / non-consumables through the same spine (idempotent) → entitlements.
 ### 5.4 `GET /api/store/purchases?take=` — my history (support, restore UI). `GET /api/store/catalog?platform=` — §3 for this platform + per-user `Purchasable`/`PurchasedCount`.

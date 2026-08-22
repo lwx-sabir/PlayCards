@@ -15,6 +15,7 @@
     <button type="button" class="tab active" data-tab="casino">Casino Settings</button>
     <button type="button" class="tab" data-tab="game">Game Settings</button>
     <button type="button" class="tab" data-tab="piggy">Piggy Bank</button>
+    <button type="button" class="tab" data-tab="store">Store</button>
     <button type="button" class="tab" data-tab="transfer">Transfer</button>
 </div>
 
@@ -200,6 +201,53 @@
     </div>
 </div>
 
+<div class="tab-panel hidden" data-panel="store">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>In-app store</h3>
+            <span class="badge badge-live">Live · read per request</span>
+        </div>
+        <p class="page-sub" style="margin-top:0">
+            The kill switches and policy of the real-money store (<code>docs/IAP_SPEC.md</code> §7.1). The game reads these from the
+            overlay on every request — no restart. Credentials (Play service account, Apple certificate / API key) live in the game
+            server's <code>appsettings.json</code>; the <a asp-controller="Store" asp-action="Index">Store page</a> shows whether each
+            platform's verifier actually loaded. The catalog itself is edited there too.
+        </p>
+        <form asp-controller="Settings" asp-action="SaveStore" method="post">
+            <div class="setting-list">
+                @foreach (var f in Model.StoreFlags)
+                {
+                    <div class="setting-edit-row2">
+                        <div class="setting-meta">
+                            <div class="setting-label">@f.Label</div>
+                            <div class="setting-help">@f.Help</div>
+                        </div>
+                        <input class="setting-input" type="checkbox" name="@f.Key" value="on" @(f.On ? "checked" : "") />
+                    </div>
+                }
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Refund policy</div>
+                        <div class="setting-help"><strong>Rollback</strong> reverses the credited lines through the wallet's own reversal when the chips are still there (never negative; flags when already spent). <strong>Flag</strong> only records the refund. Piggy/VIP effects are never unwound either way.</div>
+                    </div>
+                    <select class="input setting-input" name="Store:Refunds:Policy">
+                        <option value="Rollback" selected="@(Model.StoreRefundPolicy == "Rollback")">Rollback</option>
+                        <option value="Flag" selected="@(Model.StoreRefundPolicy == "Flag")">Flag</option>
+                    </select>
+                </div>
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">XP per USD</div>
+                        <div class="setting-help">XP granted per reference-USD of a verified purchase (bypasses the daily cap). 0 = off — purchased chips earn XP when wagered.</div>
+                    </div>
+                    <input class="input setting-input" type="number" step="1" min="0" name="Store:XpPerUsd" value="@Model.StoreXpPerUsd" />
+                </div>
+            </div>
+            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save store settings</button></div>
+        </form>
+    </div>
+</div>
+
 <div class="tab-panel hidden" data-panel="transfer">
     <div class="panel">
         <div class="panel-head">
@@ -258,6 +306,13 @@
                         <div class="setting-help">The chest catalog (<code>khela:chests</code>).</div>
                     </div>
                     <input class="setting-input" type="checkbox" name="groups" value="chests" checked />
+                </div>
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Store catalog + switches</div>
+                        <div class="setting-help">The real-money catalog (<code>khela:store</code>) and every <code>Store:</code> switch. Credentials never travel — they live in each server's appsettings.</div>
+                    </div>
+                    <input class="setting-input" type="checkbox" name="groups" value="store" checked />
                 </div>
 
                 <div class="setting-edit-row2">
