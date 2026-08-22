@@ -16,6 +16,7 @@ namespace Khela.Game.Database
 
         public DbSet<StorePurchase> StorePurchases { get; set; }   // every real-money store transaction — the store's money audit (docs/IAP_SPEC.md §4.1)
         public DbSet<StoreEvent> StoreEvents { get; set; }         // store webhooks / poll findings, idempotent on the store's event id
+        public DbSet<CurrencyExchange> CurrencyExchanges { get; set; }   // A→B currency exchanges (docs/EXCHANGE_SPEC.md); caps are counted from here, money lives in the wallet ledger
 
         public DbSet<DeviceRegistration> DeviceRegistrations { get; set; }
 

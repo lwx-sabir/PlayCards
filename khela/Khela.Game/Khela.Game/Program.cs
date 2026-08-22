@@ -271,6 +271,7 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IReportsService, ReportsService>();
 builder.Services.AddScoped<Khela.Game.Services.Cosmetics.ICosmeticsService, Khela.Game.Services.Cosmetics.CosmeticsService>();   // cosmetics shop: catalog/purchases/entitlement gate (docs/AVATAR_SHOP_SPEC.md)
 builder.Services.AddScoped<Khela.Game.Services.Store.IStoreCatalogService, Khela.Game.Services.Store.StoreCatalogService>();   // store catalog (Redis khela:store doc + defaults; per-platform, per-user availability) — docs/IAP_SPEC.md §3
+builder.Services.AddScoped<Khela.Game.Services.Exchange.IExchangeService, Khela.Game.Services.Exchange.ExchangeService>();   // currency exchange A→B (Redis khela:exchange doc + defaults; idempotent debit/credit) — docs/EXCHANGE_SPEC.md
 builder.Services.Configure<Khela.Game.Services.Store.StoreOptions>(builder.Configuration.GetSection(Khela.Game.Services.Store.StoreOptions.Section));
 // Store verifiers — one per platform, registered only where this host can run them (docs/IAP_SPEC.md §6):
 //   Fake  → Development ONLY (the environment gate is deliberate: the Redis overlay can flip config, not IHostEnvironment);

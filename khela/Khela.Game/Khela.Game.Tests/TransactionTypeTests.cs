@@ -21,6 +21,7 @@ namespace Khela.Game.Tests
             Assert.Equal(4, (int)TransactionType.Bonus);
             Assert.Equal(5, (int)TransactionType.AdminAdjustment);
             Assert.Equal(6, (int)TransactionType.PaidPurchase);
+            Assert.Equal(7, (int)TransactionType.Exchange);
         }
 
         [Fact]

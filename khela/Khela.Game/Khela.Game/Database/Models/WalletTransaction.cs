@@ -22,7 +22,11 @@ namespace Khela.Game.Database.Models
         AdminAdjustment,
         /// <summary>Real-money STORE purchase credit (IAP / web store) — distinct from <see cref="Purchase"/>, which is an in-game spend
         /// (e.g. the cosmetics debit in Kash). Revenue queries sum PaidPurchase only. Append-only: value 6 (TransactionTypeTests).</summary>
-        PaidPurchase
+        PaidPurchase,
+        /// <summary>A currency EXCHANGE leg (A → B at the catalog rate, docs/EXCHANGE_SPEC.md): the debit of A and the credit of B
+        /// both carry this type, paired by their correlation ids <c>xchg:{id}:d</c> / <c>:c</c>. Neither is revenue, a wager, a
+        /// reward nor a store grant — it is the one sink/source the economy audit must count on its own. Append-only: value 7.</summary>
+        Exchange
     }
 
     [Table("WalletTransactions")]
