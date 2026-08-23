@@ -6,6 +6,7 @@ using Khela.Common.Progression;
 using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Services.Redis;
+using Khela.Game.Services.Wallet;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -76,12 +77,14 @@ namespace Khela.Game.Services.Vip
 
         private readonly AppDbContext _db;
         private readonly IRedisService _redis;
+        private readonly IWalletService _wallet;
         private readonly ILogger<VipService> _logger;
         private readonly VipConfig _cfg;
 
-        public VipService(AppDbContext db, IRedisService redis, IConfiguration config, ILogger<VipService> logger)
+        public VipService(AppDbContext db, IRedisService redis, IWalletService wallet,
+            IConfiguration config, ILogger<VipService> logger)
         {
-            _db = db; _redis = redis; _logger = logger;
+            _db = db; _redis = redis; _wallet = wallet; _logger = logger;
             _cfg = new VipConfig
             {
                 Enabled             = config.GetValue("Vip:Enabled", true),
@@ -265,20 +268,46 @@ namespace Khela.Game.Services.Vip
                 if (profile.VipLevel <= 0) return MaintFail("No VIP level to maintain.");
                 var now = DateTime.UtcNow;
                 if (profile.VipLevelMaintainedThrough.HasValue && now < profile.VipLevelMaintainedThrough.Value)
-                    return new VipMaintainResultDto { Ok = true, AlreadyMaintained = true, LoyaltyPoints = profile.LoyaltyPoints,
+                    return new VipMaintainResultDto { Ok = true, AlreadyMaintained = true, LoyaltyPoints = await LpBalanceAsync(userId),
                         VipLevel = profile.VipLevel, MaintainedThrough = profile.VipLevelMaintainedThrough };
 
+                // LP is a wallet currency (docs/VIP_SPEC.md §3): the debit is never-negative under the wallet's own row lock
+                // and idempotent on the correlation id, which is keyed to the PERIOD being bought — so a double-tap inside
+                // one period charges once, and next month's maintain is a different id.
                 var cost = VipMath.MaintainLpCost(profile.VipLevel, cfg);
-                var rows = await _db.UserProfiles                                   // atomic balance-guarded LP debit
-                    .Where(p => p.UserId == userId && p.LoyaltyPoints >= cost)
-                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.LoyaltyPoints, p => p.LoyaltyPoints - cost));
-                if (rows == 0) return MaintFail("Insufficient Loyalty Points.");
-
                 var through = now.AddDays(cfg.VipMaintainDays);
-                await _db.UserProfiles.Where(p => p.UserId == userId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.VipLevelMaintainedThrough, through));
-                var bal = await _db.UserProfiles.AsNoTracking().Where(p => p.UserId == userId).Select(p => p.LoyaltyPoints).FirstOrDefaultAsync();
-                return new VipMaintainResultDto { Ok = true, LoyaltyPoints = bal, VipLevel = profile.VipLevel, MaintainedThrough = through };
+                if (cost > 0L)
+                {
+                    // The correlation id names the period being REPLACED, not `now`: keyed on `through` a retry seconds
+                    // later — across a midnight boundary, or after the maintain days were retuned — is a different id and
+                    // charges the player twice for one period. The window it extends from is the same on every retry.
+                    var replacing = profile.VipLevelMaintainedThrough?.ToString("yyyyMMddHHmmss") ?? "new";
+                    var corr = $"vipmt:{userId:N}:{replacing}";
+
+                    // We own the transaction: the debit and the window it buys commit together, and a throw from the
+                    // wallet (which leaves ITS transaction open) can't strand a charge with no window.
+                    await using var tx = await _db.Database.BeginTransactionAsync();
+                    try
+                    {
+                        await _wallet.DebitAsync(userId.ToString(), CurrencyType.Lp, cost, TransactionType.Purchase, corr,
+                            new WalletContext { Description = $"Maintain VIP {profile.VipLevel}" });
+                        await _db.UserProfiles.Where(p => p.UserId == userId)
+                            .ExecuteUpdateAsync(s => s.SetProperty(p => p.VipLevelMaintainedThrough, through));
+                        await tx.CommitAsync();
+                    }
+                    catch (InsufficientFundsException)
+                    {
+                        await tx.RollbackAsync();
+                        return MaintFail("Insufficient Loyalty Points.");
+                    }
+                }
+                else
+                {
+                    await _db.UserProfiles.Where(p => p.UserId == userId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.VipLevelMaintainedThrough, through));
+                }
+
+                return new VipMaintainResultDto { Ok = true, LoyaltyPoints = await LpBalanceAsync(userId), VipLevel = profile.VipLevel, MaintainedThrough = through };
             }
             catch (Exception ex)
             {
@@ -318,6 +347,10 @@ namespace Khela.Game.Services.Vip
         }
 
         private static VipMaintainResultDto MaintFail(string error) => new VipMaintainResultDto { Ok = false, Error = error };
+
+        /// <summary>The player's spendable LP — the wallet balance (docs/VIP_SPEC.md §3), floored to a whole point.</summary>
+        private async Task<long> LpBalanceAsync(Guid userId)
+            => (long)Math.Floor(await _wallet.GetBalanceAsync(userId.ToString(), CurrencyType.Lp));
 
         public async Task ReviewTierAsync(Guid userId)
         {

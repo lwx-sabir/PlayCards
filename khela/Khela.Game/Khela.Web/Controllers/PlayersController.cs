@@ -3,8 +3,10 @@ using Khela.Game.Database;
 using Khela.Game.Database.Models;
 using Khela.Game.Services.Wallet;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Khela.Web.Controllers
 {
@@ -23,12 +25,15 @@ namespace Khela.Web.Controllers
         private readonly AppDbContext _db;
         private readonly IWalletService _wallet;
         private readonly Khela.Game.Services.Pass.IPassService _pass;
+        private readonly UserManager<ApplicationUser> _users;
 
-        public PlayersController(AppDbContext db, IWalletService wallet, Khela.Game.Services.Pass.IPassService pass)
+        public PlayersController(AppDbContext db, IWalletService wallet, Khela.Game.Services.Pass.IPassService pass,
+            UserManager<ApplicationUser> users)
         {
             _db = db;
             _wallet = wallet;
             _pass = pass;
+            _users = users;
         }
 
         [HttpGet]
@@ -67,7 +72,7 @@ namespace Khela.Web.Controllers
                     Level = p.Level,
                     VipTier = p.VipTier,
                     VipLevel = p.VipLevel,
-                    LoyaltyPoints = p.LoyaltyPoints,
+                    LoyaltyPoints = 0,   // filled from the Lp wallet below — the profile column is retired (docs/VIP_SPEC.md §3)
                     MaintainedThrough = p.VipLevelMaintainedThrough,
                 })
                 .ToListAsync();
@@ -76,11 +81,26 @@ namespace Khela.Web.Controllers
             var idStrs = rows.Select(r => r.UserId.ToString()).ToList();
             var emails = await _db.Users.AsNoTracking()
                 .Where(u => idStrs.Contains(u.Id))
-                .Select(u => new { u.Id, u.Email })
+                .Select(u => new { u.Id, u.Email, u.LockoutEnabled, u.LockoutEnd })
                 .ToListAsync();
-            var emailById = emails.ToDictionary(e => e.Id, e => e.Email);
+            var userById = emails.ToDictionary(e => e.Id);
+            var nowOff = DateTimeOffset.UtcNow;
             foreach (var r in rows)
-                r.Email = emailById.TryGetValue(r.UserId.ToString(), out var e) ? e : null;
+            {
+                if (!userById.TryGetValue(r.UserId.ToString(), out var u)) continue;
+                r.Email = u.Email;
+                // Suspended = Identity lockout in force — exactly what CheckPasswordSignInAsync refuses at login.
+                r.SuspendedUntil = u.LockoutEnabled && u.LockoutEnd != null && u.LockoutEnd > nowOff ? u.LockoutEnd : null;
+            }
+
+            // LP balances in ONE query (the profile column is retired — docs/VIP_SPEC.md §3), rather than a lookup per row.
+            var rowIds = rows.Select(r => r.UserId).ToList();
+            var lp = await _db.PlayerWallets.AsNoTracking()
+                .Where(w => w.Currency == CurrencyType.Lp && rowIds.Contains(w.UserId))
+                .Select(w => new { w.UserId, w.Balance })
+                .ToListAsync();
+            var lpByUser = lp.ToDictionary(x => x.UserId, x => (long)Math.Floor(x.Balance));
+            foreach (var r in rows) if (lpByUser.TryGetValue(r.UserId, out var bal)) r.LoyaltyPoints = bal;
 
             vm.Players = rows;
             vm.Saved = TempData["Saved"] as string;
@@ -165,11 +185,14 @@ namespace Khela.Web.Controllers
             {
                 if (string.Equals(currency, "LP", StringComparison.OrdinalIgnoreCase))
                 {
+                    // LP is a wallet currency now (docs/VIP_SPEC.md §3): the balance moves through the ledger like any
+                    // other grant, and only the LP SCORE (lifetime, never falls) stays on the profile.
                     long lp = (long)amount;
+                    await _wallet.CreditAsync(userId.ToString(), CurrencyType.Lp, lp, TransactionType.AdminAdjustment,
+                        $"web-admin-grant:{Guid.NewGuid():N}", new WalletContext { Description = "Admin LP grant" });
                     var n = await _db.UserProfiles
                         .Where(p => p.UserId == userId)
                         .ExecuteUpdateAsync(s => s
-                            .SetProperty(p => p.LoyaltyPoints, p => p.LoyaltyPoints + lp)
                             .SetProperty(p => p.LifetimeLoyaltyPoints, p => p.LifetimeLoyaltyPoints + lp)
                             .SetProperty(p => p.UpdatedAt, DateTime.UtcNow));
                     TempData[n > 0 ? "Saved" : "Error"] = n > 0 ? $"Granted {lp:#,0} LP." : "Player not found.";
@@ -193,6 +216,83 @@ namespace Khela.Web.Controllers
             return RedirectToAction(nameof(Index), new { q });
         }
 
+        // ---------------------------------------------------------------- moderation
+
+        /// <summary>
+        /// Suspend a player: Identity lockout, which the game's password login refuses (CheckPasswordSignInAsync answers
+        /// LockedOut). 0 days = until lifted. The security stamp is rotated so any dashboard cookie dies; a game JWT
+        /// already issued runs to its expiry (≤60 min) — per-request enforcement in the game is the follow-up that
+        /// makes this instant. Never yourself. Reason lands in the audit log with the rest of the form.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> Suspend(Guid userId, int days, string reason, string q)
+        {
+            var user = await _users.FindByIdAsync(userId.ToString());
+            if (user == null) { TempData["Error"] = "Player not found."; return RedirectToAction(nameof(Index), new { q }); }
+            if (string.Equals(user.Id, User.FindFirstValue(ClaimTypes.NameIdentifier), StringComparison.OrdinalIgnoreCase))
+            {
+                TempData["Error"] = "Refused: you cannot suspend yourself.";
+                return RedirectToAction(nameof(Index), new { q });
+            }
+            try
+            {
+                var until = days <= 0 ? DateTimeOffset.MaxValue : DateTimeOffset.UtcNow.AddDays(days);
+                await _users.SetLockoutEnabledAsync(user, true);
+                var res = await _users.SetLockoutEndDateAsync(user, until);
+                if (!res.Succeeded)
+                {
+                    TempData["Error"] = "Could not suspend: " + string.Join("; ", res.Errors.Select(e => e.Description));
+                    return RedirectToAction(nameof(Index), new { q });
+                }
+                await _users.UpdateSecurityStampAsync(user);
+                TempData["Saved"] = $"Suspended {user.Email ?? user.UserName} {(days <= 0 ? "until lifted" : $"for {days} day(s)")}" +
+                                    (string.IsNullOrWhiteSpace(reason) ? "." : $" — {reason.Trim()}.") +
+                                    " New logins are refused; an already-issued game token lasts until it expires (≤60 min).";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not suspend: {ex.Message}"; }
+            return RedirectToAction(nameof(Index), new { q });
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> Unsuspend(Guid userId, string q)
+        {
+            var user = await _users.FindByIdAsync(userId.ToString());
+            if (user == null) { TempData["Error"] = "Player not found."; return RedirectToAction(nameof(Index), new { q }); }
+            try
+            {
+                var res = await _users.SetLockoutEndDateAsync(user, null);
+                TempData[res.Succeeded ? "Saved" : "Error"] = res.Succeeded
+                    ? $"Suspension lifted for {user.Email ?? user.UserName}."
+                    : "Could not lift: " + string.Join("; ", res.Errors.Select(e => e.Description));
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not lift: {ex.Message}"; }
+            return RedirectToAction(nameof(Index), new { q });
+        }
+
+        /// <summary>Replace an offensive display name with a neutral one (Player + their public id — unique by
+        /// construction, so the unique normalized-name index is always satisfied). The player can rename later.</summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> ResetDisplayName(Guid userId, string q)
+        {
+            try
+            {
+                var p = await _db.UserProfiles.FirstOrDefaultAsync(x => x.UserId == userId);
+                if (p == null) { TempData["Error"] = "Player not found."; return RedirectToAction(nameof(Index), new { q }); }
+                var old = p.DisplayName;
+                var fresh = "Player" + (string.IsNullOrEmpty(p.PublicId) ? userId.ToString("N")[..6].ToUpperInvariant() : p.PublicId);
+                p.DisplayName = fresh;
+                p.DisplayNameNormalized = fresh.ToUpperInvariant();
+                p.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+                TempData["Saved"] = $"Display name reset: “{old}” → “{fresh}”.";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not reset the name: {ex.Message}"; }
+            return RedirectToAction(nameof(Index), new { q });
+        }
+
         /// <summary>Full read-only detail for one player (identity, wallets, progression, VIP, loyalty, lifetime
         /// stats), rendered as a partial for the details modal — fetched on demand so the list stays light.</summary>
         [HttpGet]
@@ -203,7 +303,7 @@ namespace Khela.Web.Controllers
 
             var idStr = id.ToString();
             var user = await _db.Users.AsNoTracking().Where(u => u.Id == idStr)
-                .Select(u => new { u.Email, u.UserName }).FirstOrDefaultAsync();
+                .Select(u => new { u.Email, u.UserName, u.LockoutEnabled, u.LockoutEnd }).FirstOrDefaultAsync();
 
             var walletRows = await _db.PlayerWallets.AsNoTracking()
                 .Where(w => w.UserId == id).OrderBy(w => w.Currency)
@@ -215,12 +315,27 @@ namespace Khela.Web.Controllers
                 .OrderByDescending(g => g.LastPlayedAt)
                 .ToListAsync();
 
+            // Reports AGAINST this player — the moderation signal, next to the stats. Counts by status + the last few.
+            var reportCounts = await _db.Reports.AsNoTracking().Where(r => r.ReportedUserId == id)
+                .GroupBy(r => r.Status).Select(g => new { g.Key, N = g.Count() }).ToListAsync();
+            var recentReports = (await _db.Reports.AsNoTracking().Where(r => r.ReportedUserId == id)
+                    .OrderByDescending(r => r.CreatedAt).Take(5)
+                    .Select(r => new { r.Reason, r.Status, r.TargetType, r.CreatedAt }).ToListAsync())
+                .Select(r => new PlayerDetailsVm.ReportRow   // enum→text in memory; not every provider translates ToString()
+                {
+                    Reason = r.Reason.ToString(),
+                    Status = r.Status.ToString(),
+                    TargetType = r.TargetType.ToString(),
+                    CreatedAt = r.CreatedAt,
+                }).ToList();
+
             var vm = new PlayerDetailsVm
             {
                 UserId = p.UserId,
                 DisplayName = p.DisplayName,
                 Email = user?.Email,
                 UserName = user?.UserName,
+                SuspendedUntil = user != null && user.LockoutEnabled && user.LockoutEnd != null && user.LockoutEnd > DateTimeOffset.UtcNow ? user.LockoutEnd : null,
                 Region = p.Region,
                 Bio = p.Bio,
                 StatusMessage = p.StatusMessage,
@@ -229,6 +344,11 @@ namespace Khela.Web.Controllers
                 LastPlayedAt = p.LastPlayedAt,
                 FriendCount = p.FriendCount,
                 ReferralCount = p.ReferralCount,
+
+                OpenReports = reportCounts.Where(c => c.Key == Khela.Common.Reports.ReportStatus.Open || c.Key == Khela.Common.Reports.ReportStatus.Reviewing).Sum(c => c.N),
+                TotalReports = reportCounts.Sum(c => c.N),
+                ActionTakenReports = reportCounts.Where(c => c.Key == Khela.Common.Reports.ReportStatus.ActionTaken).Sum(c => c.N),
+                RecentReports = recentReports,
 
                 Level = p.Level,
                 Experience = p.Experience,
@@ -242,8 +362,8 @@ namespace Khela.Web.Controllers
                 BadgeLitUntil = p.BadgeLitUntil,
                 HideVipBadge = p.HideVipBadge,
 
-                LoyaltyPoints = p.LoyaltyPoints,
-                LifetimeLoyaltyPoints = p.LifetimeLoyaltyPoints,
+                LoyaltyPoints = (long)Math.Floor(_db.PlayerWallets.AsNoTracking().Where(w => w.UserId == p.UserId && w.Currency == CurrencyType.Lp).Select(w => (decimal?)w.Balance).FirstOrDefault() ?? 0m),
+                LifetimeLoyaltyPoints = p.LifetimeLoyaltyPoints,   // the LP Score
 
                 GamesPlayed = p.GamesPlayed,
                 GamesWon = p.GamesWon,
@@ -327,6 +447,22 @@ namespace Khela.Web.Controllers
         public int FriendCount { get; set; }
         public int ReferralCount { get; set; }
 
+        /// <summary>Identity lockout in force (suspended) — null when not suspended; year 9999 = until lifted.</summary>
+        public DateTimeOffset? SuspendedUntil { get; set; }
+
+        // Reports AGAINST this player.
+        public int OpenReports { get; set; }
+        public int TotalReports { get; set; }
+        public int ActionTakenReports { get; set; }
+        public List<ReportRow> RecentReports { get; set; } = new();
+        public sealed class ReportRow
+        {
+            public string Reason { get; set; }
+            public string Status { get; set; }
+            public string TargetType { get; set; }
+            public DateTime CreatedAt { get; set; }
+        }
+
         public int Level { get; set; }
         public long Experience { get; set; }
         public long LifetimeExperience { get; set; }
@@ -396,5 +532,8 @@ namespace Khela.Web.Controllers
         public int VipLevel { get; set; }
         public long LoyaltyPoints { get; set; }
         public DateTime? MaintainedThrough { get; set; }
+        public DateTimeOffset? SuspendedUntil { get; set; }
+        public bool Suspended => SuspendedUntil != null;
+        public string SuspendedLabel => SuspendedUntil == null ? "" : SuspendedUntil.Value.Year > 9000 ? "until lifted" : "until " + SuspendedUntil.Value.ToString("yyyy-MM-dd HH:mm") + " UTC";
     }
 }

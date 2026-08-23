@@ -112,6 +112,17 @@ namespace Khela.Game.Services.Exchange
                     FromCurrency = "Chips", ToCurrency = "Kash", FromPerUnit = 1_000_000m,
                     Step = 1m, MinTo = 1m, MaxToPerTx = 100m, DailyCapTo = 0m, LifetimeCapTo = 0m, MinLevel = 0,
                 },
+                // LP → chips: what Loyalty Points are FOR (docs/VIP_SPEC.md §3), replacing the old fixed LP store.
+                // Ships DISABLED because this rate is the one that decides whether LP is a comp or a loop: at 1 LP per
+                // chip against Loyalty:LpChipsPerPoint = 100 it returns 1% of everything wagered — the "~1% comp" the
+                // design always meant. Set the real number in the admin (which shows the implied %) and switch it on.
+                new ExchangePairDef
+                {
+                    Key = "lp_chips", Enabled = false, SortOrder = 20,
+                    Title = "Loyalty Points → Chips", Description = "Spend the points you earn by playing.",
+                    FromCurrency = "Lp", ToCurrency = "Chips", FromPerUnit = 1m,
+                    Step = 1_000m, MinTo = 1_000m, MaxToPerTx = 0m, DailyCapTo = 0m, LifetimeCapTo = 0m, MinLevel = 0,
+                },
             },
         };
 

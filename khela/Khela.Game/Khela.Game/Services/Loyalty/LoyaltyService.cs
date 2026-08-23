@@ -35,11 +35,16 @@ namespace Khela.Game.Services.Loyalty
     }
 
     /// <summary>
-    /// Loyalty Points (Progression Spec §4) — the redeemable comp currency. LP accrues as a small fraction of clean
-    /// wager × the VIP benefit multiplier (never from winnings), into <see cref="UserProfile.LoyaltyPoints"/>; it is
-    /// SPENT in a server-defined store, all redemptions flowing through the idempotent <see cref="IWalletService"/> so
-    /// the store can't double-spend. Redeemed chips land in the EARNED bucket (a reward of play, kept clean). Runs off
-    /// the settle roll-up; a failure never affects balances.
+    /// Loyalty Points (docs/VIP_SPEC.md §3) — the redeemable comp currency. LP accrues as a small fraction of clean wager
+    /// × the VIP benefit multiplier (never from winnings) and is SPENT on chips; every movement rides the idempotent
+    /// <see cref="IWalletService"/> so nothing can double-spend. Redeemed chips land in the EARNED bucket (a reward of
+    /// play, kept clean). Runs off the settle roll-up; a failure never affects balances.
+    ///
+    /// The BALANCE lives in the wallet (<see cref="CurrencyType.Lp"/>), not on the profile: LP is a currency now, so packs,
+    /// rewards, chests and the Exchange move it through the same ledger as Chips — with `BalanceBefore/After`, correlation
+    /// ids and `FOR UPDATE` — instead of each source needing its own code against a profile column.
+    /// <see cref="UserProfile.LoyaltyPoints"/> is retired (kept at 0 by the one-shot migration); only
+    /// <see cref="UserProfile.LifetimeLoyaltyPoints"/> survives, as the never-falling **LP Score**.
     /// </summary>
     public sealed class LoyaltyService : ILoyaltyService
     {
@@ -72,21 +77,15 @@ namespace Khela.Game.Services.Loyalty
                 return 0;
 
             var cfg = await EffectiveCfgAsync();
-            for (int attempt = 1; ; attempt++)
-            {
-                var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-                if (profile == null) return 0;
-                // The EFFECTIVE multiplier (admin ladders included) — LP is granted here, so it must not read the built-in bonuses.
-                var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
-                var lp = LoyaltyMath.LpFromWager(cleanWager, mult, cfg);
-                if (lp <= 0) return 0;
+            var profile = await _db.UserProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == userId);
+            if (profile == null) return 0;
+            // The EFFECTIVE multiplier (admin ladders included) — LP is granted here, so it must not read the built-in bonuses.
+            var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
+            var lp = LoyaltyMath.LpFromWager(cleanWager, mult, cfg);
+            if (lp <= 0) return 0;
 
-                profile.LoyaltyPoints += lp;
-                profile.LifetimeLoyaltyPoints += lp;
-                profile.UpdatedAt = DateTime.UtcNow;
-                try { await _db.SaveChangesAsync(); return lp; }
-                catch (DbUpdateConcurrencyException) when (attempt < 4) { _db.ChangeTracker.Clear(); continue; }
-            }
+            await CreditAsync(userId, lp, Key("lpw", roundId, userId), "Loyalty: play");
+            return lp;
         }
 
         public async Task<long> RecordPurchaseAsync(Guid userId, decimal usdSpent, string idemKey)
@@ -97,20 +96,14 @@ namespace Khela.Game.Services.Loyalty
             if (!await _redis.GetDatabase().StringSetAsync($"loypur:{idemKey}", "1", TimeSpan.FromDays(60), When.NotExists))
                 return 0;
 
-            for (int attempt = 1; ; attempt++)
-            {
-                var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
-                if (profile == null) return 0;
-                var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
-                var lp = LoyaltyMath.LpFromPurchase(usdSpent, mult, cfg);
-                if (lp <= 0) return 0;
+            var profile = await _db.UserProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == userId);
+            if (profile == null) return 0;
+            var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
+            var lp = LoyaltyMath.LpFromPurchase(usdSpent, mult, cfg);
+            if (lp <= 0) return 0;
 
-                profile.LoyaltyPoints += lp;
-                profile.LifetimeLoyaltyPoints += lp;
-                profile.UpdatedAt = DateTime.UtcNow;
-                try { await _db.SaveChangesAsync(); return lp; }
-                catch (DbUpdateConcurrencyException) when (attempt < 4) { _db.ChangeTracker.Clear(); continue; }
-            }
+            await CreditAsync(userId, lp, Key("lpp", idemKey, userId), "Loyalty: purchase");
+            return lp;
         }
 
         public async Task<LoyaltyStoreDto> GetStoreAsync(Guid userId)
@@ -118,6 +111,7 @@ namespace Khela.Game.Services.Loyalty
             var profile = await _db.UserProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == userId);
             if (profile == null) return null;
             var cfg = await EffectiveCfgAsync();
+            var points = await BalanceAsync(userId);
 
             var items = new List<LoyaltyStoreItemDto>();
             foreach (var i in cfg.Catalog)
@@ -125,14 +119,14 @@ namespace Khela.Game.Services.Loyalty
                 {
                     Id = i.Id, Name = i.Name, Kind = i.Kind, CostLp = i.CostLp, ChipAmount = i.ChipAmount,
                     MinVipTier = i.MinVipTier,
-                    Affordable = profile.LoyaltyPoints >= i.CostLp,
+                    Affordable = points >= i.CostLp,
                     Unlocked = (int)profile.VipTier >= i.MinVipTier,
                 });
 
             return new LoyaltyStoreDto
             {
-                Points = profile.LoyaltyPoints,
-                LifetimePoints = profile.LifetimeLoyaltyPoints,
+                Points = points,
+                LifetimePoints = profile.LifetimeLoyaltyPoints,   // the LP Score — never falls
                 Items = items,
             };
         }
@@ -177,27 +171,39 @@ namespace Khela.Game.Services.Loyalty
                     await _db.SaveChangesAsync();
                 }
 
-                // STEP 1 — debit LP atomically (balance-guarded; the flag stops a retry from double-debiting).
+                // STEP 1 — debit LP from the wallet (never-negative under its own row lock, idempotent on the correlation
+                // id, so the flag below is belt-and-braces rather than the guard it used to be).
                 if (!red.LpDeducted)
                 {
-                    var rows = await _db.UserProfiles
-                        .Where(p => p.UserId == userId && p.LoyaltyPoints >= red.CostLp)
-                        .ExecuteUpdateAsync(s => s.SetProperty(p => p.LoyaltyPoints, p => p.LoyaltyPoints - red.CostLp));
-                    if (rows == 0)
+                    // We own the transaction so the debit joins it: WalletService leaves ITS transaction open when it
+                    // throws, and the "Failed" status written afterwards would then be rolled back with it — the row would
+                    // say Pending forever while the player was told the redeem failed.
+                    await using var tx = await _db.Database.BeginTransactionAsync();
+                    try
                     {
-                        red.Status = "Failed";
+                        await _wallet.DebitAsync(userId.ToString(), CurrencyType.Lp, red.CostLp, TransactionType.Purchase,
+                            Key("lpr", idemKey, userId), new WalletContext { Description = $"Loyalty redeem: {item.Name}" });
+                        red.LpDeducted = true;
                         await _db.SaveChangesAsync();
+                        await tx.CommitAsync();
+                    }
+                    catch (InsufficientFundsException)
+                    {
+                        await tx.RollbackAsync();
+                        red.Status = "Failed";
+                        await _db.SaveChangesAsync();   // outside the rolled-back transaction, so it sticks
                         return Fail(itemId, "Insufficient Loyalty Points.");
                     }
-                    red.LpDeducted = true;
-                    await _db.SaveChangesAsync();
                 }
 
                 // STEP 2 — credit the chips (idempotent on the wallet CorrelationId; lands in the EARNED bucket).
                 if (!red.ChipsCredited)
                 {
+                    // Through the same helper as the debit: a long client idempotency key would otherwise overflow the
+                    // ledger's 64-char CorrelationId AFTER the LP was already taken — charged, never paid. (Pre-existing;
+                    // it only became reachable once the debit stopped being the thing that failed first.)
                     await _wallet.CreditAsync(userId.ToString(), CurrencyType.Chips, red.ChipAmount, TransactionType.Bonus,
-                        $"loy:{idemKey}", new WalletContext { Description = $"Loyalty redeem: {item.Name}" });
+                        Key("loy", idemKey, userId), new WalletContext { Description = $"Loyalty redeem: {item.Name}" });
                     red.ChipsCredited = true;
                     await _db.SaveChangesAsync();
                 }
@@ -222,10 +228,35 @@ namespace Khela.Game.Services.Loyalty
         // ---- helpers ----
 
         private async Task<RedeemResultDto> OkAsync(Guid userId, string itemId, decimal chipAmount)
+            => new RedeemResultDto { Ok = true, ItemId = itemId, Points = await BalanceAsync(userId), ChipAmount = chipAmount };
+
+        /// <summary>The player's spendable LP — the wallet balance, floored to a whole point.</summary>
+        public async Task<long> BalanceAsync(Guid userId)
+            => (long)Math.Floor(await _wallet.GetBalanceAsync(userId.ToString(), CurrencyType.Lp));
+
+        /// <summary>
+        /// Credit LP and keep the LP SCORE in step. The score is a cache of "LP ever credited" — the ledger is the truth —
+        /// so it is bumped with an atomic UPDATE rather than a read-modify-write, which is what the old accrual loop's
+        /// concurrency retries were for.
+        /// </summary>
+        private async Task CreditAsync(Guid userId, long lp, string correlationId, string description)
         {
-            var balance = await _db.UserProfiles.AsNoTracking().Where(p => p.UserId == userId)
-                .Select(p => p.LoyaltyPoints).FirstOrDefaultAsync();
-            return new RedeemResultDto { Ok = true, ItemId = itemId, Points = balance, ChipAmount = chipAmount };
+            await _wallet.CreditAsync(userId.ToString(), CurrencyType.Lp, lp, TransactionType.Bonus, correlationId,
+                new WalletContext { Description = description });
+            await _db.UserProfiles.Where(p => p.UserId == userId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.LifetimeLoyaltyPoints, p => p.LifetimeLoyaltyPoints + lp)
+                    .SetProperty(p => p.UpdatedAt, DateTime.UtcNow));
+        }
+
+        /// <summary>
+        /// A wallet correlation id that fits the ledger's 64-char budget whatever the source id looks like (a round id and
+        /// a user id together are already over it). Deterministic, so a retry keys the same movement.
+        /// </summary>
+        public static string Key(string prefix, string sourceId, Guid userId)
+        {
+            var plain = $"{prefix}:{sourceId}:{userId:N}";
+            return plain.Length <= 64 ? plain : $"{prefix}:" + Store.StoreMath.Sha256Hex($"{sourceId}:{userId:N}").Substring(0, 48);
         }
 
         private static RedeemResultDto Fail(string itemId, string error)

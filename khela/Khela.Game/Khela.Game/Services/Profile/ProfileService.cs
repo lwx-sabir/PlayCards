@@ -1,3 +1,4 @@
+using System;
 using Khela.Common.Profiles;
 using Khela.Common.Social;
 using Khela.Game.Database;
@@ -73,7 +74,9 @@ namespace Khela.Game.Services.Profile
                 Level = p.Level,
                 Experience = p.LifetimeExperience,   // profile "total XP" = lifetime; the into-level bar comes from ProgressionDto
                 VipTier = (int)p.VipTier,
-                LoyaltyPoints = p.LoyaltyPoints,
+                // LP lives in the wallet now (docs/VIP_SPEC.md §3); the profile column is retired and stays 0.
+                LoyaltyPoints = (long)Math.Floor(await _db.PlayerWallets.AsNoTracking()
+                    .Where(w => w.UserId == userId && w.Currency == CurrencyType.Lp).Select(w => (decimal?)w.Balance).FirstOrDefaultAsync() ?? 0m),
                 Bio = p.Bio,
                 StatusMessage = p.StatusMessage,
                 CreatedAt = p.CreatedAt,
