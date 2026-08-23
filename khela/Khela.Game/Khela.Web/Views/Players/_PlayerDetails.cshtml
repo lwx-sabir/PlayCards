@@ -57,8 +57,9 @@
         <h4>VIP</h4>
         <div class="pd-kv"><span>Tier</span><b>@TierName(Model.VipTier)</b></div>
         <div class="pd-kv"><span>VIP level</span><b>@(Model.VipLevel > 0 ? $"VIP {Model.VipLevel}" : "—")</b></div>
-        <div class="pd-kv"><span>Level progress</span><b>@Int(Model.VipLevelProgress)</b></div>
-        <div class="pd-kv"><span>Maintained through</span><b>@Dt(Model.VipMaintainedThrough)</b></div>
+        <div class="pd-kv"><span>VIP-P in window</span><b>@Int(Model.VipPointsWindow)</b></div>
+        <div class="pd-kv"><span>Held level</span><b>@(Model.VipHeldLevel > 0 ? $"VIP {Model.VipHeldLevel}" : "—")</b></div>
+        <div class="pd-kv"><span>Held through</span><b>@Dt(Model.VipMaintainedThrough)</b></div>
         <div class="pd-kv"><span>Lifetime status pts</span><b>@Int(Model.LifetimeStatusPoints)</b></div>
         <div class="pd-kv"><span>Badge</span><b>@(Model.HideVipBadge ? "hidden by player" : (Model.BadgeLitUntil.HasValue ? "lit until " + Dt(Model.BadgeLitUntil) : "—"))</b></div>
     </section>

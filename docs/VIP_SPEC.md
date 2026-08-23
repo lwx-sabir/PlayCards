@@ -1,6 +1,6 @@
 # VIP redesign — three points, three jobs (Reza, 2026-08-23)
 
-*Status: BUILDING — steps 1-3 of §7 are in (currencies + channels; LP on the wallet; seasons + SP on the wallet). Steps 4-5 remain. Reviewed by three independent critics (economy/abuse, hard rules, feasibility) on 2026-08-23;
+*Status: BUILDING — steps 1-4 of §7 are in (currencies + channels; LP on the wallet; seasons + SP on the wallet; VIP-P + the level it drives). Step 5 (the rebate) remains and needs the lawyer nod. Reviewed by three independent critics (economy/abuse, hard rules, feasibility) on 2026-08-23;
 six findings folded in — see §9. Supersedes PROGRESSION_SPEC §3 (VIP/Status), §4 (Loyalty) **and the equal-house-edge clause
 of §1.3** (the win bonus + rebate is a post-settle promotion — §4); §2 (XP/Level) is untouched. Every number below is a
 dev-time default — all of them land on admin editors.*
@@ -134,7 +134,14 @@ Chips → VIP-P. So there are **three explicit allowlists** (one check per chann
 1. Currencies + the three allowlists + wallet + DTOs + HUD binders (no behaviour change yet).
 2. LP → wallet (MOVE migration, single cut-over) + the Exchange pair; retire the LP store.
 3. Seasons + SP → wallet + tier table + season roll.
-4. VIP-P + level from window / held snapshot + VIP store products + Starter Pack.
+4. VIP-P + level from window / held snapshot + VIP store products + Starter Pack. **BUILT.** The level is
+   `max(windowBand, live held level)` off the VIP-P ledger, cached on the profile with an exact expiry (the oldest
+   in-window credit + the window), refreshed on every VIP-P credit and lazily on read. The SP→VIP grind, the monthly
+   −1 decay and `Vip:SpPerUsd` are gone: play cannot move a VIP level at all. Boosters re-point at the hold (Time
+   extends it, capped at 2× the level's hold ahead; LevelUp holds one rung above the window band). The store gained
+   five VIP-P packs and the Starter Pack carries exactly VIP 1. The admin level table has all six columns plus the
+   expected-return-per-1M column — which promptly caught the first draft of the win/rebate defaults being +EV above
+   VIP 3, so the shipped ladder is 1.5→6% win / 0.75→3% rebate, well under the ~0.5% edge.
 5. Rebate accrual (clean, per local day, level-stamped) + claim + `VipRebate` + popup state. **Needs the lawyer nod.**
 
 ## 8. Open (small)

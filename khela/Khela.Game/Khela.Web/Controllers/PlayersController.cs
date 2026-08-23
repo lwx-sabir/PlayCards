@@ -157,7 +157,9 @@ namespace Khela.Web.Controllers
                 .Where(p => p.UserId == userId)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(p => p.VipLevel, vipLevel)
-                    .SetProperty(p => p.VipLevelProgress, 0L)
+                    // A hand-granted level is a HELD level: the player bought no VIP-P, so the window band is still
+                    // whatever they paid for and the grant has to stand on the hold, or the next status read undoes it.
+                    .SetProperty(p => p.VipHeldLevel, vipLevel)
                     .SetProperty(p => p.VipLevelMaintainedThrough, maintained)
                     .SetProperty(p => p.VipTier, (VipTier)vipTier)
                     .SetProperty(p => p.BadgeLitUntil, now.AddDays(30))   // light the tier badge so the grant is visible immediately
@@ -356,7 +358,8 @@ namespace Khela.Web.Controllers
 
                 VipTier = p.VipTier,
                 VipLevel = p.VipLevel,
-                VipLevelProgress = p.VipLevelProgress,
+                VipHeldLevel = p.VipHeldLevel,
+                VipPointsWindow = p.VipWindowPoints,
                 VipMaintainedThrough = p.VipLevelMaintainedThrough,
                 LifetimeStatusPoints = p.LifetimeStatusPoints,
                 BadgeLitUntil = p.BadgeLitUntil,
@@ -469,7 +472,8 @@ namespace Khela.Web.Controllers
 
         public VipTier VipTier { get; set; }
         public int VipLevel { get; set; }
-        public long VipLevelProgress { get; set; }
+        public int VipHeldLevel { get; set; }
+        public long VipPointsWindow { get; set; }
         public DateTime? VipMaintainedThrough { get; set; }
         public long LifetimeStatusPoints { get; set; }
         public DateTime? BadgeLitUntil { get; set; }

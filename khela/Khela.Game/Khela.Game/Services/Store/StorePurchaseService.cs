@@ -548,7 +548,7 @@ namespace Khela.Game.Services.Store
 
             // 5. spend hooks — best-effort, idempotent, skipped for test purchases unless configured (overlay-aware switch)
             if (!row.IsTest || await StoreSwitches.BoolAsync(_redis, _config, "Store:TestPurchasesFeedSpend", o.TestPurchasesFeedSpend))
-                await HooksAsync(row, ct);
+                await HooksAsync(row, fulfilment, ct);
 
             _logger.LogInformation("StorePurchaseGranted {UserId} {ProductId} {Platform} usd {Usd} test {IsTest} purchase {Id}",
                 row.UserId, row.ProductId, row.Platform, row.UsdReference, row.IsTest, row.Id);
@@ -556,11 +556,21 @@ namespace Khela.Game.Services.Store
             return await ResultAsync(row, RedeemStatus.Granted, fulfilment, ct);
         }
 
-        private async Task HooksAsync(StorePurchase row, CancellationToken ct)
+        private async Task HooksAsync(StorePurchase row, StoreFulfilment fulfilment, CancellationToken ct)
         {
             var o = _options.CurrentValue;
             var root = StoreMath.IdemRoot(row.Id);
-            try { if (row.UsdReference > 0m) await _vip.RecordPurchaseAsync(row.UserId, row.UsdReference, root); }
+            try
+            {
+                // VIP-P is what buys a VIP level (docs/VIP_SPEC.md §4) — not the dollars, so this reads the lines that
+                // were actually PAID rather than UsdReference. A product with no VipPoints line moves no VIP level.
+                var vipPoints = 0m;
+                foreach (var l in fulfilment?.Lines ?? new List<StoreFulfilledLine>())
+                    if (l != null && l.Kind == (int)RewardKind.Currency
+                        && string.Equals(l.Id, nameof(CurrencyType.VipPoints), StringComparison.OrdinalIgnoreCase))
+                        vipPoints += l.Amount;
+                if (vipPoints > 0m) await _vip.RecordVipPointsAsync(row.UserId, vipPoints, root);
+            }
             catch (Exception ex) { _logger.LogWarning(ex, "VIP purchase hook failed for {Id}", row.Id); }
             try { if (row.UsdReference > 0m) await _loyalty.RecordPurchaseAsync(row.UserId, row.UsdReference, "iaplp:" + row.Id.ToString("N")); }
             catch (Exception ex) { _logger.LogWarning(ex, "Loyalty purchase hook failed for {Id}", row.Id); }

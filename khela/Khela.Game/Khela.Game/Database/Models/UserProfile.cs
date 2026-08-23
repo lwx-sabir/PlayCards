@@ -90,10 +90,13 @@ namespace Khela.Game.Database.Models
         public DateTime? BadgeLitUntil { get; set; }                    // badge shown lit until this UTC time (refreshed within BADGE_WINDOW_DAYS); COSMETIC — never affects tier
         [Required] public bool HideVipBadge { get; set; } = false;      // player opt-out: hide the VIP badge from others
 
-        // ---- VIP Level (Progression Spec §3.6) — the premium ladder (1..10) on TOP of the tier ----
-        [Required] public int VipLevel { get; set; } = 0;               // 0 = none; 1..10 the premium ladder (the big comp multiplier)
-        [Required] public long VipLevelProgress { get; set; } = 0;      // into-next-level grind progress (SP × tier factor)
-        public DateTime? VipLevelMaintainedThrough { get; set; }        // level holds until this UTC time; else the monthly review drops it 1 (floor 0)
+        // ---- VIP Level (docs/VIP_SPEC.md §4) — the MONEY ladder on top of the tier; VIP-P only, never play ----
+        [Required] public int VipLevel { get; set; } = 0;               // 0 = none; the level the player stands at (window band or a live hold)
+        [Required] public long VipLevelProgress { get; set; } = 0;      // RETIRED with the SP grind (docs/VIP_SPEC.md §6); kept only so no historical row is rewritten
+        public DateTime? VipLevelMaintainedThrough { get; set; }        // HeldThrough: the held level stands until this UTC time; after it, the window band alone decides
+        [Required] public int VipHeldLevel { get; set; } = 0;           // the level a purchase SNAPSHOTTED; only counts while VipLevelMaintainedThrough is in the future
+        [Required] public long VipWindowPoints { get; set; } = 0;       // cached sum of VIP-P credited inside Vip:WindowDays (the band basis)
+        public DateTime? VipWindowValidUntil { get; set; }              // when that cache expires = the oldest in-window credit ages out; null = never computed
 
         // ---- Lifetime CROSS-GAME aggregates (General board + home screen) ----
         [Required] public long GamesPlayed { get; set; } = 0;

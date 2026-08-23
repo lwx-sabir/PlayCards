@@ -166,11 +166,13 @@ namespace PlayCard.Game.Net
         public string NextTierName { get; set; }
         public long SpToNextTier { get; set; }
         public decimal SpendToNextTierUsd { get; set; }
-        // VIP Level (§3.6) — premium ladder; BenefitMultiplier already includes its bonus.
+        // VIP Level (docs/VIP_SPEC.md §4) — the MONEY ladder, bought with VIP-P; BenefitMultiplier already includes its bonus.
         public int VipLevel { get; set; }
-        public long VipLevelProgress { get; set; }
-        public long VipLevelProgressToNext { get; set; }
-        public DateTime? VipLevelMaintainedThrough { get; set; }
+        public long VipPointsWindow { get; set; }        // VIP-P bought inside the trailing window (the band basis)
+        public long VipPointsToNextLevel { get; set; }   // more VIP-P for the next level (0 at the top)
+        public int VipWindowDays { get; set; }           // how long a purchase counts toward the level
+        public int VipHeldLevel { get; set; }            // the level a purchase snapshotted (0 = none held)
+        public DateTime? VipLevelMaintainedThrough { get; set; }   // the held level stands until this
     }
 
     /// <summary>Client mirror of the server's LoyaltyStoreItemDto (one store item).</summary>

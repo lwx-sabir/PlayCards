@@ -21,11 +21,14 @@ namespace Khela.Common.Progression
         public long SpToNextTier { get; set; }          // remaining SP to the next band (0 at top)
         public decimal SpendToNextTierUsd { get; set; } // remaining trailing spend to the next band (0 if none / n/a)
 
-        // VIP Level (§3.6) — the premium ladder on top of the tier. BenefitMultiplier above already includes its bonus.
-        public int VipLevel { get; set; }                       // 0 = none; 1..10
-        public long VipLevelProgress { get; set; }              // into-next-level grind progress
-        public long VipLevelProgressToNext { get; set; }        // remaining grind to the next VIP level (0 at VIP 10)
-        public System.DateTime? VipLevelMaintainedThrough { get; set; }   // level holds until this; else the monthly review drops 1
+        // VIP Level (docs/VIP_SPEC.md §4) — the MONEY ladder on top of the tier, bought with VIP-P and never played for.
+        // BenefitMultiplier above already includes its comp bonus.
+        public int VipLevel { get; set; }                       // 0 = none; the level the player stands at right now
+        public long VipPointsWindow { get; set; }               // VIP-P credited inside the trailing window (the band basis)
+        public long VipPointsToNextLevel { get; set; }          // more VIP-P needed for the next level (0 at the top)
+        public int VipWindowDays { get; set; }                  // how long a purchase counts toward the level
+        public int VipHeldLevel { get; set; }                   // the level a purchase snapshotted (0 = none held)
+        public System.DateTime? VipLevelMaintainedThrough { get; set; }   // the held level stands until this; after it, the window alone decides
     }
 
     /// <summary>Result of POST /api/vip/maintain (spend Loyalty Points to hold the current VIP level).</summary>

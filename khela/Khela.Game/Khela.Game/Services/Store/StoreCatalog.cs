@@ -235,7 +235,9 @@ namespace Khela.Game.Services.Store
                 Id = "starter_pack", Enabled = false, ProductType = StoreProductType.Consumable, Section = "packs", SortOrder = 10,
                 Title = "Starter Pack", Description = "One-time welcome offer", Badge = "ONE TIME", BonusPercent = 150,
                 StoreIds = BothStores("starter_pack"), UsdReference = 2.99m,
-                Lines = { RewardGrant.Currency("Chips", 25_000_000m), RewardGrant.Currency("Kash", 50m) },
+                // 300 VIP-P is EXACTLY the VIP 1 bar (VipConfig.VipPointsRequired[1]) — the starter pack is the door
+                // into VIP by design (docs/VIP_SPEC.md §4). Retune one and retune the other.
+                Lines = { RewardGrant.Currency("Chips", 25_000_000m), RewardGrant.Currency("Kash", 50m), RewardGrant.Currency("VipPoints", 300m) },
                 Availability = new StoreAvailabilityDef { MaxPerUser = 1 },
             });
 
@@ -254,17 +256,27 @@ namespace Khela.Game.Services.Store
                 UsdReference = 4.99m, Effect = new StoreEffectDef { Type = EffectGoldenPass, Arg = "monthly" },
             });
 
-            // VIP boosters (Progression Spec §3.6).
+            // VIP boosters (docs/VIP_SPEC.md §4) — TIME extends the hold on the level you already stand at; LEVEL UP
+            // holds one rung above your window band for that rung's hold. Neither sells VIP-P: that is the packs' job.
             cfg.Products.Add(new StoreProductDef
             {
-                Id = "vip_booster_time", Section = "vip", SortOrder = 10, Title = "VIP Booster: Time", Description = "Keep your VIP level another month",
+                Id = "vip_booster_time", Section = "vip", SortOrder = 100, Title = "VIP Booster: Time", Description = "Keep your VIP level another month",
                 StoreIds = BothStores("vip_booster_time"), UsdReference = 1.99m, Effect = new StoreEffectDef { Type = EffectVipBooster, Arg = "Time" },
             });
             cfg.Products.Add(new StoreProductDef
             {
-                Id = "vip_booster_level", Section = "vip", SortOrder = 20, Title = "VIP Booster: Level Up", Description = "+1 VIP level",
+                Id = "vip_booster_level", Section = "vip", SortOrder = 110, Title = "VIP Booster: Level Up", Description = "+1 VIP level for a while",
                 StoreIds = BothStores("vip_booster_level"), UsdReference = 9.99m, Effect = new StoreEffectDef { Type = EffectVipBooster, Arg = "LevelUp" },
             });
+
+            // VIP-P packs — the ONLY way VIP-P enters the game (docs/VIP_SPEC.md §1: VipPoints is Sellable and nothing
+            // else — never granted by a chest, never exchanged). ~100 VIP-P per $1, rising slightly with the tier so the
+            // ladder is worth climbing; each carries chips too, so the money still buys something playable.
+            cfg.Products.Add(VipPoints("vip_p_01", 10,    300m,  5_000_000m,  2.99m, 0,  "",           "VIP Pass"));
+            cfg.Products.Add(VipPoints("vip_p_02", 20,  1_100m, 20_000_000m,  9.99m, 10, "",           "VIP Silver"));
+            cfg.Products.Add(VipPoints("vip_p_03", 30,  2_400m, 45_000_000m, 19.99m, 20, "POPULAR",    "VIP Gold"));
+            cfg.Products.Add(VipPoints("vip_p_04", 40,  6_500m,120_000_000m, 49.99m, 30, "",           "VIP Platinum"));
+            cfg.Products.Add(VipPoints("vip_p_05", 50, 14_000m,260_000_000m, 99.99m, 40, "BEST VALUE", "VIP Diamond"));
 
             return cfg;
         }
@@ -279,6 +291,13 @@ namespace Khela.Game.Services.Store
         {
             Id = id, Section = "kash", SortOrder = sort, Title = title, Badge = badge, BonusPercent = bonus,
             StoreIds = BothStores(id), UsdReference = usd, Lines = { RewardGrant.Currency("Kash", kash) },
+        };
+
+        private static StoreProductDef VipPoints(string id, int sort, decimal points, decimal chips, decimal usd, int bonus, string badge, string title) => new StoreProductDef
+        {
+            Id = id, Section = "vip", SortOrder = sort, Title = title, Badge = badge, BonusPercent = bonus,
+            Description = $"{points:N0} VIP Points", StoreIds = BothStores(id), UsdReference = usd,
+            Lines = { RewardGrant.Currency("VipPoints", points), RewardGrant.Currency("Chips", chips) },
         };
 
         private static void AddPiggyTier(StoreCatalogConfig cfg, int tier, int sort, decimal full, decimal dbl, decimal early)

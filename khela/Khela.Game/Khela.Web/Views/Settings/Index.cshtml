@@ -291,9 +291,8 @@
             takes it away until the roll, so the band only ever rises and there is no mid-season demotion.
             <strong>Resets to</strong> is where the tier lands at the season roll (SP is set to that tier's bar); it may only go
             DOWN. Spend floors ship at <strong>$0</strong> — money buys VIP-P now, not status — but the column stays if you ever
-            want a paid gate. <strong>Comp %</strong> is the tier's slice of the
-            benefit multiplier; <strong>grind ×</strong> is how fast the same SP builds VIP&nbsp;Levels. Tier <em>None</em> must stay at
-            <strong>×0</strong>, or players below the VIP entry level start grinding VIP Levels.
+            want a paid gate. <strong>Comp %</strong> is the tier's slice of the benefit multiplier. This ladder cannot reach a
+            VIP&nbsp;level any more — play builds status, money builds VIP.
         </p>
         <form asp-controller="Settings" asp-action="SaveVipTiers" method="post">
             <table class="data-table" id="vipTierTable">
@@ -303,7 +302,6 @@
                         <th style="text-align:left">SP required</th>
                         <th style="text-align:left">Spend floor (USD)</th>
                         <th style="text-align:left">Comp %</th>
-                        <th style="text-align:left">Grind ×</th>
                         <th style="text-align:left">Resets to</th>
                     </tr>
                 </thead>
@@ -317,7 +315,6 @@
                             <td><input class="input" type="number" min="0" step="1000" name="tierSp" value="@t.SpThreshold" style="width:170px" /></td>
                             <td><input class="input" type="number" min="0" step="1" name="tierFloor" value="@t.SpendFloorUsd" style="width:140px" /></td>
                             <td><input class="input" type="number" min="0" step="1" name="tierBonus" value="@(t.BonusPct * 100m)" style="width:110px" /></td>
-                            <td><input class="input" type="number" min="0" step="0.1" name="tierFactor" value="@t.Factor" style="width:110px" /></td>
                             <td>
                                 <select class="input" name="tierReset" style="width:150px">
                                     @for (int r = 0; r <= i; r++)
@@ -341,30 +338,60 @@
             <span class="badge badge-live">Live · next accrual</span>
         </div>
         <p class="page-sub">
-            The PREMIUM ladder. <strong>Progress needed</strong> is what it costs to reach that level from the one below, and it is
-            CONSUMED on level-up (the remainder carries forward). Progress = <code>SP × the tier's grind ×</code>, and SP from play is
-            capped daily — so the days column is the fastest anyone can do it at that tier, not an average.
+            The MONEY ladder. <strong>VIP-P needed</strong> is what the player must have BOUGHT inside the VIP-P window to stand at
+            that level — it is not consumed and play cannot earn it. <strong>Hold</strong> is how long the purchase that reached the
+            level keeps it after the window drains. <strong>Comp %</strong> joins the benefit multiplier; <strong>win %</strong> and
+            <strong>rebate %</strong> pay back a share of the player's closed day, capped by <strong>daily cap</strong>
+            (<strong>0 = that level pays nothing</strong>).
+        </p>
+        <p class="page-sub">
+            <strong>Expected return</strong> is what win % + rebate % are modelled to hand back per 1M wagered, against a house edge of
+            <strong>@((Khela.Game.Services.Vip.VipMath.ModelHouseEdge * 100m).ToString("0.##"))%</strong>
+            (= @((Khela.Game.Services.Vip.VipMath.ModelHouseEdge * 1_000_000m).ToString("N0")) chips per 1M). A row shown in red returns
+            MORE than the house earns — that level pays players to play. The model assumes @Khela.Game.Services.Vip.VipMath.ModelHandsPerDay
+            hands a day at flat bets and ignores the caps, so it is an upper bound, not a promise.
         </p>
         <form asp-controller="Settings" asp-action="SaveVipLevels" method="post">
             <table class="data-table" id="vipLevelTable">
                 <thead>
                     <tr>
                         <th style="text-align:left">Level</th>
-                        <th style="text-align:left">Progress needed</th>
+                        <th style="text-align:left">VIP-P needed</th>
                         <th style="text-align:left">Comp %</th>
+                        <th style="text-align:left">Win %</th>
+                        <th style="text-align:left">Rebate %</th>
+                        <th style="text-align:left">Daily cap (chips)</th>
+                        <th style="text-align:left">Hold (days)</th>
                         <th style="text-align:left">Maintain (LP / period)</th>
+                        <th style="text-align:left">Expected return / 1M</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
+                    @{
+                        var vipEdge = Khela.Game.Services.Vip.VipMath.ModelHouseEdge;
+                        var vipLadder = new Khela.Game.Services.Vip.VipConfig
+                        {
+                            VipWinBonusPct = Model.VipLevels.Select(x => x.WinBonusPct ?? 0m).Prepend(0m).ToArray(),
+                            VipLossRebatePct = Model.VipLevels.Select(x => x.LossRebatePct ?? 0m).Prepend(0m).ToArray(),
+                            VipDailyCapChips = Model.VipLevels.Select(x => x.DailyCapChips ?? 0m).Prepend(0m).ToArray(),
+                        };
+                    }
                     @for (int i = 0; i < Model.VipLevels.Count; i++)
                     {
                         var l = Model.VipLevels[i];
+                        var ret = Khela.Game.Services.Vip.VipMath.ExpectedReturnOfHandle(i + 1, vipLadder, vipEdge);
+                        var hot = ret > vipEdge;
                         <tr>
                             <td><strong>VIP @(i + 1)</strong></td>
-                            <td><input class="input" type="number" min="0" step="100000" name="lvlThreshold" value="@l.Threshold" style="width:190px" /></td>
-                            <td><input class="input" type="number" min="0" step="1" name="lvlBonus" value="@(l.BonusPct * 100m)" style="width:110px" /></td>
-                            <td><input class="input" type="number" min="0" step="100" name="lvlMaintain" value="@l.MaintainLp" style="width:170px" /></td>
+                            <td><input class="input" type="number" min="0" step="100" name="lvlPoints" value="@(l.PointsRequired ?? 0L)" style="width:160px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="lvlBonus" value="@(l.BonusPct * 100m)" style="width:90px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="lvlWin" value="@((l.WinBonusPct ?? 0m) * 100m)" style="width:90px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="lvlRebate" value="@((l.LossRebatePct ?? 0m) * 100m)" style="width:90px" /></td>
+                            <td><input class="input" type="number" min="0" step="100000" name="lvlCap" value="@(l.DailyCapChips ?? 0m)" style="width:170px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="lvlHold" value="@(l.HoldDays ?? 0)" style="width:90px" /></td>
+                            <td><input class="input" type="number" min="0" step="100" name="lvlMaintain" value="@l.MaintainLp" style="width:150px" /></td>
+                            <td class="vip-er" style="@(hot ? "color:#e05a5a; font-weight:600" : "")">@((ret * 1_000_000m).ToString("N0")) chips</td>
                             <td><button type="button" class="btn" onclick="this.closest('tr').remove()">Remove</button></td>
                         </tr>
                     }
@@ -698,6 +725,8 @@
                     row.querySelectorAll('input').forEach(function (i) { i.value = ''; });
                     var comp = row.querySelector('.lp-comp');   // a cloned row must not inherit the last row's percentage
                     if (comp) { comp.textContent = '—'; comp.style.color = 'var(--muted,#9aa4b2)'; }
+                    var er = row.querySelector('.vip-er');      // ...nor its expected-return estimate, which is server-computed
+                    if (er) { er.textContent = '— (save to compute)'; er.style.color = 'var(--muted,#9aa4b2)'; er.style.fontWeight = '400'; }
                     body.appendChild(row);
                     if (afterMutate) afterMutate();
                 });

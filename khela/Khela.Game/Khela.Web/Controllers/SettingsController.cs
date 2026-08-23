@@ -74,12 +74,12 @@ namespace Khela.Web.Controllers
         private static readonly SettingDef[] VipLoyaltyDefs =
         {
             new("Vip:SpChipsPerPoint", "Chips wagered per 1 SP", "Status Points per clean chip wagered. Default 50. Lower = faster VIP climb.", "0.5", Min: 1),
-            new("Vip:SpPerUsd", "SP per $1 spent", "Status Points per real dollar of IAP. Default 100. Dormant until the store takes money.", "1", Min: 0),
+            new("Vip:WindowDays", "VIP-P window (days)", "How long a purchase's VIP Points count toward the VIP level. Stop buying and the window empties — that IS the decay. Default 90.", "1", Min: 1),
             new("Vip:SpFromWagerDailyCap", "Daily SP cap from wagering", "Max SP a player can earn from play per UTC day — the floor on 'slowly'. Default 100,000. 0 = uncapped.", "1", Min: 0),
             new("Vip:VipEntryLevel", "VIP entry level", "Player level at which the VIP ladder starts counting. Default 20.", "1", Min: 1),
             new("Vip:TierWindowMonths", "Tier window (months)", "Rolling window the tier review looks back over. Default 12.", "1", Min: 1),
             new("Vip:DemoteHysteresis", "Demotion hysteresis", "A tier is only LOST once SP falls below this fraction of its threshold — stops flapping at the boundary. Default 0.85 (0–1).", "0.01", Min: 0),
-            new("Vip:VipMaintainDays", "VIP level maintained for (days)", "A settled round / LP spend / IAP top-up within this window holds the VIP level. Default 30.", "1", Min: 1),
+            new("Vip:VipMaintainDays", "LP maintain holds for (days)", "Days one LP maintain adds to the hold on a VIP level. Default 30. (Play does NOT hold a VIP level — it is bought.)", "1", Min: 1),
             new("Vip:BadgeWindowDays", "Badge lit for (days)", "How long the VIP badge stays lit after qualifying activity. Default 30.", "1", Min: 1),
             new("Vip:VipBoosterTimeDays", "Booster: Time adds (days)", "Days the cheap 'VIP Booster: Time' IAP adds to the current level. Default 30.", "1", Min: 1),
             new("Loyalty:LpChipsPerPoint", "Chips wagered per 1 LP", "Clean wager chips per Loyalty Point (~1% comp at 100). Default 100. ⚠️ the LP store pays chips — lowering this makes play MORE chip-positive; watch the peg.", "1", Min: 1),
@@ -267,21 +267,19 @@ namespace Khela.Web.Controllers
             try
             {
                 var sp = Request.Form["tierSp"]; var floor = Request.Form["tierFloor"]; var reset = Request.Form["tierReset"];
-                var bonus = Request.Form["tierBonus"]; var factor = Request.Form["tierFactor"];
+                var bonus = Request.Form["tierBonus"];
                 var rows = new List<Khela.Game.Services.Vip.VipConfig.TierRow>();
                 for (int i = 0; i < 8 && i < sp.Count; i++)
                     rows.Add(new Khela.Game.Services.Vip.VipConfig.TierRow
                     {
                         SpThreshold = Lng(sp, i), SpendFloorUsd = Dec(floor, i),
-                        BonusPct = Pct(bonus, i), Factor = Dec(factor, i), ResetTo = (int)Lng(reset, i),
+                        BonusPct = Pct(bonus, i), ResetTo = (int)Lng(reset, i),
                     });
 
                 if (rows.Count != 8) { TempData["Error"] = "The tier table needs all 8 rows (None … Black Diamond)."; return RedirectToAction(nameof(Index)); }
                 for (int i = 1; i < 8; i++)
                     if (rows[i].SpThreshold < rows[i - 1].SpThreshold)
                     { TempData["Error"] = "Refused: the SP bars must not go DOWN as the tier rises — the game would refuse this ladder and fall back to the built-in one."; return RedirectToAction(nameof(Index)); }
-                if (rows[0].Factor != 0m)
-                    { TempData["Error"] = "Refused: tier None must have grind factor 0 — anything else lets players below the VIP entry level grind VIP Levels."; return RedirectToAction(nameof(Index)); }
                 for (int i = 0; i < 8; i++)
                     if (rows[i].ResetTo < 0 || rows[i].ResetTo > i)
                     { TempData["Error"] = $"Refused: tier {i} resets to {rows[i].ResetTo} — a season reset must go DOWN (or stay), never promote."; return RedirectToAction(nameof(Index)); }
@@ -317,7 +315,7 @@ namespace Khela.Web.Controllers
             return RedirectToAction(nameof(Index));
         }
 
-        /// <summary>Save the VIP LEVEL ladder (one row per level 1…N) under <c>Vip:Levels</c>. A row with no threshold is
+        /// <summary>Save the VIP LEVEL ladder (one row per level 1…N) under <c>Vip:Levels</c>. A row with no VIP-P bar is
         /// dropped, which is how a level is removed; an empty table is refused (a ladder with no rungs).</summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -325,19 +323,26 @@ namespace Khela.Web.Controllers
         {
             try
             {
-                var need = Request.Form["lvlThreshold"]; var bonus = Request.Form["lvlBonus"]; var lp = Request.Form["lvlMaintain"];
+                var need = Request.Form["lvlPoints"]; var bonus = Request.Form["lvlBonus"]; var lp = Request.Form["lvlMaintain"];
+                var hold = Request.Form["lvlHold"]; var win = Request.Form["lvlWin"]; var rebate = Request.Form["lvlRebate"];
+                var cap = Request.Form["lvlCap"];
                 var rows = new List<Khela.Game.Services.Vip.VipConfig.LevelRow>();
                 for (int i = 0; i < need.Count; i++)
                 {
-                    var threshold = Lng(need, i);
-                    if (threshold <= 0L) continue;   // a blank/zero row is how a level is DELETED
+                    var points = Lng(need, i);
+                    if (points <= 0L) continue;   // a blank/zero row is how a level is DELETED
                     rows.Add(new Khela.Game.Services.Vip.VipConfig.LevelRow
                     {
-                        Threshold = threshold, BonusPct = Pct(bonus, i), MaintainLp = Lng(lp, i),
+                        PointsRequired = points, BonusPct = Pct(bonus, i), MaintainLp = Lng(lp, i),
+                        HoldDays = (int)Lng(hold, i), WinBonusPct = Pct(win, i), LossRebatePct = Pct(rebate, i),
+                        DailyCapChips = Dec(cap, i),
                     });
                 }
                 if (rows.Count == 0)
                 { TempData["Error"] = "Refused: that would leave no VIP levels. Keep at least one, or delete Vip:Levels from Redis to fall back to the built-in ladder."; return RedirectToAction(nameof(Index)); }
+                for (int i = 1; i < rows.Count; i++)
+                    if (rows[i].PointsRequired <= rows[i - 1].PointsRequired)
+                    { TempData["Error"] = $"Refused: level {i + 1} needs MORE VIP-P than level {i} — the game would refuse this ladder and fall back to the built-in one."; return RedirectToAction(nameof(Index)); }
 
                 await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Vip:Levels", Khela.Game.Services.Vip.VipConfig.SerializeLevels(rows));
                 TempData["Saved"] = $"Saved {rows.Count} VIP level(s) — live on the next accrual (~15 s). Players already ABOVE the new top level keep it until it lapses.";
@@ -607,8 +612,10 @@ namespace Khela.Web.Controllers
             var vipEffective = new Khela.Game.Services.Vip.VipConfig
             {
                 SpThresholds = vipTiers.SpThresholds, SpendFloorsUsd = vipTiers.SpendFloorsUsd,
-                TierBonusPct = vipTiers.TierBonusPct, TierFactors = vipTiers.TierFactors,
-                VipLevelBonusPct = vipLevels.VipLevelBonusPct, VipLevelThresholds = vipLevels.VipLevelThresholds,
+                TierBonusPct = vipTiers.TierBonusPct, TierResetTo = vipTiers.TierResetTo,
+                VipPointsRequired = vipLevels.VipPointsRequired, VipLevelBonusPct = vipLevels.VipLevelBonusPct,
+                VipHoldDays = vipLevels.VipHoldDays, VipWinBonusPct = vipLevels.VipWinBonusPct,
+                VipLossRebatePct = vipLevels.VipLossRebatePct, VipDailyCapChips = vipLevels.VipDailyCapChips,
                 VipMaintainLpCost = vipLevels.VipMaintainLpCost,
             };
             vm.VipTiers = Khela.Game.Services.Vip.VipConfig.TierRows(vipEffective);

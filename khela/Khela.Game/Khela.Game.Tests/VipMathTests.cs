@@ -24,12 +24,8 @@ namespace Khela.Game.Tests
         public void SpFromWager_IsFloorOfWagerOverDivisor(double wager, long expected)
             => Assert.Equal(expected, VipMath.SpFromWager((decimal)wager, Cfg()));
 
-        [Theory]
-        [InlineData(1, 100)]      // $1 × 100
-        [InlineData(4.99, 499)]
-        [InlineData(0, 0)]
-        public void SpFromPurchase_IsFloorOfUsdTimesRate(double usd, long expected)
-            => Assert.Equal(expected, VipMath.SpFromPurchase((decimal)usd, Cfg()));
+        // Money no longer buys SP at all (docs/VIP_SPEC.md §2): a purchase credits VIP-P, which is a different ladder.
+        // Anything it grants toward status now has to be an explicit `Sp` line on the product.
 
         // ---- band resolution ----
 
@@ -76,23 +72,79 @@ namespace Khela.Game.Tests
         public void ComboMultiplier_AdditiveTierPlusVipLevel(VipTier tier, int vipLevel, double expected)
             => Assert.Equal((decimal)expected, VipMath.ComboMultiplier(tier, vipLevel, Cfg()));
 
+        // ---- VIP level: the band of what was BOUGHT (docs/VIP_SPEC.md §4) ----
+
+        [Theory]
+        [InlineData(0, 0)]
+        [InlineData(299, 0)]          // one VIP-P short of the door
+        [InlineData(300, 1)]          // the Starter Pack
+        [InlineData(999, 1)]
+        [InlineData(1_000, 2)]
+        [InlineData(300_000, 10)]
+        [InlineData(50_000_000, 10)]  // nothing above the top rung exists to climb to
+        public void LevelFromPoints_IsTheHighestBarTheWindowClears(long points, int expected)
+            => Assert.Equal(expected, VipMath.LevelFromPoints(points, Cfg()));
+
         [Fact]
-        public void VipProgressFromSp_ScalesBySpAndTierFactor()
+        public void LevelFromPoints_IgnoresPlay_ThereIsNoGrind()
         {
-            Assert.Equal(1000, VipMath.VipProgressFromSp(1000, VipTier.Bronze, Cfg()));        // factor 1.0
-            Assert.Equal(3000, VipMath.VipProgressFromSp(1000, VipTier.BlackDiamond, Cfg()));  // factor 3.0
-            Assert.Equal(0, VipMath.VipProgressFromSp(1000, VipTier.None, Cfg()));             // factor 0 (unranked earns none)
+            // The only input is VIP-P. A player with a huge SP balance and no purchases stands at VIP 0 — the whole
+            // point of the redesign: play climbs the badge, money climbs VIP.
+            Assert.Equal(0, VipMath.LevelFromPoints(0, Cfg()));
         }
 
         [Fact]
-        public void ApplyVipLevelUps_CrossesThresholds_AndCapsAt10()
+        public void EffectiveLevel_TakesTheHold_OnlyWhileItIsLive_AndNeverBelowTheBand()
         {
             var c = Cfg();
-            var (prog, lvl) = VipMath.ApplyVipLevelUps(0, 0, 5_000_000, c);   // VIP1 threshold = 5M
-            Assert.Equal(1, lvl);
-            Assert.Equal(0, prog);
-            var (_, capped) = VipMath.ApplyVipLevelUps(0, 0, long.MaxValue / 2, c);
-            Assert.Equal(10, capped);
+            var now = new DateTime(2026, 8, 23, 12, 0, 0, DateTimeKind.Utc);
+
+            // window says 1, a live hold says 5 → 5 (this is the buffer a purchase buys)
+            Assert.Equal(5, VipMath.EffectiveLevel(300, 5, now.AddDays(10), now, c));
+            // the same hold, expired → the window alone
+            Assert.Equal(1, VipMath.EffectiveLevel(300, 5, now.AddDays(-1), now, c));
+            // no hold at all → the window alone
+            Assert.Equal(1, VipMath.EffectiveLevel(300, 0, null, now, c));
+            // a STALE low hold never drags a player down: the band wins whenever it is higher
+            Assert.Equal(3, VipMath.EffectiveLevel(2_500, 1, now.AddDays(10), now, c));
+            // and a hold above the ladder is clamped to the ladder
+            Assert.Equal(10, VipMath.EffectiveLevel(0, 99, now.AddDays(10), now, c));
+        }
+
+        [Fact]
+        public void ShouldRearmHold_RefusesACheapPackUnderALiveHold()
+        {
+            var now = new DateTime(2026, 8, 23, 12, 0, 0, DateTimeKind.Utc);
+            var live = now.AddDays(20);
+
+            // THE exploit this rule exists for: holding VIP 10, buying a pack that only stands at VIP 1.
+            Assert.False(VipMath.ShouldRearmHold(band: 1, heldLevel: 10, heldThrough: live, now: now));
+            // Reaching it again, or beating it, re-arms.
+            Assert.True(VipMath.ShouldRearmHold(band: 10, heldLevel: 10, heldThrough: live, now: now));
+            Assert.True(VipMath.ShouldRearmHold(band: 11, heldLevel: 10, heldThrough: live, now: now));
+            // A lapsed hold protects nothing, so any credit re-snapshots against the window.
+            Assert.True(VipMath.ShouldRearmHold(band: 1, heldLevel: 10, heldThrough: now.AddDays(-1), now: now));
+            Assert.True(VipMath.ShouldRearmHold(band: 1, heldLevel: 10, heldThrough: null, now: now));
+            // No hold at all: the first purchase always sets one.
+            Assert.True(VipMath.ShouldRearmHold(band: 1, heldLevel: 0, heldThrough: null, now: now));
+        }
+
+        [Fact]
+        public void ExpectedReturn_IsZeroWhenTheDailyCapIsOff_AndRisesWithTheTwoPercentages()
+        {
+            var c = Cfg();
+            // 0 = OFF, the exchange convention — a level with no cap pays nothing, so it costs nothing.
+            var off = new VipConfig { VipWinBonusPct = new[] { 0m, 0.5m }, VipLossRebatePct = new[] { 0m, 0.5m }, VipDailyCapChips = new[] { 0m, 0m } };
+            Assert.Equal(0m, VipMath.ExpectedReturnOfHandle(1, off, VipMath.ModelHouseEdge));
+
+            // The shipped ladder must not pay more than the house earns at ANY rung — that is the +EV line.
+            for (int lvl = 1; lvl <= VipMath.TopVipLevel(c); lvl++)
+                Assert.True(VipMath.ExpectedReturnOfHandle(lvl, c, VipMath.ModelHouseEdge) < VipMath.ModelHouseEdge,
+                    $"VIP {lvl} returns more than the house edge — that level pays players to play.");
+
+            // …and it is monotone in the two percentages, so the admin column moves the way the numbers do.
+            Assert.True(VipMath.ExpectedReturnOfHandle(10, c, VipMath.ModelHouseEdge)
+                      > VipMath.ExpectedReturnOfHandle(1, c, VipMath.ModelHouseEdge));
         }
 
         [Theory]

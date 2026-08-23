@@ -47,7 +47,7 @@ namespace Khela.Game.Tests
             rows[(int)VipTier.Silver] = new VipConfig.TierRow
             {
                 SpThreshold = rows[(int)VipTier.Silver].SpThreshold, SpendFloorUsd = 0m,
-                BonusPct = rows[(int)VipTier.Silver].BonusPct, Factor = rows[(int)VipTier.Silver].Factor,
+                BonusPct = rows[(int)VipTier.Silver].BonusPct,
                 ResetTo = (int)VipTier.Gold,
             };
             Assert.Equal(b.TierResetTo, VipConfig.ParseTiers(VipConfig.SerializeTiers(rows), b).TierResetTo);
@@ -67,7 +67,7 @@ namespace Khela.Game.Tests
             // An admin can retune it — everyone back to Bronze, say — and the game runs what was saved.
             var harsh = rows.Select((r, i) => new VipConfig.TierRow
             {
-                SpThreshold = r.SpThreshold, SpendFloorUsd = r.SpendFloorUsd, BonusPct = r.BonusPct, Factor = r.Factor,
+                SpThreshold = r.SpThreshold, SpendFloorUsd = r.SpendFloorUsd, BonusPct = r.BonusPct,
                 ResetTo = i <= (int)VipTier.Bronze ? i : (int)VipTier.Bronze,
             }).ToList();
             var cfg = VipConfig.Overlay(b, new Dictionary<string, string> { ["Vip:Tiers"] = VipConfig.SerializeTiers(harsh) });
