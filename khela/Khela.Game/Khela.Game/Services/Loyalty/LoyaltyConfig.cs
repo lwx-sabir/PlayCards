@@ -41,8 +41,47 @@ namespace Khela.Game.Services.Loyalty
                 Enabled         = b.Enabled,
                 LpChipsPerPoint = Dec(o, "Loyalty:LpChipsPerPoint", b.LpChipsPerPoint),
                 LpPerUsd        = Dec(o, "Loyalty:LpPerUsd", b.LpPerUsd),
-                Catalog         = b.Catalog,
+                Catalog         = ParseCatalog(o.TryGetValue("Loyalty:Catalog", out var json) ? json : null, b.Catalog),
             };
+        }
+
+        private static readonly System.Text.Json.JsonSerializerOptions CatalogJson = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        };
+
+        public static string SerializeCatalog(IEnumerable<LoyaltyStoreItem> items) => System.Text.Json.JsonSerializer.Serialize(items, CatalogJson);
+
+        /// <summary>
+        /// Parse the LP store. Refused WHOLE — a half-applied price list is a shop that sells one item at the new rate and
+        /// the rest at the old. An item needs an id, a positive cost and a positive amount; anything else falls back.
+        ///
+        /// The redemption rate is the one number that decides what LP is WORTH: earning 1 LP per <see cref="LpChipsPerPoint"/>
+        /// chips wagered and redeeming it for R chips is a comp of R / LpChipsPerPoint. At 100 chips/LP earned and 100
+        /// chips/LP redeemed that is 100% of wager back — a loop, not a comp. Set it deliberately.
+        /// </summary>
+        public static LoyaltyStoreItem[] ParseCatalog(string json, LoyaltyStoreItem[] fallback)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return fallback;
+            try
+            {
+                var items = System.Text.Json.JsonSerializer.Deserialize<List<LoyaltyStoreItem>>(json, CatalogJson);
+                if (items == null) return fallback;
+                var good = new List<LoyaltyStoreItem>(items.Count);
+                var ids = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                foreach (var i in items)
+                {
+                    if (i == null || string.IsNullOrWhiteSpace(i.Id) || i.CostLp <= 0L || i.ChipAmount <= 0m || i.MinVipTier < 0) return fallback;
+                    if (!ids.Add(i.Id.Trim())) return fallback;   // two items with one id: which one did the player buy?
+                    good.Add(new LoyaltyStoreItem
+                    {
+                        Id = i.Id.Trim(), Kind = string.IsNullOrWhiteSpace(i.Kind) ? "chips" : i.Kind.Trim(),
+                        Name = i.Name ?? "", CostLp = i.CostLp, ChipAmount = i.ChipAmount, MinVipTier = i.MinVipTier,
+                    });
+                }
+                return good.Count == 0 ? fallback : good.ToArray();   // an empty list is "no shop", which reads as broken
+            }
+            catch { return fallback; }
         }
 
         private static decimal Dec(IReadOnlyDictionary<string, string> o, string k, decimal d)

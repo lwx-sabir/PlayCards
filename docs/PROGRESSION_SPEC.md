@@ -13,6 +13,28 @@ Numbers below are **tunable defaults** — put every one of them in config, not 
 
 ## Build status (audited 2026-06-28)
 
+> **Update 2026-08-23 — the ladders are now ADMIN-EDITABLE.** VIP and Loyalty were built (rows 3–4 below are stale;
+> both ship), but their per-tier / per-level ARRAYS and the LP store were code/appsettings only. They are now three
+> tables on **Settings ▸ VIP & Loyalty**, each stored as one JSON document on the `khela:settings` hash and parsed
+> **fail-whole** (anything unusable falls back to the built-in ladder rather than half-applying, because a half-applied
+> ladder ranks players by numbers nobody chose):
+>
+> | table | key | rows |
+> |---|---|---|
+> | VIP tier ladder | `Vip:Tiers` | exactly 8 (None…BlackDiamond): SP bar · USD spend floor · comp % · grind × |
+> | VIP level ladder | `Vip:Levels` | one per level 1…N: progress needed · comp % · maintain LP |
+> | LP store | `Loyalty:Catalog` | one per item: id · name · cost LP · chips · min tier |
+>
+> Refused at save: an SP bar that goes *down* as the tier rises; a grind factor ≠ 0 on tier None (it would let players
+> below the VIP entry level grind VIP Levels); a level with no progress (the level-up loop would spin); an empty table;
+> duplicate LP ids. Percentages are typed as **percent** in the form (170) and stored as the fraction the engine
+> multiplies by (1.70). All three travel with the **progression** export group (prefix-matched on `Vip:` / `Loyalty:`).
+>
+> ⚠️ **The LP store is what decides what an LP is worth.** Earning 1 LP per `Loyalty:LpChipsPerPoint` chips wagered and
+> redeeming it for *A* chips is a comp of `A ÷ (costLp × chipsPerLp)`. The built-in list (1,000 chips for 10 LP at 100
+> chips/LP) is **100%** — every chip wagered comes back, which is a loop, not a comp, and ×2.85 at top VIP. The editor
+> shows that percentage live per row and colours it. Tests: `VipLoyaltyLadderTests`.
+
 | # | System | Status | Notes |
 |---|---|---|---|
 | 1 | §6 Two-bucket wallet (clean/tainted) | ✅ **Done** | Earned-first spend, payout keeps the gifted fraction tainted, XP uses clean wager only; idempotent under `FOR UPDATE`. Stored as `Balance` + a single `GiftedBalance` slice (+ `WalletTransaction.GiftedDelta`), not literal `EarnedChips`/`GiftedChips`/portions — **mathematically equivalent**, accepted. |

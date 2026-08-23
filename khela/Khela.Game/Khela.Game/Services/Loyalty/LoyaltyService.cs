@@ -76,7 +76,8 @@ namespace Khela.Game.Services.Loyalty
             {
                 var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
                 if (profile == null) return 0;
-                var mult = _vip.ComboMultiplier(profile.VipTier, profile.VipLevel);   // VIP tier + level boost LP earning (the benefit track)
+                // The EFFECTIVE multiplier (admin ladders included) — LP is granted here, so it must not read the built-in bonuses.
+                var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
                 var lp = LoyaltyMath.LpFromWager(cleanWager, mult, cfg);
                 if (lp <= 0) return 0;
 
@@ -100,7 +101,7 @@ namespace Khela.Game.Services.Loyalty
             {
                 var profile = await _db.UserProfiles.FirstOrDefaultAsync(p => p.UserId == userId);
                 if (profile == null) return 0;
-                var mult = _vip.ComboMultiplier(profile.VipTier, profile.VipLevel);
+                var mult = await _vip.ComboMultiplierAsync(profile.VipTier, profile.VipLevel);
                 var lp = LoyaltyMath.LpFromPurchase(usdSpent, mult, cfg);
                 if (lp <= 0) return 0;
 

@@ -52,11 +52,16 @@ namespace Khela.Game.Services.Vip
 
         /// <summary>Fold gained grind progress into the into-level counter, leveling up with carry-over (cap 10).
         /// Returns the new into-level progress + the new VIP level.</summary>
+        /// <summary>The top VIP level THIS ladder defines (the arrays are admin-editable, so it is not always 10).</summary>
+        public static int TopVipLevel(VipConfig c)
+            => Math.Max(0, (c?.VipLevelThresholds?.Length ?? 1) - 1);
+
         public static (long Progress, int Level) ApplyVipLevelUps(long progress, int level, long gained, VipConfig c)
         {
             if (level < 0) level = 0;
             progress += gained;
-            while (level < 10)
+            int top = TopVipLevel(c);
+            while (level < top)
             {
                 long need = VipLevelThreshold(level + 1, c);
                 if (need <= 0L || progress < need) break;

@@ -15,6 +15,7 @@
     <button type="button" class="tab active" data-tab="casino">Casino Settings</button>
     <button type="button" class="tab" data-tab="game">Game Settings</button>
     <button type="button" class="tab" data-tab="piggy">Piggy Bank</button>
+    <button type="button" class="tab" data-tab="viployalty">VIP &amp; Loyalty</button>
     <button type="button" class="tab" data-tab="store">Store</button>
     <button type="button" class="tab" data-tab="transfer">Transfer</button>
 </div>
@@ -49,21 +50,12 @@
             <h3>Blackjack &amp; table timing</h3>
             <span class="badge badge-live">Live · within ~15s</span>
         </div>
-        <form asp-controller="Settings" asp-action="SaveGame" method="post">
-            <div class="setting-list">
-                @foreach (var s in Model.Game)
-                {
-                    <div class="setting-edit-row2">
-                        <div class="setting-meta">
-                            <div class="setting-label">@s.Label</div>
-                            <div class="setting-help">@s.Help</div>
-                        </div>
-                        <input class="input setting-input" type="number" step="@s.Step" min="@s.Min" name="@s.Key" value="@s.Value" />
-                    </div>
-                }
-            </div>
-            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save game settings</button></div>
-        </form>
+        <p class="page-sub" style="margin-top:0">
+            Moved next to the tables they govern — round timing, shoe, lobby balancer floors, presentation and
+            connection knobs, plus the stake-tier ladder, now live on
+            <a asp-controller="Tables" asp-action="Index" asp-route-tab="settings"><b>Game Tables → Table Settings</b></a>.
+            One editor, one source of truth; the same <code>khela:settings</code> overlay underneath.
+        </p>
 
         @if (Model.GameReadOnly.Count > 0)
         {
@@ -197,6 +189,183 @@
             A row saved with <strong>no amount</strong> is dropped, which is also how you delete one. Saving an empty
             table is refused — a bank with no capacity can never fill and reads as broken. To go back to the built-in
             ladder, delete <code>Piggy:Tiers</code> from Redis.
+        </p>
+    </div>
+</div>
+
+<div class="tab-panel hidden" data-panel="viployalty">
+    <div class="panel">
+        <div class="panel-head">
+            <h3>VIP &amp; Loyalty</h3>
+            <span class="badge badge-live">Live · next accrual</span>
+        </div>
+        <p class="page-sub" style="margin-top:0">
+            Status Points (the VIP ladder) and Loyalty Points (the chip comp). Every scalar the two services read live
+            from the overlay is here; an <b>empty box means the code default</b> (shown in each description). The
+            per-tier arrays — SP thresholds, bonus %, tier factors, level thresholds — and both <code>Enabled</code>
+            flags are appsettings/code only, on purpose. Multipliers boost <b>comp</b>, never winnings.
+        </p>
+        <form asp-controller="Settings" asp-action="SaveVipLoyalty" method="post">
+            <div class="setting-list">
+                @foreach (var s in Model.VipLoyalty)
+                {
+                    <div class="setting-edit-row2">
+                        <div class="setting-meta">
+                            <div class="setting-label">@s.Label <span class="dim" style="font-weight:400; font-size:11px">@s.Key</span></div>
+                            <div class="setting-help">@s.Help</div>
+                        </div>
+                        <input class="input setting-input" type="number" step="@s.Step" min="@s.Min" name="@s.Key" value="@s.Value" placeholder="default" />
+                    </div>
+                }
+            </div>
+            <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Save VIP &amp; Loyalty</button></div>
+        </form>
+    </div>
+
+    @* ------------------------------------------------ VIP tier ladder ------------------------------------------------ *@
+    <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+            <h3>VIP tier ladder</h3>
+            <span class="badge badge-live">Live · next accrual</span>
+        </div>
+        <p class="page-sub">
+            The RANK ladder. A tier is reached with <strong>both</strong> its SP bar (trailing window) and its USD spend floor —
+            a floor above $0 means that tier cannot be reached without paying. <strong>Comp %</strong> is the tier's slice of the
+            benefit multiplier; <strong>grind ×</strong> is how fast the same SP builds VIP&nbsp;Levels. Tier <em>None</em> must stay at
+            <strong>×0</strong>, or players below the VIP entry level start grinding VIP Levels.
+        </p>
+        <form asp-controller="Settings" asp-action="SaveVipTiers" method="post">
+            <table class="data-table" id="vipTierTable">
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Tier</th>
+                        <th style="text-align:left">SP required</th>
+                        <th style="text-align:left">Spend floor (USD)</th>
+                        <th style="text-align:left">Comp %</th>
+                        <th style="text-align:left">Grind ×</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var tierNames = new[] { "None", "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Royal Diamond", "Black Diamond" }; }
+                    @for (int i = 0; i < Model.VipTiers.Count && i < tierNames.Length; i++)
+                    {
+                        var t = Model.VipTiers[i];
+                        <tr>
+                            <td><strong>@tierNames[i]</strong></td>
+                            <td><input class="input" type="number" min="0" step="1000" name="tierSp" value="@t.SpThreshold" style="width:170px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="tierFloor" value="@t.SpendFloorUsd" style="width:140px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="tierBonus" value="@(t.BonusPct * 100m)" style="width:110px" /></td>
+                            <td><input class="input" type="number" min="0" step="0.1" name="tierFactor" value="@t.Factor" style="width:110px" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div style="margin-top:14px"><button class="btn btn-primary" type="submit">Save tier ladder</button></div>
+        </form>
+    </div>
+
+    @* ------------------------------------------------ VIP level ladder ------------------------------------------------ *@
+    <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+            <h3>VIP level ladder</h3>
+            <span class="badge badge-live">Live · next accrual</span>
+        </div>
+        <p class="page-sub">
+            The PREMIUM ladder. <strong>Progress needed</strong> is what it costs to reach that level from the one below, and it is
+            CONSUMED on level-up (the remainder carries forward). Progress = <code>SP × the tier's grind ×</code>, and SP from play is
+            capped daily — so the days column is the fastest anyone can do it at that tier, not an average.
+        </p>
+        <form asp-controller="Settings" asp-action="SaveVipLevels" method="post">
+            <table class="data-table" id="vipLevelTable">
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Level</th>
+                        <th style="text-align:left">Progress needed</th>
+                        <th style="text-align:left">Comp %</th>
+                        <th style="text-align:left">Maintain (LP / period)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (int i = 0; i < Model.VipLevels.Count; i++)
+                    {
+                        var l = Model.VipLevels[i];
+                        <tr>
+                            <td><strong>VIP @(i + 1)</strong></td>
+                            <td><input class="input" type="number" min="0" step="100000" name="lvlThreshold" value="@l.Threshold" style="width:190px" /></td>
+                            <td><input class="input" type="number" min="0" step="1" name="lvlBonus" value="@(l.BonusPct * 100m)" style="width:110px" /></td>
+                            <td><input class="input" type="number" min="0" step="100" name="lvlMaintain" value="@l.MaintainLp" style="width:170px" /></td>
+                            <td><button type="button" class="btn" onclick="this.closest('tr').remove()">Remove</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+                <button type="button" class="btn" id="addVipLevel">+ Add level</button>
+                <button class="btn btn-primary" type="submit">Save level ladder</button>
+            </div>
+        </form>
+        <p class="page-sub" style="margin-top:14px">
+            A row with <strong>no progress</strong> is dropped, which is how you delete a level; an empty table is refused.
+            Players already above a removed top level keep it until it lapses. To go back to the built-in ladder, delete
+            <code>Vip:Levels</code> from Redis.
+        </p>
+    </div>
+
+    @* ------------------------------------------------ LP store ------------------------------------------------ *@
+    <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+            <h3>LP store</h3>
+            <span class="badge badge-live">Live · ~15 s</span>
+        </div>
+        <p class="page-sub">
+            What Loyalty Points buy. <strong>This table decides what an LP is worth</strong>: a player earns 1 LP per
+            <code>@Model.LpChipsPerPoint.ToString("#,0.##")</code> chips wagered (Loyalty:LpChipsPerPoint above), so an item costing
+            <em>C</em> LP for <em>A</em> chips returns <code>A / (C × @Model.LpChipsPerPoint.ToString("#,0.##"))</code> of everything wagered
+            to earn it. The <strong>comp %</strong> column does that arithmetic live — anything near or above 100% is not a comp, it is a
+            loop that pays more than it costs to play.
+        </p>
+        <form asp-controller="Settings" asp-action="SaveLoyaltyCatalog" method="post">
+            <table class="data-table" id="lpTable" data-lp-rate="@Model.LpChipsPerPoint.ToString(System.Globalization.CultureInfo.InvariantCulture)">
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Id</th>
+                        <th style="text-align:left">Name</th>
+                        <th style="text-align:left">Cost (LP)</th>
+                        <th style="text-align:left">Chips</th>
+                        <th style="text-align:left">Min tier</th>
+                        <th style="text-align:left">Comp %</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in Model.LoyaltyCatalog)
+                    {
+                        var comp = item.CostLp > 0 && Model.LpChipsPerPoint > 0m
+                            ? item.ChipAmount / (item.CostLp * Model.LpChipsPerPoint) * 100m : 0m;
+                        <tr>
+                            <td><input class="input" type="text" name="lpId" value="@item.Id" style="width:130px" /></td>
+                            <td><input class="input" type="text" name="lpName" value="@item.Name" style="width:180px" /></td>
+                            <td><input class="input" type="number" min="0" step="10" name="lpCost" value="@item.CostLp" style="width:120px" /></td>
+                            <td><input class="input" type="number" min="0" step="1000" name="lpAmount" value="@item.ChipAmount" style="width:160px" /></td>
+                            <td><input class="input" type="number" min="0" max="7" step="1" name="lpMinTier" value="@item.MinVipTier" style="width:100px" /></td>
+                            <td class="lp-comp" style="color:@(comp >= 50m ? "var(--bad,#f87171)" : comp >= 10m ? "var(--warn,#fbbf24)" : "var(--muted,#9aa4b2)")">
+                                @comp.ToString("#,0.##")%
+                            </td>
+                            <td><button type="button" class="btn" onclick="this.closest('tr').remove()">Remove</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap">
+                <button type="button" class="btn" id="addLpItem">+ Add item</button>
+                <button class="btn btn-primary" type="submit">Save LP store</button>
+            </div>
+        </form>
+        <p class="page-sub" style="margin-top:14px">
+            A row with <strong>no id, cost or chips</strong> is dropped, which is how you delete one; an empty table is refused, and so
+            are duplicate ids. Min tier is <code>0</code> None … <code>7</code> Black Diamond. To go back to the built-in list, delete
+            <code>Loyalty:Catalog</code> from Redis.
         </p>
     </div>
 </div>
@@ -397,6 +566,74 @@
                     body.appendChild(row);
                 });
             }
+        })();
+
+        // The VIP-level and LP-store tables add rows the same way: clone the last row and blank it, so a new row always
+        // carries exactly the inputs the server expects. The label cell is renumbered for VIP levels (the server reads
+        // position, not the label, but a table that says "VIP 3" twice is a table nobody trusts).
+        (function () {
+            // VIP levels are saved by POSITION, so the "VIP n" labels must be rebuilt after EVERY mutation — add or remove.
+            // A table that still says "VIP 10 = 28,000,000" after row 5 was removed is showing a ladder the server will not run.
+            function renumberVipLevels() {
+                var body = document.querySelector('#vipLevelTable tbody');
+                if (!body) return;
+                for (var r = 0; r < body.rows.length; r++) {
+                    var cell = body.rows[r].cells[0];
+                    if (cell) cell.innerHTML = '<strong>VIP ' + (r + 1) + '</strong>';
+                }
+            }
+
+            // The LP comp % is the peg guard rail, so it has to track what is TYPED, not what was rendered.
+            function recomputeLp(row) {
+                var table = document.getElementById('lpTable');
+                if (!table || !row) return;
+                var rate = parseFloat(table.getAttribute('data-lp-rate')) || 0;
+                var cost = parseFloat((row.querySelector('input[name="lpCost"]') || {}).value) || 0;
+                var chips = parseFloat((row.querySelector('input[name="lpAmount"]') || {}).value) || 0;
+                var cell = row.querySelector('.lp-comp');
+                if (!cell) return;
+                if (rate <= 0 || cost <= 0 || chips <= 0) { cell.textContent = '—'; cell.style.color = 'var(--muted,#9aa4b2)'; return; }
+                var pct = chips / (cost * rate) * 100;
+                cell.textContent = (Math.round(pct * 100) / 100).toLocaleString() + '%';
+                cell.style.color = pct >= 50 ? 'var(--bad,#f87171)' : pct >= 10 ? 'var(--warn,#fbbf24)' : 'var(--muted,#9aa4b2)';
+            }
+
+            // One delegated handler per table: remove works for server-rendered AND cloned rows without rebinding.
+            function wire(tableId, afterMutate) {
+                var table = document.getElementById(tableId);
+                if (!table) return;
+                table.addEventListener('click', function (e) {
+                    var btn = e.target.closest('button');
+                    if (!btn || btn.type === 'submit') return;
+                    var row = btn.closest('tr');
+                    if (row) { row.remove(); if (afterMutate) afterMutate(); }
+                });
+            }
+            wire('vipLevelTable', renumberVipLevels);
+            wire('lpTable', null);
+
+            var lpTable = document.getElementById('lpTable');
+            if (lpTable) lpTable.addEventListener('input', function (e) {
+                var n = e.target.getAttribute('name');
+                if (n === 'lpCost' || n === 'lpAmount') recomputeLp(e.target.closest('tr'));
+            });
+
+            function adder(buttonId, tableId, afterMutate) {
+                var add = document.getElementById(buttonId);
+                if (!add) return;
+                add.addEventListener('click', function () {
+                    var body = document.querySelector('#' + tableId + ' tbody');
+                    if (!body || body.rows.length === 0) return;
+                    var row = body.rows[body.rows.length - 1].cloneNode(true);
+                    row.querySelectorAll('input').forEach(function (i) { i.value = ''; });
+                    var comp = row.querySelector('.lp-comp');   // a cloned row must not inherit the last row's percentage
+                    if (comp) { comp.textContent = '—'; comp.style.color = 'var(--muted,#9aa4b2)'; }
+                    body.appendChild(row);
+                    if (afterMutate) afterMutate();
+                });
+            }
+            adder('addVipLevel', 'vipLevelTable', renumberVipLevels);
+            adder('addLpItem', 'lpTable', null);
         })();
 
         (function () {

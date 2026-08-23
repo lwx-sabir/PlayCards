@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 
@@ -44,6 +45,8 @@ namespace Khela.Game.Services.Vip
         public static VipConfig Overlay(VipConfig b, IReadOnlyDictionary<string, string> o)
         {
             if (o == null || o.Count == 0) return b;
+            var tiers = ParseTiers(o.TryGetValue("Vip:Tiers", out var tiersJson) ? tiersJson : null, b);
+            var levels = ParseLevels(o.TryGetValue("Vip:Levels", out var levelsJson) ? levelsJson : null, b);
             return new VipConfig
             {
                 Enabled             = b.Enabled,
@@ -56,11 +59,131 @@ namespace Khela.Game.Services.Vip
                 DemoteHysteresis    = Dec(o, "Vip:DemoteHysteresis", b.DemoteHysteresis),
                 VipMaintainDays     = Int(o, "Vip:VipMaintainDays", b.VipMaintainDays),
                 VipBoosterTimeDays  = Int(o, "Vip:VipBoosterTimeDays", b.VipBoosterTimeDays),
-                SpThresholds = b.SpThresholds, SpendFloorsUsd = b.SpendFloorsUsd, TierBonusPct = b.TierBonusPct,
-                TierFactors = b.TierFactors, VipLevelBonusPct = b.VipLevelBonusPct,
-                VipLevelThresholds = b.VipLevelThresholds, VipMaintainLpCost = b.VipMaintainLpCost,
+                // The two LADDERS travel as one JSON document each (Vip:Tiers, Vip:Levels) rather than seven parallel
+                // array keys: a tier's SP bar, spend floor, comp bonus and grind factor are ONE row of one decision, and
+                // seven keys that could be saved at different lengths is how a ladder ends up half-retuned.
+                SpThresholds = tiers.SpThresholds, SpendFloorsUsd = tiers.SpendFloorsUsd,
+                TierBonusPct = tiers.TierBonusPct, TierFactors = tiers.TierFactors,
+                VipLevelBonusPct = levels.VipLevelBonusPct, VipLevelThresholds = levels.VipLevelThresholds,
+                VipMaintainLpCost = levels.VipMaintainLpCost,
             };
         }
+
+        // ---------------------------------------------------------------- ladders (admin-editable)
+
+        /// <summary>One tier's row in the admin's tier table — index 0 = None, 7 = BlackDiamond.</summary>
+        public sealed class TierRow
+        {
+            public long SpThreshold { get; init; }
+            public decimal SpendFloorUsd { get; init; }
+            /// <summary>Comp bonus as a FRACTION (0.15 = +15%).</summary>
+            public decimal BonusPct { get; init; }
+            /// <summary>VIP-Level grind multiplier at this tier (0 = earns none).</summary>
+            public decimal Factor { get; init; }
+        }
+
+        /// <summary>One VIP level's row — index 0 of the saved list is level 1.</summary>
+        public sealed class LevelRow
+        {
+            /// <summary>Grind needed to reach this level from the one below.</summary>
+            public long Threshold { get; init; }
+            /// <summary>Comp bonus as a FRACTION (1.70 = +170%).</summary>
+            public decimal BonusPct { get; init; }
+            public long MaintainLp { get; init; }
+        }
+
+        private static readonly System.Text.Json.JsonSerializerOptions LadderJson = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        };
+
+        /// <summary>The tier ladder as the admin table shows it (always 8 rows, None…BlackDiamond).</summary>
+        public static List<TierRow> TierRows(VipConfig c)
+        {
+            var rows = new List<TierRow>(8);
+            for (int i = 0; i < 8; i++)
+                rows.Add(new TierRow
+                {
+                    SpThreshold = At(c.SpThresholds, i), SpendFloorUsd = At(c.SpendFloorsUsd, i),
+                    BonusPct = At(c.TierBonusPct, i), Factor = At(c.TierFactors, i),
+                });
+            return rows;
+        }
+
+        /// <summary>The VIP-level ladder as the admin table shows it — one row per level 1…N (index 0 = level 1).</summary>
+        public static List<LevelRow> LevelRows(VipConfig c)
+        {
+            int n = Math.Max(0, (c.VipLevelThresholds?.Length ?? 1) - 1);
+            var rows = new List<LevelRow>(n);
+            for (int lvl = 1; lvl <= n; lvl++)
+                rows.Add(new LevelRow
+                {
+                    Threshold = At(c.VipLevelThresholds, lvl), BonusPct = At(c.VipLevelBonusPct, lvl),
+                    MaintainLp = At(c.VipMaintainLpCost, lvl),
+                });
+            return rows;
+        }
+
+        public static string SerializeTiers(IEnumerable<TierRow> rows) => System.Text.Json.JsonSerializer.Serialize(rows, LadderJson);
+        public static string SerializeLevels(IEnumerable<LevelRow> rows) => System.Text.Json.JsonSerializer.Serialize(rows, LadderJson);
+
+        /// <summary>
+        /// Parse the tier ladder. Refused WHOLE — anything unusable falls back to <paramref name="fallback"/> rather than
+        /// half-applying: a ladder with one bad rung is a ladder that ranks players wrongly, which is worse than one that
+        /// is merely mistuned. Must be exactly 8 rows (the tier enum's width) and non-decreasing in SP.
+        /// </summary>
+        public static (long[] SpThresholds, decimal[] SpendFloorsUsd, decimal[] TierBonusPct, decimal[] TierFactors)
+            ParseTiers(string json, VipConfig fallback)
+        {
+            var fb = (fallback.SpThresholds, fallback.SpendFloorsUsd, fallback.TierBonusPct, fallback.TierFactors);
+            if (string.IsNullOrWhiteSpace(json)) return fb;
+            try
+            {
+                var rows = System.Text.Json.JsonSerializer.Deserialize<List<TierRow>>(json, LadderJson);
+                if (rows == null || rows.Count != 8) return fb;
+                var sp = new long[8]; var floors = new decimal[8]; var bonus = new decimal[8]; var factors = new decimal[8];
+                for (int i = 0; i < 8; i++)
+                {
+                    var r = rows[i];
+                    if (r == null || r.SpThreshold < 0 || r.SpendFloorUsd < 0m || r.BonusPct < 0m || r.Factor < 0m) return fb;
+                    if (i > 0 && r.SpThreshold < sp[i - 1]) return fb;   // a ladder must not go down
+                    sp[i] = r.SpThreshold; floors[i] = r.SpendFloorUsd; bonus[i] = r.BonusPct; factors[i] = r.Factor;
+                }
+                // Tier None must grind NOTHING. The web form refuses this too, but a Vip:Tiers document can also arrive
+                // from a seed file or a direct Redis edit, and a non-zero factor there would let every player below the
+                // VIP entry level grind VIP Levels — the gate the whole ladder rests on. The GAME is the one that guarantees it.
+                if (factors[0] != 0m) return fb;
+                return (sp, floors, bonus, factors);
+            }
+            catch { return fb; }
+        }
+
+        /// <summary>Parse the VIP-level ladder (one row per level 1…N). Refused whole; every threshold must be &gt; 0.</summary>
+        public static (decimal[] VipLevelBonusPct, long[] VipLevelThresholds, long[] VipMaintainLpCost)
+            ParseLevels(string json, VipConfig fallback)
+        {
+            var fb = (fallback.VipLevelBonusPct, fallback.VipLevelThresholds, fallback.VipMaintainLpCost);
+            if (string.IsNullOrWhiteSpace(json)) return fb;
+            try
+            {
+                var rows = System.Text.Json.JsonSerializer.Deserialize<List<LevelRow>>(json, LadderJson);
+                if (rows == null || rows.Count == 0) return fb;
+                int n = rows.Count;
+                var bonus = new decimal[n + 1]; var thresholds = new long[n + 1]; var maintain = new long[n + 1];
+                for (int i = 0; i < n; i++)
+                {
+                    var r = rows[i];
+                    // A threshold of 0 would let a level be reached for nothing and the level-up loop would spin.
+                    if (r == null || r.Threshold <= 0L || r.BonusPct < 0m || r.MaintainLp < 0L) return fb;
+                    thresholds[i + 1] = r.Threshold; bonus[i + 1] = r.BonusPct; maintain[i + 1] = r.MaintainLp;
+                }
+                return (bonus, thresholds, maintain);
+            }
+            catch { return fb; }
+        }
+
+        private static long At(long[] a, int i) => (a != null && i >= 0 && i < a.Length) ? a[i] : 0L;
+        private static decimal At(decimal[] a, int i) => (a != null && i >= 0 && i < a.Length) ? a[i] : 0m;
 
         private static decimal Dec(IReadOnlyDictionary<string, string> o, string k, decimal d)
             => o.TryGetValue(k, out var v) && decimal.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;

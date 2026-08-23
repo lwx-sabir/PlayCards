@@ -37,8 +37,16 @@ namespace Khela.Game.Services.Vip
         /// <summary>The player's current perks (for other services, e.g. Loyalty earning).</summary>
         Task<VipPerks> GetPerksAsync(Guid userId);
 
-        /// <summary>The COMP multiplier (1 + tier bonus + VIP-level bonus) for a tier + VIP level (synchronous; base
-        /// config). Applies to the Loyalty/store/faucet tracks ONLY — never winnings. Lets Loyalty scale LP by VIP.</summary>
+        /// <summary>
+        /// The COMP multiplier (1 + tier bonus + VIP-level bonus) from the EFFECTIVE config — the admin's editable tier and
+        /// level ladders included. Applies to the Loyalty/store/faucet tracks ONLY, never winnings. This is the one anything
+        /// that PAYS should use: <see cref="ComboMultiplier"/> reads the constructor's config, whose bonus arrays are the
+        /// built-in ones.
+        /// </summary>
+        Task<decimal> ComboMultiplierAsync(VipTier tier, int vipLevel);
+
+        /// <summary>The COMP multiplier from the BASE config (no admin ladder) — display/diagnostics only. Anything that
+        /// grants must use <see cref="ComboMultiplierAsync"/>, or it pays at rates the admin did not set.</summary>
         decimal ComboMultiplier(VipTier tier, int vipLevel);
 
         /// <summary>Monthly review: gentle tier decay (one-tier-max + hysteresis; Bronze permanent floor) AND VIP-Level
@@ -112,7 +120,10 @@ namespace Khela.Game.Services.Vip
                     profile.DailySpResetAt = now.Date.AddDays(1);
                 }
                 var rawSp = VipMath.SpFromWager(cleanWager, cfg);
-                var granted = Math.Min(rawSp, Math.Max(0, cfg.SpFromWagerDailyCap - profile.DailySpFromWager));
+                // 0 (or less) means UNCAPPED, which is what the knob's own help promises. Read literally it would mean
+                // "room = 0 - earned", i.e. every player's SP silently switched off by a knob labelled "uncapped".
+                var room = cfg.SpFromWagerDailyCap <= 0L ? long.MaxValue : Math.Max(0, cfg.SpFromWagerDailyCap - profile.DailySpFromWager);
+                var granted = Math.Min(rawSp, room);
 
                 if (granted > 0)
                 {
@@ -192,7 +203,9 @@ namespace Khela.Game.Services.Vip
                 spendToNext = Math.Max(0m, VipMath.SpendFloor(cfg, n) - spend);
             }
 
-            long vipProgToNext = profile.VipLevel >= 10
+            // "At the top" is the LADDER's top, not a literal 10 — the level ladder is admin-editable. Asking
+            // VipLevelThreshold past the end returns long.MaxValue, which would surface as an absurd "progress to next".
+            long vipProgToNext = profile.VipLevel >= VipMath.TopVipLevel(cfg)
                 ? 0L
                 : Math.Max(0L, VipMath.VipLevelThreshold(profile.VipLevel + 1, cfg) - profile.VipLevelProgress);
 
@@ -226,6 +239,15 @@ namespace Khela.Game.Services.Vip
             var tier = (VipTier)Math.Max((int)profile.VipTier, (int)VipMath.ResolveBand(sp, spend, profile.Level, cfg));
             return new VipPerks(tier, profile.VipLevel, VipMath.ComboMultiplier(tier, profile.VipLevel, cfg));
         }
+
+        /// <summary>
+        /// The comp multiplier from the EFFECTIVE config — the admin's ladders included. It has to be async: the tier and
+        /// level bonus arrays are admin-editable (Settings ▸ VIP &amp; Loyalty), and <c>_cfg</c> is the constructor's copy,
+        /// which carries only the appsettings scalars. Reading them from <c>_cfg</c> would grant LP at the built-in rates
+        /// while the VIP screen showed the admin's — the earning silently ignoring the one column the editor exists to tune.
+        /// </summary>
+        public async Task<decimal> ComboMultiplierAsync(VipTier tier, int vipLevel)
+            => VipMath.ComboMultiplier(tier, vipLevel, await EffectiveCfgAsync());
 
         public decimal ComboMultiplier(VipTier tier, int vipLevel) => VipMath.ComboMultiplier(tier, vipLevel, _cfg);
 
@@ -279,7 +301,8 @@ namespace Khela.Game.Services.Vip
                 var now = DateTime.UtcNow;
                 if (kind == VipBoosterKind.LevelUp)
                 {
-                    profile.VipLevel = Math.Min(10, profile.VipLevel + 1);
+                    // Capped by the LADDER, so a shortened ladder can't be climbed past its top by buying boosters.
+                    profile.VipLevel = Math.Min(VipMath.TopVipLevel(cfg), profile.VipLevel + 1);
                     profile.VipLevelMaintainedThrough = now.AddDays(cfg.VipMaintainDays);
                 }
                 else   // Time — extend the maintenance window (from the later of now / current expiry)

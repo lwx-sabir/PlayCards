@@ -65,6 +65,25 @@ namespace Khela.Web.Controllers
             new("Piggy:CycleHours", "Window (hours)", "Hours the player has to buy a full bank AFTER they have been shown it. The clock does NOT start when the bank fills — a window that ran while they were offline would take away an offer they were never given. 72 = three days, 168 = a week. 0 = never expires.", "1", Min: 0),
         };
 
+        // VIP (status points, tiers, levels) + Loyalty (LP comp) — every SCALAR the two services overlay live from the
+        // settings hash (VipConfig.Overlay / LoyaltyConfig.Overlay). The per-tier ARRAYS (thresholds, bonus %, factors)
+        // and both Enabled flags are appsettings/code only — deliberately not here. Step "1" ⇒ saved as a whole
+        // number (the engine parses those with Int/Lng); anything else is saved as an invariant decimal.
+        private static readonly SettingDef[] VipLoyaltyDefs =
+        {
+            new("Vip:SpChipsPerPoint", "Chips wagered per 1 SP", "Status Points per clean chip wagered. Default 50. Lower = faster VIP climb.", "0.5", Min: 1),
+            new("Vip:SpPerUsd", "SP per $1 spent", "Status Points per real dollar of IAP. Default 100. Dormant until the store takes money.", "1", Min: 0),
+            new("Vip:SpFromWagerDailyCap", "Daily SP cap from wagering", "Max SP a player can earn from play per UTC day — the floor on 'slowly'. Default 100,000. 0 = uncapped.", "1", Min: 0),
+            new("Vip:VipEntryLevel", "VIP entry level", "Player level at which the VIP ladder starts counting. Default 20.", "1", Min: 1),
+            new("Vip:TierWindowMonths", "Tier window (months)", "Rolling window the tier review looks back over. Default 12.", "1", Min: 1),
+            new("Vip:DemoteHysteresis", "Demotion hysteresis", "A tier is only LOST once SP falls below this fraction of its threshold — stops flapping at the boundary. Default 0.85 (0–1).", "0.01", Min: 0),
+            new("Vip:VipMaintainDays", "VIP level maintained for (days)", "A settled round / LP spend / IAP top-up within this window holds the VIP level. Default 30.", "1", Min: 1),
+            new("Vip:BadgeWindowDays", "Badge lit for (days)", "How long the VIP badge stays lit after qualifying activity. Default 30.", "1", Min: 1),
+            new("Vip:VipBoosterTimeDays", "Booster: Time adds (days)", "Days the cheap 'VIP Booster: Time' IAP adds to the current level. Default 30.", "1", Min: 1),
+            new("Loyalty:LpChipsPerPoint", "Chips wagered per 1 LP", "Clean wager chips per Loyalty Point (~1% comp at 100). Default 100. ⚠️ the LP store pays chips — lowering this makes play MORE chip-positive; watch the peg.", "1", Min: 1),
+            new("Loyalty:LpPerUsd", "LP per $1 spent", "IAP drip into LP. Default 0 = off until IAP.", "0.1", Min: 0),
+        };
+
         // Read-only (no live consumer yet).
         private static readonly (string Key, string Label)[] GameReadOnlyDefs =
         {
@@ -234,6 +253,116 @@ namespace Khela.Web.Controllers
         }
 
         /// <summary>
+        /// Save the VIP TIER ladder (8 rows, None…BlackDiamond) as one JSON document under <c>Vip:Tiers</c> — a tier's
+        /// SP bar, spend floor, comp bonus and grind factor are one row of one decision, so they travel together.
+        /// The game refuses the whole document if any row is unusable, so a bad save falls back to the built-in ladder
+        /// rather than ranking players by a half-applied one.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveVipTiers()
+        {
+            try
+            {
+                var sp = Request.Form["tierSp"]; var floor = Request.Form["tierFloor"];
+                var bonus = Request.Form["tierBonus"]; var factor = Request.Form["tierFactor"];
+                var rows = new List<Khela.Game.Services.Vip.VipConfig.TierRow>();
+                for (int i = 0; i < 8 && i < sp.Count; i++)
+                    rows.Add(new Khela.Game.Services.Vip.VipConfig.TierRow
+                    {
+                        SpThreshold = Lng(sp, i), SpendFloorUsd = Dec(floor, i),
+                        BonusPct = Pct(bonus, i), Factor = Dec(factor, i),
+                    });
+
+                if (rows.Count != 8) { TempData["Error"] = "The tier table needs all 8 rows (None … Black Diamond)."; return RedirectToAction(nameof(Index)); }
+                for (int i = 1; i < 8; i++)
+                    if (rows[i].SpThreshold < rows[i - 1].SpThreshold)
+                    { TempData["Error"] = "Refused: the SP bars must not go DOWN as the tier rises — the game would refuse this ladder and fall back to the built-in one."; return RedirectToAction(nameof(Index)); }
+                if (rows[0].Factor != 0m)
+                    { TempData["Error"] = "Refused: tier None must have grind factor 0 — anything else lets players below the VIP entry level grind VIP Levels."; return RedirectToAction(nameof(Index)); }
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Vip:Tiers", Khela.Game.Services.Vip.VipConfig.SerializeTiers(rows));
+                TempData["Saved"] = "Saved the VIP tier ladder — live on the next accrual (~15 s). Existing players are re-banded by the tier review, not instantly.";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not save the tier ladder: {ex.Message}"; }
+            return RedirectToAction(nameof(Index));
+        }
+
+        /// <summary>Save the VIP LEVEL ladder (one row per level 1…N) under <c>Vip:Levels</c>. A row with no threshold is
+        /// dropped, which is how a level is removed; an empty table is refused (a ladder with no rungs).</summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveVipLevels()
+        {
+            try
+            {
+                var need = Request.Form["lvlThreshold"]; var bonus = Request.Form["lvlBonus"]; var lp = Request.Form["lvlMaintain"];
+                var rows = new List<Khela.Game.Services.Vip.VipConfig.LevelRow>();
+                for (int i = 0; i < need.Count; i++)
+                {
+                    var threshold = Lng(need, i);
+                    if (threshold <= 0L) continue;   // a blank/zero row is how a level is DELETED
+                    rows.Add(new Khela.Game.Services.Vip.VipConfig.LevelRow
+                    {
+                        Threshold = threshold, BonusPct = Pct(bonus, i), MaintainLp = Lng(lp, i),
+                    });
+                }
+                if (rows.Count == 0)
+                { TempData["Error"] = "Refused: that would leave no VIP levels. Keep at least one, or delete Vip:Levels from Redis to fall back to the built-in ladder."; return RedirectToAction(nameof(Index)); }
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Vip:Levels", Khela.Game.Services.Vip.VipConfig.SerializeLevels(rows));
+                TempData["Saved"] = $"Saved {rows.Count} VIP level(s) — live on the next accrual (~15 s). Players already ABOVE the new top level keep it until it lapses.";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not save the VIP levels: {ex.Message}"; }
+            return RedirectToAction(nameof(Index));
+        }
+
+        /// <summary>
+        /// Save the LP store under <c>Loyalty:Catalog</c>. The redemption rate is what decides what an LP is WORTH:
+        /// earning 1 LP per <c>Loyalty:LpChipsPerPoint</c> chips wagered and redeeming it for R chips is a comp of
+        /// R / LpChipsPerPoint — at 100 earned and 100 redeemed that is 100% of wager back, a loop rather than a comp.
+        /// The page shows that percentage per row so the number is never set by accident.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveLoyaltyCatalog()
+        {
+            try
+            {
+                var id = Request.Form["lpId"]; var name = Request.Form["lpName"];
+                var cost = Request.Form["lpCost"]; var amount = Request.Form["lpAmount"]; var tier = Request.Form["lpMinTier"];
+                var items = new List<Khela.Game.Services.Loyalty.LoyaltyStoreItem>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < id.Count; i++)
+                {
+                    var key = (id[i] ?? "").Trim();
+                    var lp = Lng(cost, i); var chips = Dec(amount, i);
+                    if (key.Length == 0 || lp <= 0L || chips <= 0m) continue;   // blank/zero row = DELETE
+                    if (!seen.Add(key)) { TempData["Error"] = $"Two items share the id '{key}' — the game refuses the whole list."; return RedirectToAction(nameof(Index)); }
+                    items.Add(new Khela.Game.Services.Loyalty.LoyaltyStoreItem
+                    {
+                        Id = key, Kind = "chips", Name = i < name.Count ? (name[i] ?? "").Trim() : "",
+                        CostLp = lp, ChipAmount = chips, MinVipTier = (int)Lng(tier, i),
+                    });
+                }
+                if (items.Count == 0)
+                { TempData["Error"] = "Refused: that would leave the LP store empty, which reads as broken. Delete Loyalty:Catalog from Redis to fall back to the built-in list."; return RedirectToAction(nameof(Index)); }
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Loyalty:Catalog", Khela.Game.Services.Loyalty.LoyaltyConfig.SerializeCatalog(items));
+                TempData["Saved"] = $"Saved {items.Count} LP item(s) — live within ~15 s.";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not save the LP store: {ex.Message}"; }
+            return RedirectToAction(nameof(Index));
+        }
+
+        private static long Lng(Microsoft.Extensions.Primitives.StringValues v, int i)
+            => i < v.Count && long.TryParse(v[i], NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : 0L;
+        private static decimal Dec(Microsoft.Extensions.Primitives.StringValues v, int i)
+            => i < v.Count && decimal.TryParse(v[i], NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : 0m;
+        /// <summary>A bonus typed as a PERCENT in the form (170) is stored as the fraction the engine multiplies by (1.70).</summary>
+        private static decimal Pct(Microsoft.Extensions.Primitives.StringValues v, int i) => Dec(v, i) / 100m;
+
+        /// <summary>
         /// Download the selected tuning as a seed file for another environment.
         ///
         /// Only what is TICKED goes in, and the receiving server merges rather than replaces — so a partial export can
@@ -241,6 +370,36 @@ namespace Khela.Web.Controllers
         /// timing is usually environment-specific, and copying it across is how a dev server's shortened timers end up
         /// somewhere they shouldn't.
         /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveVipLoyalty()
+        {
+            try
+            {
+                var entries = new List<HashEntry>();
+                foreach (var def in VipLoyaltyDefs)
+                {
+                    var raw = Request.Form[def.Key].ToString().Trim();
+                    if (string.IsNullOrEmpty(raw)) continue;
+                    if (!decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) || v < def.Min) continue;
+                    // Whole-number knobs are parsed by the engine with Int/Lng — a "20.0" would silently fall back to
+                    // the default there, so store exactly the shape each side expects.
+                    var stored = def.Step == "1"
+                        ? Math.Floor(v).ToString(CultureInfo.InvariantCulture)
+                        : v.ToString(CultureInfo.InvariantCulture);
+                    entries.Add(new HashEntry(def.Key, stored));
+                }
+                if (entries.Count > 0)
+                    await _redis.GetDatabase().HashSetAsync(SettingsHashKey, entries.ToArray());
+                TempData["Saved"] = "VIP & Loyalty settings saved — live on the next accrual / settle (services overlay per call).";
+            }
+            catch
+            {
+                TempData["Error"] = "Could not reach Redis to save settings.";
+            }
+            return RedirectToAction(nameof(Index));
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         public async Task<IActionResult> SaveStore()
@@ -391,7 +550,7 @@ namespace Khela.Web.Controllers
             // in the config file — round-trips through this page unchanged instead of silently reading as off.
             static bool Flag(string v) => v is "true" or "True" or "1" or "on";
 
-            return new SettingsVm
+            var vm = new SettingsVm
             {
                 Saved = TempData["Saved"] as string,
                 Error = TempData["Error"] as string,
@@ -405,11 +564,31 @@ namespace Khela.Web.Controllers
                 StoreFlags = StoreFlagDefs.Select(d => new StoreFlag(d.Key, d.Label, d.Help, Flag(Eff(d.Key)) || (string.IsNullOrEmpty(Eff(d.Key)) && StoreDefaultOn(d.Key)))).ToList(),
                 StoreRefundPolicy = string.IsNullOrWhiteSpace(Eff("Store:Refunds:Policy")) ? "Rollback" : Eff("Store:Refunds:Policy"),
                 StoreXpPerUsd = string.IsNullOrWhiteSpace(Eff("Store:XpPerUsd")) ? "0" : Eff("Store:XpPerUsd"),
+                VipLoyalty = VipLoyaltyDefs.Select(d => new EditableSetting(d.Key, d.Label, d.Help, d.Step, Eff(d.Key), d.Min)).ToList(),
                 // The EFFECTIVE ladder: what the admin authored if it parses, else the built-in one — so the editor
                 // always shows what the server is actually running rather than an empty table.
                 PiggyTiers = Khela.Game.Services.Piggy.PiggyConfig.ParseTiers(
                     Eff("Piggy:Tiers"), new Khela.Game.Services.Piggy.PiggyConfig().Tiers).ToList(),
             };
+            // The EFFECTIVE VIP + LP ladders, built by the game's own overlay so the editor always shows what the server
+            // is actually running (a document the game refuses shows here as the built-in ladder, which is the truth).
+            var vipBase = new Khela.Game.Services.Vip.VipConfig();
+            var vipTiers = Khela.Game.Services.Vip.VipConfig.ParseTiers(Eff("Vip:Tiers"), vipBase);
+            var vipLevels = Khela.Game.Services.Vip.VipConfig.ParseLevels(Eff("Vip:Levels"), vipBase);
+            var vipEffective = new Khela.Game.Services.Vip.VipConfig
+            {
+                SpThresholds = vipTiers.SpThresholds, SpendFloorsUsd = vipTiers.SpendFloorsUsd,
+                TierBonusPct = vipTiers.TierBonusPct, TierFactors = vipTiers.TierFactors,
+                VipLevelBonusPct = vipLevels.VipLevelBonusPct, VipLevelThresholds = vipLevels.VipLevelThresholds,
+                VipMaintainLpCost = vipLevels.VipMaintainLpCost,
+            };
+            vm.VipTiers = Khela.Game.Services.Vip.VipConfig.TierRows(vipEffective);
+            vm.VipLevels = Khela.Game.Services.Vip.VipConfig.LevelRows(vipEffective);
+            vm.LoyaltyCatalog = Khela.Game.Services.Loyalty.LoyaltyConfig.ParseCatalog(
+                Eff("Loyalty:Catalog"), new Khela.Game.Services.Loyalty.LoyaltyConfig().Catalog).ToList();
+            vm.LpChipsPerPoint = decimal.TryParse(Eff("Loyalty:LpChipsPerPoint"), NumberStyles.Any, CultureInfo.InvariantCulture, out var lpRate) && lpRate > 0m
+                ? lpRate : new Khela.Game.Services.Loyalty.LoyaltyConfig().LpChipsPerPoint;
+            return vm;
         }
     }
 
@@ -432,6 +611,14 @@ namespace Khela.Web.Controllers
         public List<StoreFlag> StoreFlags { get; set; } = new();
         public string StoreRefundPolicy { get; set; } = "Rollback";
         public string StoreXpPerUsd { get; set; } = "0";
+        public List<EditableSetting> VipLoyalty { get; set; } = new();
+        /// <summary>The EFFECTIVE VIP tier ladder (8 rows, None…BlackDiamond) — what the server is actually running.</summary>
+        public List<Khela.Game.Services.Vip.VipConfig.TierRow> VipTiers { get; set; } = new();
+        /// <summary>The EFFECTIVE VIP level ladder — index 0 is level 1.</summary>
+        public List<Khela.Game.Services.Vip.VipConfig.LevelRow> VipLevels { get; set; } = new();
+        public List<Khela.Game.Services.Loyalty.LoyaltyStoreItem> LoyaltyCatalog { get; set; } = new();
+        /// <summary>Chips of clean wager per 1 LP — the denominator that turns an LP price into a comp percentage.</summary>
+        public decimal LpChipsPerPoint { get; set; } = 100m;
         public string? Saved { get; set; }
         public string? Error { get; set; }
     }
