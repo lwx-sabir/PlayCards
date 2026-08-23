@@ -63,7 +63,7 @@ namespace Khela.Game.Tests
             foreach (var line in cfg.Nodes.SelectMany(n => n.Rewards).Where(l => l.Kind == RewardKind.Currency))
             {
                 Assert.True(RewardCurrencies.TryParse(line.Id, out var currency), $"'{line.Id}' is not a currency");
-                Assert.True(RewardCurrencies.IsAllowed(currency), $"{currency} may never be a reward");
+                Assert.True(RewardCurrencies.IsGrantable(currency), $"{currency} may never be a reward");
             }
         }
 

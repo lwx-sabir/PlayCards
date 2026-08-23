@@ -16,7 +16,12 @@ namespace Khela.Game.Database.Models
         Coins,   // 1 — wagerable play money (non-cashable)
         Gems,    // 2 — premium soft currency (non-wagerable)
         Tokens,  // 3 — Phase-2 revenue-backed tradeable token (never wagered, never won)
-        Kash     // 4 — cosmetics & gifting spend currency (non-wagerable; buys items/gifts, never bet)
+        Kash,    // 4 — cosmetics & gifting spend currency (non-wagerable; buys items/gifts, never bet)
+
+        // --- the three progression points (docs/VIP_SPEC.md). All non-wagerable; APPEND ONLY, never renumber. ---
+        Sp = 5,        // Status Points — seasonal activity; drives the badge tier + its comp boost. Never exchanged.
+        Lp = 6,        // Loyalty Points — comp; spendable one-way into chips via the Exchange. Lifetime total = LP Score.
+        VipPoints = 7  // VIP-P — the record of MONEY: store purchases only, drives VIP level. Never granted by play, never exchanged.
     }
 
     [Table("PlayerWallets")]

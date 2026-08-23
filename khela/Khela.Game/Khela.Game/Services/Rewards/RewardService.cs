@@ -67,7 +67,7 @@ namespace Khela.Game.Services.Rewards
             // Currency lines resolve their enum up front so the stored row keeps the exact historical shape
             // (Currency + Amount) and a bad currency name is rejected at ENQUEUE time rather than at claim time.
             var currency = CurrencyType.Chips;
-            if (line.Kind == RewardKind.Currency && !RewardCurrencies.TryParseAllowed(line.Id, out currency))
+            if (line.Kind == RewardKind.Currency && !RewardCurrencies.TryParseGrantable(line.Id, out currency))
             {
                 _logger.LogError("Reward NOT enqueued: '{Id}' is not a grantable currency (idemKey {Key}).", line.Id, idemKey);
                 return;

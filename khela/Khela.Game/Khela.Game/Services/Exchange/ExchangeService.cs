@@ -193,7 +193,7 @@ namespace Khela.Game.Services.Exchange
             if (!cfg.Enabled || !await SwitchOnAsync()) return Fail("The exchange is closed right now.", p.Key);
             RewardCurrencies.TryParse(p.FromCurrency, out var from);
             RewardCurrencies.TryParse(p.ToCurrency, out var to);
-            if (!RewardCurrencies.IsAllowed(from) || !RewardCurrencies.IsAllowed(to) || from == to)   // belt-and-braces: the validator already forbids this
+            if (!RewardCurrencies.IsExchangeableFrom(from) || !RewardCurrencies.IsExchangeableTo(to) || from == to)   // belt-and-braces: the validator already forbids this
                 return Fail("This exchange is not available.", p.Key);
 
             var now = DateTime.UtcNow;

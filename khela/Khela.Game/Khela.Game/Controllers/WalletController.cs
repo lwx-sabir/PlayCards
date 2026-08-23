@@ -72,7 +72,11 @@ namespace Khela.Game.Controllers
                     Coins  = Of(CurrencyType.Coins),
                     Gems   = Of(CurrencyType.Gems),
                     Tokens = Of(CurrencyType.Tokens),
-                    Kash   = Of(CurrencyType.Kash)
+                    Kash   = Of(CurrencyType.Kash),
+                    // The three progression points (docs/VIP_SPEC.md) — non-wagerable; SP surfaces as the badge, LP and VIP-P as balances.
+                    Sp        = Of(CurrencyType.Sp),
+                    Lp        = Of(CurrencyType.Lp),
+                    VipPoints = Of(CurrencyType.VipPoints)
                 });
             }
             catch (Exception ex)

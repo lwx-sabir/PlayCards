@@ -108,12 +108,12 @@ namespace Khela.Game.Services.Pass
 
                 // Chips 1000 · Kash 5 — a currency NAME, never a number (so "3" can't become Tokens).
                 if (!RewardCurrencies.TryParse(head, out var currency))
-                { error = $"'{token}' — '{head}' isn't a reward kind or currency (use {RewardCurrencies.AllowedList}, XP, Chest, Item, Cosmetic)."; return null; }
-                if (!RewardCurrencies.IsAllowed(currency))
+                { error = $"'{token}' — '{head}' isn't a reward kind or currency (use {RewardCurrencies.GrantableList}, XP, Chest, Item, Cosmetic)."; return null; }
+                if (!RewardCurrencies.IsGrantable(currency))
                 {
                     error = RewardCurrencies.IsForbidden(currency)
                         ? $"'{token}' — '{currency}' can never be a reward (tradeable token)."
-                        : $"'{token}' — '{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.AllowedList}).";
+                        : $"'{token}' — '{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.GrantableList}).";
                     return null;
                 }
                 if (!TryAmount(parts[1], out var amount) || amount <= 0)

@@ -481,7 +481,7 @@ namespace Khela.Game.Services.Store
                     if (fulfilment.Lines.Any(l => l.CorrelationId == key)) continue;   // already paid on a previous drive
                     if (line.Kind == RewardKind.Currency)
                     {
-                        if (!RewardCurrencies.TryParseAllowed(line.Id, out var currency) || line.Amount <= 0m)
+                        if (!RewardCurrencies.TryParseSellable(line.Id, out var currency) || line.Amount <= 0m)
                         {
                             fulfilment.Flags.Add($"line {i}: refused ({line.Id} {line.Amount})");
                             continue;

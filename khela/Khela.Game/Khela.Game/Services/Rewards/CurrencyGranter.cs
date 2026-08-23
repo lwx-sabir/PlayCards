@@ -37,7 +37,7 @@ namespace Khela.Game.Services.Rewards
                 _logger.LogWarning("Reward line skipped: '{Id}' is not a currency name.", line.Id);
                 return null;
             }
-            if (!RewardCurrencies.IsAllowed(currency))
+            if (!RewardCurrencies.IsGrantable(currency))
             {
                 // Fail-closed. Loud, because reaching here means a config bypassed admin-save validation.
                 _logger.LogError("Reward line REFUSED: {Currency} may never be granted{Token}.",

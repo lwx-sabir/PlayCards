@@ -523,6 +523,10 @@ namespace PlayCard.Game.Net
         public decimal Gems { get; set; }
         public decimal Tokens { get; set; }
         public decimal Kash { get; set; }
+        // The three progression points (docs/VIP_SPEC.md). SP shows as the badge; LP and VIP-P have their own HUD slots.
+        public decimal Sp { get; set; }
+        public decimal Lp { get; set; }
+        public decimal VipPoints { get; set; }
     }
 
     /// <summary>Result of POST /api/gifts/claim — how many pending gifts were collected.</summary>

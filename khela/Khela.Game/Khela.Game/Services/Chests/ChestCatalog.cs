@@ -57,7 +57,7 @@ namespace Khela.Game.Services.Chests
         /// enum value can never re-open the legal guardrail (CLAUDE.md NON-NEGOTIABLE #2/#4). Enforced on save
         /// (<see cref="Validate"/>) AND at open (<see cref="RollRewards"/>). Delegates to
         /// <see cref="RewardCurrencies"/> — ONE allowlist for every reward system, so they can't drift apart.</summary>
-        public static bool IsAllowedReward(CurrencyType c) => RewardCurrencies.IsAllowed(c);
+        public static bool IsAllowedReward(CurrencyType c) => RewardCurrencies.IsGrantable(c);
 
         /// <summary>The tradeable token specifically — kept only for a precise error message (the headline forbidden
         /// case). The actual gate is the <see cref="IsAllowedReward"/> allowlist.</summary>
@@ -136,7 +136,7 @@ namespace Khela.Game.Services.Chests
                     if (!IsAllowedReward(r.Currency))
                         return IsForbidden(r.Currency)
                             ? $"{c.Key} / {c.Tier}: '{r.Currency}' can never be a chest reward (tradeable token)."
-                            : $"{c.Key} / {c.Tier}: '{(int)r.Currency}' is not a permitted chest reward currency (allowed: {RewardCurrencies.AllowedList}).";
+                            : $"{c.Key} / {c.Tier}: '{(int)r.Currency}' is not a permitted chest reward currency (allowed: {RewardCurrencies.GrantableList}).";
                     if (r.Min < 0 || r.Max < 0) return $"{c.Key} / {c.Tier}: amounts can't be negative.";
                     if (r.Max < r.Min) return $"{c.Key} / {c.Tier}: Max ({r.Max}) is below Min ({r.Min}) for {r.Currency}.";
                 }

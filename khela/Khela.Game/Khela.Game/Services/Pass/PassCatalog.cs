@@ -560,11 +560,11 @@ namespace Khela.Game.Services.Pass
                 {
                     case RewardKind.Currency:
                         if (!RewardCurrencies.TryParse(line.Id, out var currency))
-                            return Where($"'{line.Id}' is not a currency name (allowed: {RewardCurrencies.AllowedList}).");
-                        if (!RewardCurrencies.IsAllowed(currency))
+                            return Where($"'{line.Id}' is not a currency name (allowed: {RewardCurrencies.GrantableList}).");
+                        if (!RewardCurrencies.IsGrantable(currency))
                             return Where(RewardCurrencies.IsForbidden(currency)
                                 ? $"'{currency}' can never be a reward (tradeable token)."
-                                : $"'{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.AllowedList}).");
+                                : $"'{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.GrantableList}).");
                         break;
 
                     case RewardKind.Chest:

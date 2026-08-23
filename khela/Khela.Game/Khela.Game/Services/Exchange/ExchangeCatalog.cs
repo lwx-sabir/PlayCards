@@ -202,10 +202,13 @@ namespace Khela.Game.Services.Exchange
                 if ((p.Description ?? "").Length > MaxDescriptionLength) return $"{key}: description longer than {MaxDescriptionLength}.";
 
                 // Currencies: wallet names, never Tokens (the legal guardrail), never the same on both sides.
+                // The two sides have DIFFERENT allowlists (docs/VIP_SPEC.md §1). LP may be spent but never bought — chips → LP
+                // would be buying comp; SP and VIP-P are on neither side — status is not for sale on, and VIP-P is the record
+                // of money, so an exchange into it would make VIP level (and its cashback) farmable.
                 if (!RewardCurrencies.TryParse(p.FromCurrency, out var from)) return $"{key}: '{p.FromCurrency}' is not a currency name.";
-                if (!RewardCurrencies.IsAllowed(from)) return $"{key}: {from} can never be exchanged (allowed: {RewardCurrencies.AllowedList}).";
+                if (!RewardCurrencies.IsExchangeableFrom(from)) return $"{key}: {from} can never be exchanged FROM (allowed: {RewardCurrencies.ExchangeFromList}).";
                 if (!RewardCurrencies.TryParse(p.ToCurrency, out var to)) return $"{key}: '{p.ToCurrency}' is not a currency name.";
-                if (!RewardCurrencies.IsAllowed(to)) return $"{key}: {to} can never be exchanged (allowed: {RewardCurrencies.AllowedList}).";
+                if (!RewardCurrencies.IsExchangeableTo(to)) return $"{key}: {to} can never be exchanged FOR (allowed: {RewardCurrencies.ExchangeToList}).";
                 if (from == to) return $"{key}: from and to are the same currency.";
                 p.FromCurrency = from.ToString(); p.ToCurrency = to.ToString();   // canonical names
 

@@ -544,7 +544,7 @@ namespace Khela.Game.Services.Store
                     {
                         case RewardKind.Currency:
                             if (!RewardCurrencies.TryParse(line.Id, out var currency)) return $"{id}: '{line.Id}' is not a currency name.";
-                            if (!RewardCurrencies.IsAllowed(currency)) return $"{id}: {currency} may never be sold (allowed: {RewardCurrencies.AllowedList}).";
+                            if (!RewardCurrencies.IsSellable(currency)) return $"{id}: {currency} may never be sold (allowed: {RewardCurrencies.SellableList}).";
                             if (line.Amount <= 0m) return $"{id}: {currency} amount must be > 0.";
                             break;
                         case RewardKind.Xp:

@@ -25,19 +25,19 @@ namespace Khela.Game.Tests
         [InlineData(CurrencyType.Coins)]
         [InlineData(CurrencyType.Gems)]
         [InlineData(CurrencyType.Kash)]
-        public void Allowlist_PermitsPlayAndSpendCurrencies(CurrencyType c) => Assert.True(RewardCurrencies.IsAllowed(c));
+        public void Allowlist_PermitsPlayAndSpendCurrencies(CurrencyType c) => Assert.True(RewardCurrencies.IsGrantable(c));
 
         [Fact]
         public void Allowlist_NeverPermitsTheTradeableToken()
         {
-            Assert.False(RewardCurrencies.IsAllowed(CurrencyType.Tokens));
+            Assert.False(RewardCurrencies.IsGrantable(CurrencyType.Tokens));
             Assert.True(RewardCurrencies.IsForbidden(CurrencyType.Tokens));
-            Assert.False(RewardCurrencies.TryParseAllowed("Tokens", out _));
+            Assert.False(RewardCurrencies.TryParseGrantable("Tokens", out _));
         }
 
         [Fact]
         public void Allowlist_RejectsAnyUndefinedOrFutureCurrencyValue()
-            => Assert.False(RewardCurrencies.IsAllowed((CurrencyType)99));
+            => Assert.False(RewardCurrencies.IsGrantable((CurrencyType)99));
 
         [Fact]
         public void ChestCatalog_SharesTheSameAllowlist()

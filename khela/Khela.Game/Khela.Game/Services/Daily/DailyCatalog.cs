@@ -266,10 +266,10 @@ namespace Khela.Game.Services.Daily
                     {
                         if (!RewardCurrencies.TryParse(line.Id, out var currency))
                             return $"Day {n.Index}: '{line.Id}' is not a currency.";
-                        if (!RewardCurrencies.IsAllowed(currency))
+                        if (!RewardCurrencies.IsGrantable(currency))
                             return RewardCurrencies.IsForbidden(currency)
                                 ? $"Day {n.Index}: '{currency}' can never be a reward (tradeable token)."
-                                : $"Day {n.Index}: '{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.AllowedList}).";
+                                : $"Day {n.Index}: '{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.GrantableList}).";
                     }
 
                     if (line.Kind == RewardKind.Chest && !RewardIds.TryParseChest(line.Id, out _, out _))
