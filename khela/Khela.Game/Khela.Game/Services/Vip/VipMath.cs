@@ -80,6 +80,10 @@ namespace Khela.Game.Services.Vip
         public static decimal SpendFloor(VipConfig c, int tierInt)
             => (c.SpendFloorsUsd != null && tierInt >= 0 && tierInt < c.SpendFloorsUsd.Length) ? c.SpendFloorsUsd[tierInt] : decimal.MaxValue;
 
+        /// <summary>The tier a given tier falls to at the season roll (docs/VIP_SPEC.md §2); a missing rung stays put.</summary>
+        public static int ResetTo(VipConfig c, int tierInt)
+            => (c?.TierResetTo != null && tierInt >= 0 && tierInt < c.TierResetTo.Length) ? c.TierResetTo[tierInt] : tierInt;
+
         private static decimal Get(decimal[] a, int i, decimal d) => (a != null && i >= 0 && i < a.Length) ? a[i] : d;
     }
 }

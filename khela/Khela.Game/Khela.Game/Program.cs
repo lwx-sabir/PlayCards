@@ -199,8 +199,10 @@ builder.Services.AddHostedService<Khela.Game.Games.ThreeCardPoker.ThreeCardPoker
 builder.Services.AddSingleton<Khela.Game.Games.VideoPoker.VideoPokerService>();   // plug-and-play Video Poker module (single-player REST, reuses shared wallet/redis/audit)
 builder.Services.AddHostedService<Khela.Game.Games.VideoPoker.VideoPokerReaper>();   // VP reaper: stand-pat-settle abandoned dealt hands so no bet is stranded
 builder.Services.AddHostedService<LeaderboardPruneService>();   // nightly prune of old PlayerDailyStat rows
+builder.Services.AddScoped<Khela.Game.Services.Vip.ISeasonService, Khela.Game.Services.Vip.SeasonService>();   // status seasons: SP resets to a lower tier at each roll (docs/VIP_SPEC.md §2)
 builder.Services.AddHostedService<Khela.Game.Services.Vip.VipTierReviewService>();   // monthly VIP tier review (gentle decay, §3.4)
 builder.Services.AddHostedService<Khela.Game.Services.Loyalty.LoyaltyWalletMigrationService>();   // one-shot: MOVE profile LP into the Lp wallet (docs/VIP_SPEC.md §3); inert once done
+builder.Services.AddHostedService<Khela.Game.Services.Vip.SeasonRollService>();   // opens season 1 (seeding SP from the current tier) and rolls each season at its end
 builder.Services.AddSingleton<SettlementReconciliationService>();      // one shared instance...
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconciliationService>());  // ...run as the hosted sweeper (no-op unless Reconciliation:Enabled) AND injectable for the on-demand debug endpoint
 builder.Services.AddSingleton<IRedisService , RedisService>();

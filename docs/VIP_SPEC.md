@@ -1,6 +1,6 @@
 # VIP redesign — three points, three jobs (Reza, 2026-08-23)
 
-*Status: SPEC, not built. Reviewed by three independent critics (economy/abuse, hard rules, feasibility) on 2026-08-23;
+*Status: BUILDING — steps 1-3 of §7 are in (currencies + channels; LP on the wallet; seasons + SP on the wallet). Steps 4-5 remain. Reviewed by three independent critics (economy/abuse, hard rules, feasibility) on 2026-08-23;
 six findings folded in — see §9. Supersedes PROGRESSION_SPEC §3 (VIP/Status), §4 (Loyalty) **and the equal-house-edge clause
 of §1.3** (the win bonus + rebate is a post-settle promotion — §4); §2 (XP/Level) is untouched. Every number below is a
 dev-time default — all of them land on admin editors.*
@@ -44,6 +44,13 @@ Chips → VIP-P. So there are **three explicit allowlists** (one check per chann
   from play is never from winnings.
 - **Tier = band of the current season's SP.** The spend floor is **gone** (money is VIP-P's job). Tier table (admin, 8 rows
   None…Black Diamond): `SpBar`, `CompBoost %`, `ResetTo`. Bronze stays the free floor at `VipEntryLevel` (player level 20).
+- **BUILT (step 3):** the tier is the band of the SP WALLET BALANCE, since nothing debits SP until the roll — so the band the
+  balance reaches IS the tier climbed to (no peak column), mid-season demotion is impossible, and `ReviewTierAsync` keeps only
+  PROMOTION (the old monthly one-tier-max decay + `DemoteHysteresis` answered a trailing sum that could shrink; a season
+  answers it with a scheduled reset instead). The monthly `StatusPointsLedger` buckets are no longer written — the wallet
+  ledger is the audit — and trailing SPEND, needed only if an admin re-imposes a floor, now comes from `StorePurchases`.
+  Season 1 opens on first run and SEEDS every player's SP to the bar of the tier they already hold, which is the migration off
+  the trailing-window model: every badge is preserved without pretending a 12-month sum was ever a season total.
 - **Seasons** — new `Seasons` table (`StartUtc`, `EndUtc`, `Status`); admin knob `Season:LengthDays`, **0 = lifetime / never
   resets**; every SP credit carries the season id. At season end a job (replaces the monthly tier review) does, per player:
   `newTier = ResetTo[climbedTier]`, season SP := `SpBar[newTier]` (a ledger debit — or credit, if the bar is above the balance —

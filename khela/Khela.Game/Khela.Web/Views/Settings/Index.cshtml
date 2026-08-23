@@ -222,6 +222,64 @@
         </form>
     </div>
 
+    @* ------------------------------------------------ seasons ------------------------------------------------ *@
+    <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+            <h3>Status seasons</h3>
+            <span class="badge badge-live">Live · checked every 5 min</span>
+        </div>
+        <p class="page-sub">
+            Status Points are <strong>seasonal</strong>. They accrue into the SP wallet all season and the badge is the band that
+            balance reaches; at the roll every player drops to their tier's <strong>Resets to</strong> and their SP is set to that
+            tier's bar — so the climb is worth making again. Because nothing takes SP away mid-season, a badge can only ever
+            rise until the roll.
+        </p>
+        <p class="page-sub">
+            <strong>0 = lifetime</strong>: the season never ends and nobody is ever reset. That is how this ships, so seasons stay
+            off until you turn them on. Changing the length does <strong>not</strong> move the open season's end date — a boundary
+            players have already been reset against must not move under them — so it takes effect at the next roll.
+        </p>
+
+        <div class="setting-list" style="margin-top:8px">
+            <div class="setting-row">
+                <span class="setting-label">Current season</span>
+                <span class="setting-val">
+                    @if (Model.CurrentSeason == null)
+                    {
+                        <text>none yet — the game server opens season 1 on its next start (and seeds every player's SP from the tier they hold)</text>
+                    }
+                    else
+                    {
+                        <text>#@Model.CurrentSeason.Index · started @Model.CurrentSeason.StartsAtUtc.ToString("yyyy-MM-dd HH:mm") UTC · </text>
+                        @(Model.CurrentSeason.EndsAtUtc == null
+                            ? "runs forever (lifetime)"
+                            : $"ends {Model.CurrentSeason.EndsAtUtc:yyyy-MM-dd HH:mm} UTC")
+                    }
+                </span>
+            </div>
+            @if (Model.LastClosedSeason != null)
+            {
+                <div class="setting-row">
+                    <span class="setting-label">Last roll</span>
+                    <span class="setting-val">season #@Model.LastClosedSeason.Index · @Model.LastClosedSeason.RolledAtUtc?.ToString("yyyy-MM-dd HH:mm") UTC · @Model.LastClosedSeason.PlayersRolled.ToString("#,0") player(s) reset</span>
+                </div>
+            }
+        </div>
+
+        <form asp-controller="Settings" asp-action="SaveSeason" method="post" style="margin-top:14px">
+            <div class="setting-list">
+                <div class="setting-edit-row2">
+                    <div class="setting-meta">
+                        <div class="setting-label">Season length (days) <span class="dim" style="font-weight:400; font-size:11px">Season:LengthDays</span></div>
+                        <div class="setting-help">0 = lifetime (never rolls). 30 = monthly, 90 = quarterly. Applies from the next roll.</div>
+                    </div>
+                    <input class="input setting-input" type="number" min="0" step="1" name="Season:LengthDays" value="@Model.SeasonLengthDays" />
+                </div>
+            </div>
+            <div style="margin-top:14px"><button class="btn btn-primary" type="submit">Save season length</button></div>
+        </form>
+    </div>
+
     @* ------------------------------------------------ VIP tier ladder ------------------------------------------------ *@
     <div class="panel" style="margin-top:16px">
         <div class="panel-head">
@@ -229,8 +287,11 @@
             <span class="badge badge-live">Live · next accrual</span>
         </div>
         <p class="page-sub">
-            The RANK ladder. A tier is reached with <strong>both</strong> its SP bar (trailing window) and its USD spend floor —
-            a floor above $0 means that tier cannot be reached without paying. <strong>Comp %</strong> is the tier's slice of the
+            The RANK ladder. A tier is the band this SEASON's SP reaches — SP accrues into the wallet all season and nothing
+            takes it away until the roll, so the band only ever rises and there is no mid-season demotion.
+            <strong>Resets to</strong> is where the tier lands at the season roll (SP is set to that tier's bar); it may only go
+            DOWN. Spend floors ship at <strong>$0</strong> — money buys VIP-P now, not status — but the column stays if you ever
+            want a paid gate. <strong>Comp %</strong> is the tier's slice of the
             benefit multiplier; <strong>grind ×</strong> is how fast the same SP builds VIP&nbsp;Levels. Tier <em>None</em> must stay at
             <strong>×0</strong>, or players below the VIP entry level start grinding VIP Levels.
         </p>
@@ -243,6 +304,7 @@
                         <th style="text-align:left">Spend floor (USD)</th>
                         <th style="text-align:left">Comp %</th>
                         <th style="text-align:left">Grind ×</th>
+                        <th style="text-align:left">Resets to</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -256,6 +318,14 @@
                             <td><input class="input" type="number" min="0" step="1" name="tierFloor" value="@t.SpendFloorUsd" style="width:140px" /></td>
                             <td><input class="input" type="number" min="0" step="1" name="tierBonus" value="@(t.BonusPct * 100m)" style="width:110px" /></td>
                             <td><input class="input" type="number" min="0" step="0.1" name="tierFactor" value="@t.Factor" style="width:110px" /></td>
+                            <td>
+                                <select class="input" name="tierReset" style="width:150px">
+                                    @for (int r = 0; r <= i; r++)
+                                    {
+                                        <option value="@r" selected="@(t.ResetTo == r)">@tierNames[r]</option>
+                                    }
+                                </select>
+                            </td>
                         </tr>
                     }
                 </tbody>

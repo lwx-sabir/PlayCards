@@ -48,15 +48,22 @@ namespace Khela.Game.Tests
             => Assert.Equal(expected, VipMath.ResolveBand(sp, 0m, level: 50, Cfg()));
 
         [Fact]
-        public void ResolveBand_UpperBands_RequireSpendFloor_ElseCapAtGold()
+        public void ResolveBand_ShippedDefaults_HaveNoSpendGate_SoPlayAloneReachesTheApex()
         {
-            // 150M SP qualifies for Black Diamond by SP alone, but $0 spend fails every spend-gated floor (Platinum+),
-            // so it caps at the highest SP-only band — Gold.
-            Assert.Equal(VipTier.Gold, VipMath.ResolveBand(150_000_000, 0m, level: 100, Cfg()));
-            // Platinum SP bar + its $30 spend floor → Platinum.
-            Assert.Equal(VipTier.Platinum, VipMath.ResolveBand(1_250_000, 30m, level: 100, Cfg()));
-            // Full apex: 150M SP + $4,000 spend → Black Diamond.
-            Assert.Equal(VipTier.BlackDiamond, VipMath.ResolveBand(150_000_000, 4_000m, level: 100, Cfg()));
+            // The badge tier is an ACTIVITY ladder (docs/VIP_SPEC.md §2) — money buys VIP-P, never the badge. So the
+            // shipped floors are all $0 and 150M SP reaches Black Diamond on play alone.
+            Assert.Equal(VipTier.BlackDiamond, VipMath.ResolveBand(150_000_000, 0m, level: 100, Cfg()));
+            Assert.Equal(VipTier.Platinum, VipMath.ResolveBand(1_250_000, 0m, level: 100, Cfg()));
+        }
+
+        [Fact]
+        public void ResolveBand_AdminSetSpendFloor_StillGatesTheBandItGuards()
+        {
+            // The mechanism survives for an admin who wants it back: a floor on Platinum+ caps a $0 player at Gold.
+            var gated = new VipConfig { SpendFloorsUsd = new[] { 0m, 0m, 0m, 0m, 30m, 250m, 1_000m, 4_000m } };
+            Assert.Equal(VipTier.Gold, VipMath.ResolveBand(150_000_000, 0m, level: 100, gated));
+            Assert.Equal(VipTier.Platinum, VipMath.ResolveBand(1_250_000, 30m, level: 100, gated));
+            Assert.Equal(VipTier.BlackDiamond, VipMath.ResolveBand(150_000_000, 4_000m, level: 100, gated));
         }
 
         // ---- multiplier (benefit track only) + badge ----

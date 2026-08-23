@@ -26,7 +26,16 @@ namespace Khela.Game.Services.Vip
 
         // --- Tier (rank ladder, §3.0–3.5) ---
         public long[] SpThresholds      { get; init; } = new long[]    { 0, 0, 50_000, 250_000, 1_250_000, 6_250_000, 31_000_000, 150_000_000 };
-        public decimal[] SpendFloorsUsd { get; init; } = new decimal[] { 0m, 0m, 0m, 0m, 30m, 150m, 800m, 4_000m };
+        // Spend floors are ZERO now: money buys VIP-P, not status (docs/VIP_SPEC.md §2). The mechanism stays so a spend
+        // gate can be re-imposed from the admin, and it is sourced from StorePurchases — the actual record of spend —
+        // rather than the retired SP ledger.
+        public decimal[] SpendFloorsUsd { get; init; } = new decimal[] { 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m };
+        /// <summary>
+        /// Where each tier lands at the SEASON ROLL, indexed by the tier climbed to. A season resets you to a LOWER tier —
+        /// far enough down that the climb is worth making again, not so far that a season of play counts for nothing —
+        /// and your SP to that tier's bar. Bronze (the free floor) and None stay put.
+        /// </summary>
+        public int[] TierResetTo { get; init; } = new int[] { 0, 1, 1, 2, 3, 4, 5, 6 };
         // Small comp bonus per tier (the "experienced player" signal): Bronze +1% … Black Diamond +15%.
         public decimal[] TierBonusPct   { get; init; } = new decimal[] { 0m, 0.01m, 0.03m, 0.05m, 0.08m, 0.11m, 0.13m, 0.15m };
         // VIP-Level grind acceleration per tier — a higher tier grinds VIP Level faster (Bronze ×1 → Black ×3).
@@ -63,7 +72,7 @@ namespace Khela.Game.Services.Vip
                 // array keys: a tier's SP bar, spend floor, comp bonus and grind factor are ONE row of one decision, and
                 // seven keys that could be saved at different lengths is how a ladder ends up half-retuned.
                 SpThresholds = tiers.SpThresholds, SpendFloorsUsd = tiers.SpendFloorsUsd,
-                TierBonusPct = tiers.TierBonusPct, TierFactors = tiers.TierFactors,
+                TierBonusPct = tiers.TierBonusPct, TierFactors = tiers.TierFactors, TierResetTo = tiers.TierResetTo,
                 VipLevelBonusPct = levels.VipLevelBonusPct, VipLevelThresholds = levels.VipLevelThresholds,
                 VipMaintainLpCost = levels.VipMaintainLpCost,
             };
@@ -76,6 +85,12 @@ namespace Khela.Game.Services.Vip
         {
             public long SpThreshold { get; init; }
             public decimal SpendFloorUsd { get; init; }
+            /// <summary>
+            /// The tier this one falls to at the season roll (0 None … 7 Black Diamond). NULLABLE on purpose: a ladder saved
+            /// before seasons existed has no such field, and a non-nullable int would read as 0 — every tier resetting to
+            /// None, so the first roll would wipe every player to no badge and no SP. Null means "keep the built-in rung".
+            /// </summary>
+            public int? ResetTo { get; init; }
             /// <summary>Comp bonus as a FRACTION (0.15 = +15%).</summary>
             public decimal BonusPct { get; init; }
             /// <summary>VIP-Level grind multiplier at this tier (0 = earns none).</summary>
@@ -106,6 +121,7 @@ namespace Khela.Game.Services.Vip
                 {
                     SpThreshold = At(c.SpThresholds, i), SpendFloorUsd = At(c.SpendFloorsUsd, i),
                     BonusPct = At(c.TierBonusPct, i), Factor = At(c.TierFactors, i),
+                    ResetTo = AtInt(c.TierResetTo, i),
                 });
             return rows;
         }
@@ -132,28 +148,34 @@ namespace Khela.Game.Services.Vip
         /// half-applying: a ladder with one bad rung is a ladder that ranks players wrongly, which is worse than one that
         /// is merely mistuned. Must be exactly 8 rows (the tier enum's width) and non-decreasing in SP.
         /// </summary>
-        public static (long[] SpThresholds, decimal[] SpendFloorsUsd, decimal[] TierBonusPct, decimal[] TierFactors)
+        public static (long[] SpThresholds, decimal[] SpendFloorsUsd, decimal[] TierBonusPct, decimal[] TierFactors, int[] TierResetTo)
             ParseTiers(string json, VipConfig fallback)
         {
-            var fb = (fallback.SpThresholds, fallback.SpendFloorsUsd, fallback.TierBonusPct, fallback.TierFactors);
+            var fb = (fallback.SpThresholds, fallback.SpendFloorsUsd, fallback.TierBonusPct, fallback.TierFactors, fallback.TierResetTo);
             if (string.IsNullOrWhiteSpace(json)) return fb;
             try
             {
                 var rows = System.Text.Json.JsonSerializer.Deserialize<List<TierRow>>(json, LadderJson);
                 if (rows == null || rows.Count != 8) return fb;
-                var sp = new long[8]; var floors = new decimal[8]; var bonus = new decimal[8]; var factors = new decimal[8];
+                var sp = new long[8]; var floors = new decimal[8]; var bonus = new decimal[8]; var factors = new decimal[8]; var resets = new int[8];
                 for (int i = 0; i < 8; i++)
                 {
                     var r = rows[i];
                     if (r == null || r.SpThreshold < 0 || r.SpendFloorUsd < 0m || r.BonusPct < 0m || r.Factor < 0m) return fb;
                     if (i > 0 && r.SpThreshold < sp[i - 1]) return fb;   // a ladder must not go down
                     sp[i] = r.SpThreshold; floors[i] = r.SpendFloorUsd; bonus[i] = r.BonusPct; factors[i] = r.Factor;
+                    // A reset must go DOWN (or stay): a season that promotes you for finishing it is not a reset. A row
+                    // saved BEFORE seasons existed has no such field — null keeps the built-in rung, because reading a
+                    // missing value as 0 would mean every tier resets to None and the first roll would wipe every badge.
+                    var reset = r.ResetTo ?? AtInt(fallback.TierResetTo, i);
+                    if (reset < 0 || reset > i) return fb;
+                    resets[i] = reset;
                 }
                 // Tier None must grind NOTHING. The web form refuses this too, but a Vip:Tiers document can also arrive
                 // from a seed file or a direct Redis edit, and a non-zero factor there would let every player below the
                 // VIP entry level grind VIP Levels — the gate the whole ladder rests on. The GAME is the one that guarantees it.
                 if (factors[0] != 0m) return fb;
-                return (sp, floors, bonus, factors);
+                return (sp, floors, bonus, factors, resets);
             }
             catch { return fb; }
         }
@@ -184,6 +206,7 @@ namespace Khela.Game.Services.Vip
 
         private static long At(long[] a, int i) => (a != null && i >= 0 && i < a.Length) ? a[i] : 0L;
         private static decimal At(decimal[] a, int i) => (a != null && i >= 0 && i < a.Length) ? a[i] : 0m;
+        private static int AtInt(int[] a, int i) => (a != null && i >= 0 && i < a.Length) ? a[i] : 0;
 
         private static decimal Dec(IReadOnlyDictionary<string, string> o, string k, decimal d)
             => o.TryGetValue(k, out var v) && decimal.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : d;

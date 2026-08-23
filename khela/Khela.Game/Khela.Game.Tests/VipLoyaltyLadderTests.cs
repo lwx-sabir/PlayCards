@@ -27,7 +27,8 @@ namespace Khela.Game.Tests
             Assert.Equal(8, tiers.Count);
             Assert.Equal(0m, tiers[0].Factor);                    // None grinds nothing
             Assert.Equal(150_000_000L, tiers[7].SpThreshold);      // BlackDiamond
-            Assert.Equal(4_000m, tiers[7].SpendFloorUsd);
+            Assert.Equal(0m, tiers[7].SpendFloorUsd);        // spend floors retired: money buys VIP-P, not status
+            Assert.Equal(6, tiers[7].ResetTo);                // Black Diamond falls to Royal Diamond at the season roll
 
             var levels = GoodLevels();
             Assert.Equal(10, levels.Count);
@@ -82,7 +83,7 @@ namespace Khela.Game.Tests
         public void ATierLadderThatIsWrong_FallsBackWhole()
         {
             var b = Base();
-            void Same((long[] Sp, decimal[] Floors, decimal[] Bonus, decimal[] Factors) got)
+            void Same((long[] Sp, decimal[] Floors, decimal[] Bonus, decimal[] Factors, int[] Resets) got)
                 => Assert.Equal(b.SpThresholds, got.Sp);
 
             Same(VipConfig.ParseTiers("", b));
@@ -92,11 +93,11 @@ namespace Khela.Game.Tests
             Same(VipConfig.ParseTiers(VipConfig.SerializeTiers(short7), b));
 
             var descending = GoodTiers();
-            descending[5] = new VipConfig.TierRow { SpThreshold = 1, SpendFloorUsd = 0m, BonusPct = 0.1m, Factor = 2m };
+            descending[5] = new VipConfig.TierRow { SpThreshold = 1, SpendFloorUsd = 0m, BonusPct = 0.1m, Factor = 2m, ResetTo = 4 };
             Same(VipConfig.ParseTiers(VipConfig.SerializeTiers(descending), b));   // a ladder must not go down
 
             var negative = GoodTiers();
-            negative[3] = new VipConfig.TierRow { SpThreshold = 100, SpendFloorUsd = -1m, BonusPct = 0m, Factor = 1m };
+            negative[3] = new VipConfig.TierRow { SpThreshold = 100, SpendFloorUsd = -1m, BonusPct = 0m, Factor = 1m, ResetTo = 2 };
             Same(VipConfig.ParseTiers(VipConfig.SerializeTiers(negative), b));
         }
 
@@ -120,7 +121,7 @@ namespace Khela.Game.Tests
             // refuses it, but a seed file or a direct Redis edit reaches the same key — so the parser must refuse it too.
             var b = Base();
             var rows = GoodTiers();
-            rows[0] = new VipConfig.TierRow { SpThreshold = 0, SpendFloorUsd = 0m, BonusPct = 0m, Factor = 1m };
+            rows[0] = new VipConfig.TierRow { SpThreshold = 0, SpendFloorUsd = 0m, BonusPct = 0m, Factor = 1m, ResetTo = 0 };
             Assert.Equal(b.TierFactors, VipConfig.ParseTiers(VipConfig.SerializeTiers(rows), b).TierFactors);
         }
 

@@ -132,7 +132,6 @@ namespace Khela.Game.Services.Vip
                 {
                     profile.DailySpFromWager += granted;
                     profile.LifetimeStatusPoints += granted;
-                    await AddToMonthBucketAsync(userId, now, granted, 0m);
 
                     // VIP-Level grind (§3.6): progress = granted SP × the player's tier factor; auto level-up (cap 10).
                     var gained = VipMath.VipProgressFromSp(granted, profile.VipTier, cfg);
@@ -144,8 +143,17 @@ namespace Khela.Game.Services.Vip
                 profile.VipLevelMaintainedThrough = now.AddDays(cfg.VipMaintainDays);  // ...and maintains the VIP level (§3.6)
                 profile.UpdatedAt = now;
 
-                try { await _db.SaveChangesAsync(); return granted; }
+                try { await _db.SaveChangesAsync(); }
                 catch (DbUpdateConcurrencyException) when (attempt < 4) { _db.ChangeTracker.Clear(); continue; }
+
+                // The SP credit lands AFTER the profile is safely saved, and outside the retry loop. Inside it, the
+                // wallet's own SaveChanges would flush and commit the tracked profile mid-attempt, so a concurrency retry
+                // would re-apply the daily cap, lifetime SP and the level grind on top of a commit that already happened.
+                // SP is a wallet currency whose balance IS this season's total (docs/VIP_SPEC.md §2) — nothing debits it
+                // until the roll, so the band of that balance is always the tier the player has climbed to.
+                await _wallet.CreditAsync(userId.ToString(), CurrencyType.Sp, granted, TransactionType.Bonus,
+                    Loyalty.LoyaltyService.Key("spw", roundId, userId), new WalletContext { Description = "Status: play" });
+                return granted;
             }
         }
 
@@ -167,10 +175,16 @@ namespace Khela.Game.Services.Vip
                 profile.BadgeLitUntil = now.AddDays(cfg.BadgeWindowDays);
                 profile.VipLevelMaintainedThrough = now.AddDays(cfg.VipMaintainDays);   // a purchase also maintains the VIP level
                 profile.UpdatedAt = now;
-                await AddToMonthBucketAsync(userId, now, sp, usdSpent);
 
-                try { await _db.SaveChangesAsync(); return sp; }
+                try { await _db.SaveChangesAsync(); }
                 catch (DbUpdateConcurrencyException) when (attempt < 4) { _db.ChangeTracker.Clear(); continue; }
+
+                // After the save and outside the loop, for the same reason as the play accrual: the wallet's own
+                // SaveChanges would otherwise commit the tracked profile mid-attempt and a retry would double-count it.
+                if (sp > 0)
+                    await _wallet.CreditAsync(userId.ToString(), CurrencyType.Sp, sp, TransactionType.Bonus,
+                        Loyalty.LoyaltyService.Key("spp", idemKey, userId), new WalletContext { Description = "Status: purchase" });
+                return sp;
             }
         }
 
@@ -360,20 +374,16 @@ namespace Khela.Game.Services.Vip
             var now = DateTime.UtcNow;
             var (sp, spend) = await TrailingAsync(userId, cfg, now);
 
-            // --- Tier: gentle decay (§3.4) — one-tier-max, only below the hysteresis bar; Bronze permanent floor. ---
+            // --- Tier: PROMOTION only. ---
+            //
+            // Demotion belongs to the season roll now (docs/VIP_SPEC.md §2), and it cannot happen here even in principle:
+            // SP only rises within a season, so the band never falls. The old monthly one-tier-max decay + hysteresis was
+            // the trailing-window model's answer to a sum that could shrink under a player who stopped playing; a season
+            // answers it with a scheduled, announced reset instead of a quiet monthly slide.
             var band = VipMath.ResolveBand(sp, spend, profile.Level, cfg);
-            var current = profile.VipTier;
-            VipTier target;
-            if ((int)band >= (int)current) target = band;   // promotion / hold
-            else
-            {
-                bool underBar = sp < (long)(VipMath.SpBar(cfg, (int)current) * cfg.DemoteHysteresis)
-                              || spend < VipMath.SpendFloor(cfg, (int)current) * cfg.DemoteHysteresis;
-                target = underBar ? (VipTier)((int)current - 1) : current;
-            }
+            var target = (int)band >= (int)profile.VipTier ? band : profile.VipTier;
             if (profile.Level >= cfg.VipEntryLevel && (int)target < (int)VipTier.Bronze) target = VipTier.Bronze;
-            if ((int)target < 0) target = VipTier.None;
-            if (target != current) profile.VipTier = target;
+            if (target != profile.VipTier) profile.VipTier = target;
 
             // --- VIP Level: drop 1 if unmaintained this period (no play / LP / IAP top-up); floor 0; fresh window after. ---
             if (profile.VipLevel > 0 &&
@@ -393,28 +403,29 @@ namespace Khela.Game.Services.Vip
 
         // ---- helpers ----
 
-        private async Task AddToMonthBucketAsync(Guid userId, DateTime now, long sp, decimal usd)
-        {
-            var monthStart = new DateTime(now.Year, now.Month, 1);
-            var bucket = await _db.StatusPointsLedgers.FirstOrDefaultAsync(b => b.UserId == userId && b.PeriodStart == monthStart);
-            if (bucket == null)
-            {
-                bucket = new StatusPointsLedger { UserId = userId, PeriodStart = monthStart };
-                _db.StatusPointsLedgers.Add(bucket);
-            }
-            bucket.Sp += sp;
-            bucket.SpendUsd += usd;
-            bucket.UpdatedAt = now;
-        }
-
+        /// <summary>
+        /// This SEASON's SP, and — only when some tier still has a spend floor — the trailing USD spend.
+        ///
+        /// SP is the wallet balance: nothing debits it until the season roll, so the balance IS the season's total and the
+        /// band of it is the tier the player has climbed to. The monthly <c>StatusPointsLedger</c> buckets are no longer
+        /// written — the wallet ledger is the audit now. Spend comes from <c>StorePurchases</c>, the actual record of money;
+        /// the floors ship at 0 because money buys VIP-P rather than status (docs/VIP_SPEC.md §2), so the query is skipped
+        /// entirely unless an admin re-imposes one.
+        /// </summary>
         private async Task<(long sp, decimal spend)> TrailingAsync(Guid userId, VipConfig cfg, DateTime now)
         {
-            var windowStart = new DateTime(now.Year, now.Month, 1).AddMonths(-(Math.Max(1, cfg.TierWindowMonths) - 1));
-            var rows = await _db.StatusPointsLedgers.AsNoTracking()
-                .Where(b => b.UserId == userId && b.PeriodStart >= windowStart)
-                .ToListAsync();
-            long sp = 0; decimal spend = 0m;
-            foreach (var r in rows) { sp += r.Sp; spend += r.SpendUsd; }
+            var sp = (long)Math.Floor(await _wallet.GetBalanceAsync(userId.ToString(), CurrencyType.Sp));
+
+            bool anyFloor = false;
+            if (cfg.SpendFloorsUsd != null)
+                foreach (var f in cfg.SpendFloorsUsd) if (f > 0m) { anyFloor = true; break; }
+            if (!anyFloor) return (sp, decimal.MaxValue);   // nothing to clear — never pay for the query
+
+            var windowStart = now.AddMonths(-Math.Max(1, cfg.TierWindowMonths));
+            var spend = await _db.StorePurchases.AsNoTracking()
+                .Where(s => s.UserId == userId && !s.IsTest && s.CreatedAt >= windowStart
+                         && (s.Status == StorePurchaseStatus.Granted || s.Status == StorePurchaseStatus.Refunded))
+                .SumAsync(s => (decimal?)s.UsdReference) ?? 0m;
             return (sp, spend);
         }
 

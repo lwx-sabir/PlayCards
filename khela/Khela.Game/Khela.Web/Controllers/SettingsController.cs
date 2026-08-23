@@ -1,3 +1,5 @@
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -264,14 +266,14 @@ namespace Khela.Web.Controllers
         {
             try
             {
-                var sp = Request.Form["tierSp"]; var floor = Request.Form["tierFloor"];
+                var sp = Request.Form["tierSp"]; var floor = Request.Form["tierFloor"]; var reset = Request.Form["tierReset"];
                 var bonus = Request.Form["tierBonus"]; var factor = Request.Form["tierFactor"];
                 var rows = new List<Khela.Game.Services.Vip.VipConfig.TierRow>();
                 for (int i = 0; i < 8 && i < sp.Count; i++)
                     rows.Add(new Khela.Game.Services.Vip.VipConfig.TierRow
                     {
                         SpThreshold = Lng(sp, i), SpendFloorUsd = Dec(floor, i),
-                        BonusPct = Pct(bonus, i), Factor = Dec(factor, i),
+                        BonusPct = Pct(bonus, i), Factor = Dec(factor, i), ResetTo = (int)Lng(reset, i),
                     });
 
                 if (rows.Count != 8) { TempData["Error"] = "The tier table needs all 8 rows (None … Black Diamond)."; return RedirectToAction(nameof(Index)); }
@@ -280,11 +282,38 @@ namespace Khela.Web.Controllers
                     { TempData["Error"] = "Refused: the SP bars must not go DOWN as the tier rises — the game would refuse this ladder and fall back to the built-in one."; return RedirectToAction(nameof(Index)); }
                 if (rows[0].Factor != 0m)
                     { TempData["Error"] = "Refused: tier None must have grind factor 0 — anything else lets players below the VIP entry level grind VIP Levels."; return RedirectToAction(nameof(Index)); }
+                for (int i = 0; i < 8; i++)
+                    if (rows[i].ResetTo < 0 || rows[i].ResetTo > i)
+                    { TempData["Error"] = $"Refused: tier {i} resets to {rows[i].ResetTo} — a season reset must go DOWN (or stay), never promote."; return RedirectToAction(nameof(Index)); }
 
                 await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Vip:Tiers", Khela.Game.Services.Vip.VipConfig.SerializeTiers(rows));
                 TempData["Saved"] = "Saved the VIP tier ladder — live on the next accrual (~15 s). Existing players are re-banded by the tier review, not instantly.";
             }
             catch (Exception ex) { TempData["Error"] = $"Could not save the tier ladder: {ex.Message}"; }
+            return RedirectToAction(nameof(Index));
+        }
+
+        /// <summary>
+        /// Season length, in days. <b>0 = a LIFETIME season</b> that never rolls — how the feature ships, so nobody is reset
+        /// by surprise. Changing it does NOT move the open season's end date: a boundary players have already been reset
+        /// against must not move under them, so the new length takes effect at the next roll.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> SaveSeason()
+        {
+            try
+            {
+                var raw = Request.Form["Season:LengthDays"].ToString().Trim();
+                if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) || days < 0)
+                { TempData["Error"] = "Season length must be 0 (lifetime) or a positive number of days."; return RedirectToAction(nameof(Index)); }
+
+                await _redis.GetDatabase().HashSetAsync(SettingsHashKey, "Season:LengthDays", days.ToString(CultureInfo.InvariantCulture));
+                TempData["Saved"] = days == 0
+                    ? "Seasons switched OFF — the open season never ends and nobody is reset."
+                    : $"Season length saved: {days} day(s). The season already open keeps its end date; the next one uses the new length.";
+            }
+            catch (Exception ex) { TempData["Error"] = $"Could not save the season length: {ex.Message}"; }
             return RedirectToAction(nameof(Index));
         }
 
@@ -586,6 +615,21 @@ namespace Khela.Web.Controllers
             vm.VipLevels = Khela.Game.Services.Vip.VipConfig.LevelRows(vipEffective);
             vm.LoyaltyCatalog = Khela.Game.Services.Loyalty.LoyaltyConfig.ParseCatalog(
                 Eff("Loyalty:Catalog"), new Khela.Game.Services.Loyalty.LoyaltyConfig().Catalog).ToList();
+            vm.SeasonLengthDays = int.TryParse(Eff("Season:LengthDays"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var seasonDays) && seasonDays > 0 ? seasonDays : 0;
+            try
+            {
+                // Read-only here: the game process owns opening and rolling seasons (it holds the lease and moves the SP).
+                // NOT a "using": this context belongs to the request scope, and disposing it here would break every
+                // component that renders after the action — the sidebar's live badges included.
+                var seasonCtx = HttpContext.RequestServices.GetService(typeof(Khela.Game.Database.AppDbContext)) as Khela.Game.Database.AppDbContext;
+                vm.CurrentSeason = seasonCtx?.Seasons.AsNoTracking()
+                    .Where(s => s.Status == Khela.Game.Database.Models.SeasonStatus.Open)
+                    .OrderByDescending(s => s.Index).FirstOrDefault();
+                vm.LastClosedSeason = seasonCtx?.Seasons.AsNoTracking()
+                    .Where(s => s.Status == Khela.Game.Database.Models.SeasonStatus.Closed)
+                    .OrderByDescending(s => s.Index).FirstOrDefault();
+            }
+            catch { }
             vm.LpChipsPerPoint = decimal.TryParse(Eff("Loyalty:LpChipsPerPoint"), NumberStyles.Any, CultureInfo.InvariantCulture, out var lpRate) && lpRate > 0m
                 ? lpRate : new Khela.Game.Services.Loyalty.LoyaltyConfig().LpChipsPerPoint;
             return vm;
@@ -619,6 +663,10 @@ namespace Khela.Web.Controllers
         public List<Khela.Game.Services.Loyalty.LoyaltyStoreItem> LoyaltyCatalog { get; set; } = new();
         /// <summary>Chips of clean wager per 1 LP — the denominator that turns an LP price into a comp percentage.</summary>
         public decimal LpChipsPerPoint { get; set; } = 100m;
+        /// <summary>Season length in days; 0 = a lifetime season that never rolls.</summary>
+        public int SeasonLengthDays { get; set; }
+        public Khela.Game.Database.Models.Season? CurrentSeason { get; set; }
+        public Khela.Game.Database.Models.Season? LastClosedSeason { get; set; }
         public string? Saved { get; set; }
         public string? Error { get; set; }
     }
