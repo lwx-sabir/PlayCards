@@ -35,9 +35,58 @@ namespace Khela.Web.Controllers
         private readonly AppDbContext _db;
         private readonly IConfiguration _config;
 
-        public StoreController(IConnectionMultiplexer redis, IConfigBackupService backups, AppDbContext db, IConfiguration config)
+        private readonly Khela.Game.Services.Storage.IObjectStorage _storage;
+        private readonly Microsoft.Extensions.Options.IOptions<Khela.Game.Services.Storage.StorageOptions> _storageOptions;
+
+        public StoreController(IConnectionMultiplexer redis, IConfigBackupService backups, AppDbContext db, IConfiguration config,
+            Khela.Game.Services.Storage.IObjectStorage storage,
+            Microsoft.Extensions.Options.IOptions<Khela.Game.Services.Storage.StorageOptions> storageOptions)
         {
             _redis = redis; _backups = backups; _db = db; _config = config;
+            _storage = storage; _storageOptions = storageOptions;
+        }
+
+        /// <summary>The top-level prefix every shop image lives under. Other areas get their own (avatars, pass, chests).</summary>
+        public const string ShopImageFolder = "shop-images";
+
+        /// <summary>
+        /// Upload one image for a product and answer with the KEY to store, not a url.
+        ///
+        /// The key is what goes in the product's Images list; the url is derived when the catalog is served, so moving
+        /// the bucket or putting a CDN domain in front later changes one setting instead of every product. The reply
+        /// carries the url too, but only so the editor can show a thumbnail.
+        /// </summary>
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequestSizeLimit(32 * 1024 * 1024)]
+        public async Task<IActionResult> UploadImage(IFormFile file, CancellationToken ct)
+        {
+            var opts = _storageOptions.Value ?? new Khela.Game.Services.Storage.StorageOptions();
+            if (file == null || file.Length == 0) return Json(new { ok = false, error = "No file." });
+
+            var ext = Path.GetExtension(file.FileName ?? "").ToLowerInvariant();
+            if (!opts.AllowedExtensions.Contains(ext))
+                return Json(new { ok = false, error = $"'{ext}' is not an image type this accepts ({string.Join(", ", opts.AllowedExtensions)})." });
+
+            var maxBytes = Math.Max(1, opts.MaxUploadMb) * 1024L * 1024L;
+            if (file.Length > maxBytes)
+                return Json(new { ok = false, error = $"{file.Length / 1024 / 1024} MB is over the {opts.MaxUploadMb} MB limit — compress it rather than raising the limit." });
+
+            // One flat folder. R2 has no real directories anyway — the key IS the path — and a flat list is what makes
+            // an image reusable across products instead of buried under whichever one happened to upload it.
+            var key = Khela.Game.Services.Storage.StorageKeys.ForUpload(ShopImageFolder, file.FileName);
+            if (key == null) return Json(new { ok = false, error = "That file name leaves nothing usable as a key — rename it." });
+
+            try
+            {
+                using var stream = file.OpenReadStream();
+                var url = await _storage.PutAsync(key, stream, file.ContentType, ct);
+                return Json(new { ok = true, key, url, provider = _storage.ProviderName });
+            }
+            catch (Exception ex)
+            {
+                return Json(new { ok = false, error = $"Upload failed ({_storage.ProviderName}): {ex.Message}" });
+            }
         }
 
         // ======================================================================= catalog
@@ -79,7 +128,8 @@ namespace Khela.Web.Controllers
             var p = cfg.Find(id);
             if (p == null) return Back("Product not found.");
 
-            var lines = PassRewardText.Parse(form.Lines, out var lineError);
+            // sellable: a store product may SELL VIP Points, which nothing is allowed to GRANT (docs/VIP_SPEC.md §1).
+            var lines = PassRewardText.Parse(form.Lines, out var lineError, sellable: true);
             if (lines == null) return Back($"'{id}' lines: {lineError}", openEdit: id);
 
             p.Enabled = form.Enabled;
@@ -93,7 +143,11 @@ namespace Khela.Web.Controllers
             p.BonusPercent = Math.Max(0, form.BonusPercent);
             p.Featured = form.Featured;
             p.UsdReference = form.UsdReference;
-            p.Images = (form.Images ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+            var newImages = (form.Images ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+            // Only an ART change bumps the images version: clients drop their whole on-disk image cache when it moves, and
+            // doing that for a price edit would re-download every picture in the shop on every device for nothing.
+            if (!newImages.SequenceEqual(p.Images ?? new List<string>(), StringComparer.Ordinal)) cfg.ImagesVersion++;
+            p.Images = newImages;
             p.StoreIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             void Sid(StorePlatform platform, string value) { if (!string.IsNullOrWhiteSpace(value)) p.StoreIds[platform.ToString()] = value.Trim(); }
             Sid(StorePlatform.GooglePlay, form.StoreIdGooglePlay);
@@ -468,6 +522,16 @@ namespace Khela.Web.Controllers
 
         private bool AllowRandomPayloads() => Flag(Eff("Store:AllowRandomPayloads"), false);
 
+        /// <summary>
+        /// The page asked for this over fetch rather than by submitting a form, so it wants an ANSWER, not a new page.
+        ///
+        /// Every action here funnels through <see cref="SaveConfig"/> and <see cref="Back"/>, which is why the whole
+        /// controller becomes an API by teaching those two — no per-action duplication, and a redirect stays the
+        /// fallback for anything (or anyone) not using the script.
+        /// </summary>
+        private bool WantsJson =>
+            string.Equals(Request.Headers["X-Requested-With"], "fetch", StringComparison.OrdinalIgnoreCase);
+
         private IActionResult SaveConfig(StoreCatalogConfig cfg, string message, string openEdit = null)
         {
             var problem = StoreCatalog.Validate(cfg, allowRandomPayloads: AllowRandomPayloads());
@@ -476,9 +540,15 @@ namespace Khela.Web.Controllers
             {
                 _backups.BackupAsync(StoreCatalog.RedisKey).GetAwaiter().GetResult();   // snapshot the OLD value first
                 _redis.GetDatabase().StringSet(StoreCatalog.RedisKey, StoreCatalog.ToJson(cfg));
+                if (WantsJson) return Json(new { ok = true, message });
                 TempData["Saved"] = message;
             }
-            catch { TempData["Error"] = "Could not reach Redis to save."; }
+            catch
+            {
+                const string failed = "Could not reach Redis to save.";
+                if (WantsJson) return Json(new { ok = false, error = failed });
+                TempData["Error"] = failed;
+            }
             return openEdit != null ? RedirectToAction(nameof(Index), new { edit = openEdit }) : RedirectToAction(nameof(Index));
         }
 
@@ -575,6 +645,12 @@ namespace Khela.Web.Controllers
             {
                 Config = cfg,
                 Overridden = Overridden(),
+                StorageProvider = _storage.ProviderName,
+                ImageUrl = key => _storage.UrlFor(key),
+                // Derived by asking the store to resolve a probe key, so it is right for whichever provider is live
+                // rather than a second copy of the url rule in the view.
+                StorageBaseUrl = (_storage.UrlFor("__base__") is string probe && probe.EndsWith("/__base__", StringComparison.Ordinal))
+                    ? probe.Substring(0, probe.Length - "/__base__".Length) : "",
                 Json = json ?? StoreCatalog.ToJson(cfg),
                 Backups = _backups.List(StoreCatalog.RedisKey).Take(20).ToList(),
                 StoreEnabled = Flag(Eff("Store:Enabled"), true),
@@ -633,6 +709,9 @@ namespace Khela.Web.Controllers
 
         private IActionResult Back(string error, string openEdit = null)
         {
+            // 200 with ok:false, not a 4xx: these are the admin's own validation messages ("that sale already ended"),
+            // and the page shows them beside the form rather than treating them as a transport failure.
+            if (WantsJson) return Json(new { ok = false, error });
             TempData["Error"] = error;
             return openEdit != null ? RedirectToAction(nameof(Index), new { edit = openEdit }) : RedirectToAction(nameof(Index));
         }
@@ -741,6 +820,13 @@ namespace Khela.Web.Controllers
         public int PurchaseCount { get; set; }
         public int PendingCount { get; set; }
         public decimal RevenueUsd30d { get; set; }
+        /// <summary>Which store is live ("Cloudflare R2" / "Local disk"), so an upload landing in the wrong place is visible.</summary>
+        public string StorageProvider { get; set; }
+        /// <summary>Turns a stored KEY into the url the admin can show a thumbnail from. Products store keys, not urls.</summary>
+        public Func<string, string> ImageUrl { get; set; } = _ => null;
+        /// <summary>The base the page prefixes a key with to preview an upload before the row is re-rendered.</summary>
+        public string StorageBaseUrl { get; set; }
+
         /// <summary>Product id to open in the edit modal on load (after Create / a failed Save).</summary>
         public string EditId { get; set; }
         public string Saved { get; set; }

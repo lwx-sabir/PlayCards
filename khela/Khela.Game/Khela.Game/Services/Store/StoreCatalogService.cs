@@ -143,9 +143,12 @@ namespace Khela.Game.Services.Store
         private readonly IConfiguration _config;
         private readonly ILogger<StoreCatalogService> _logger;
 
-        public StoreCatalogService(AppDbContext db, IRedisService redis, IConfiguration config, ILogger<StoreCatalogService> logger)
+        private readonly Storage.IObjectStorage _storage;
+
+        public StoreCatalogService(AppDbContext db, IRedisService redis, IConfiguration config, ILogger<StoreCatalogService> logger,
+            Storage.IObjectStorage storage)
         {
-            _db = db; _redis = redis; _config = config; _logger = logger;
+            _db = db; _redis = redis; _config = config; _logger = logger; _storage = storage;
         }
 
         public async Task<StoreCatalogConfig> GetConfigAsync()
@@ -263,7 +266,11 @@ namespace Khela.Game.Services.Store
                     Badge2 = p.Badge2,
                     BonusPercent = p.BonusPercent,
                     Featured = p.Featured,
-                    Images = p.Images?.ToList() ?? new List<string>(),
+                    // Keys in, URLS out. A product stores "shop-images/chips_04/box.png"; the client is handed the
+                    // absolute url the object store resolves it to, so moving the bucket or putting a CDN domain in
+                    // front is one setting rather than an edit to every product. An absolute url passes through, which
+                    // is what keeps art hosted elsewhere working.
+                    Images = (p.Images ?? new List<string>()).Select(i => _storage.UrlFor(i)).Where(u => u != null).ToList(),
                     Lines = p.Lines?.ToList() ?? new List<Khela.Common.Rewards.RewardGrant>(),
                     Effect = p.Effect == null ? null : new StoreEffectDto { Type = p.Effect.Type, Arg = p.Effect.Arg, Params = p.Effect.Params == null ? null : new Dictionary<string, string>(p.Effect.Params) },
                     UsdReference = p.UsdReference,
@@ -285,6 +292,7 @@ namespace Khela.Game.Services.Store
                 Enabled = storeOn,
                 PlatformEnabled = platformOn,
                 Version = cfg.Version,
+                ImagesVersion = cfg.ImagesVersion,
                 Sections = (cfg.Sections ?? new List<StoreSectionDef>()).OrderBy(s => s.SortOrder)
                     .Select(s => new StoreSectionDto { Key = s.Key, Title = s.Title, SortOrder = s.SortOrder }).ToList(),
                 Products = products,

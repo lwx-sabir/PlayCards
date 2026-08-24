@@ -196,12 +196,21 @@ namespace Khela.Game.Tests
         }
 
         [Fact]
-        public void ValueGuard_FlagsAPiggyOfferWorseThanTheBestPack()
+        public void ValueGuard_MeasuresAgainstTheENTRYPack_NotTheBulkOne()
         {
             var cfg = Seed();
-            // tier-1 Full: 10M for $1.99 = 5.03M/$ ≥ best pack (5.0005M/$) → fine; a 5M bank at the same price is worse → warned
-            Assert.Empty(StoreCatalog.PiggyValueWarnings(cfg, new[] { ("piggy_t1_full", 10_000_000m) }));
-            var warnings = StoreCatalog.PiggyValueWarnings(cfg, new[] { ("piggy_t1_full", 5_000_000m) });
+            // The entry pack is chips_01: 5M for $1.99 = 2.51M/$. That is the UNDISCOUNTED rate — every pack above it is
+            // a bulk discount, topping out at 5.0M/$ on the $99.99 one.
+            var entry = StoreCatalog.EntryChipsPerUsd(cfg);
+            Assert.Equal(5_000_000m / 1.99m, entry);
+            Assert.True(StoreCatalog.BestChipsPerUsd(cfg) > entry, "the bulk rate should beat the entry rate");
+
+            // A tier-1 bank of 8.5M at $1.99 (4.27M/$) beats the entry pack and is fine — even though it loses to the
+            // $99.99 pack per dollar, which is what the old guard measured and why every rung looked bad.
+            Assert.Empty(StoreCatalog.PiggyValueWarnings(cfg, new[] { ("piggy_t1_full", 8_500_000m) }));
+
+            // Genuinely stingy — less per dollar than the cheapest pack — is still caught.
+            var warnings = StoreCatalog.PiggyValueWarnings(cfg, new[] { ("piggy_t1_full", 3_000_000m) });
             Assert.Single(warnings);
             Assert.StartsWith("piggy_t1_full", warnings[0]);
         }

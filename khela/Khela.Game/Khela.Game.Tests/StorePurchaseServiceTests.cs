@@ -49,7 +49,7 @@ namespace Khela.Game.Tests
             var db = _fx.NewContext();
             var wallet = new WalletService(db, NullLogger<WalletService>.Instance);
             var grants = new RewardGrantService(new IRewardGranter[] { new CurrencyGranter(wallet, NullLogger<CurrencyGranter>.Instance) }, NullLogger<RewardGrantService>.Instance);
-            var catalog = new StoreCatalogService(db, new NoRedis(), config, NullLogger<StoreCatalogService>.Instance);
+            var catalog = new StoreCatalogService(db, new NoRedis(), config, NullLogger<StoreCatalogService>.Instance, new TestObjectStorage());
             var registry = new StoreVerifierRegistry(new IStoreReceiptVerifier[] { new FakeStoreReceiptVerifier(true) });
             var handlers = effectHandler == null ? Array.Empty<IStoreGrantHandler>() : new[] { effectHandler };
             var purchases = new StorePurchaseService(db, catalog, registry, handlers, wallet, grants,
@@ -294,7 +294,7 @@ namespace Khela.Game.Tests
             // the catalog's CheckAsync refuses at INTENT; redeem flags only.
             var user = Guid.NewGuid();
             using var s = NewStack();
-            var cfg = await new StoreCatalogService(s.Db, new NoRedis(), null, NullLogger<StoreCatalogService>.Instance).GetConfigAsync();
+            var cfg = await new StoreCatalogService(s.Db, new NoRedis(), null, NullLogger<StoreCatalogService>.Instance, new TestObjectStorage()).GetConfigAsync();
             var starter = cfg.Find("starter_pack");
             Assert.NotNull(starter);
             Assert.Equal(1, starter.Availability.MaxPerUser);

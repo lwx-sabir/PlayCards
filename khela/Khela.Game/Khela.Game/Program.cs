@@ -208,6 +208,25 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconcil
 builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<Khela.Game.Services.Auth.IFirebaseTokenVerifier, Khela.Game.Services.Auth.FirebaseTokenVerifier>();   // Firebase-brokered social sign-in (Google/Facebook/Apple/guest)
+// Object storage (docs: shop art first, then every other admin-named asset). R2 when it has credentials, local disk
+// otherwise — so a clone with no secrets still serves a shop instead of a wall of broken images.
+builder.Services.Configure<Khela.Game.Services.Storage.StorageOptions>(
+    builder.Configuration.GetSection(Khela.Game.Services.Storage.StorageOptions.Section));
+builder.Services.AddHttpContextAccessor();   // the local provider builds urls from the incoming request
+builder.Services.AddSingleton<Khela.Game.Services.Storage.IObjectStorage>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Khela.Game.Services.Storage.StorageOptions>>();
+    var configured = options.Value?.Provider;
+    bool useR2 = string.Equals(configured, "R2", StringComparison.OrdinalIgnoreCase)
+              || (string.IsNullOrWhiteSpace(configured) && options.Value?.R2?.IsConfigured == true);
+    if (useR2 && options.Value?.R2?.IsConfigured == true)
+        return ActivatorUtilities.CreateInstance<Khela.Game.Services.Storage.R2ObjectStorage>(sp);
+    if (useR2)
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("Storage")
+          .LogWarning("Storage:Provider is R2 but its credentials are incomplete — falling back to local disk.");
+    return ActivatorUtilities.CreateInstance<Khela.Game.Services.Storage.LocalObjectStorage>(sp);
+});
+
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
 // Reward payout seam (docs/PASS_SPEC.md §2): one line-based payload shape + one granter per RewardKind. Handing out a
@@ -327,6 +346,22 @@ if (Directory.Exists(artworkRoot))
 else
 {
     app.Logger.LogWarning("Artwork folder {Path} is missing — reward image urls will 404.", artworkRoot);
+}
+
+// The LOCAL object store, served the same read-only way. Harmless when R2 is the live provider: the folder is simply
+// empty, and nothing points at it. Created rather than skipped so the first upload has somewhere to land.
+{
+    var storage = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Khela.Game.Services.Storage.StorageOptions>>().Value;
+    var assetRoot = Path.Combine(app.Environment.ContentRootPath, storage.Local.Root);
+    Directory.CreateDirectory(assetRoot);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(assetRoot),
+        RequestPath = "/" + storage.Local.RequestPath.Trim('/'),
+        ServeUnknownFileTypes = false,
+        OnPrepareResponse = ctx =>
+            ctx.Context.Response.Headers.CacheControl = "public,max-age=604800",
+    });
 }
 
 app.UseAuthentication();

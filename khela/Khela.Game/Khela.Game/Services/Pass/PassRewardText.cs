@@ -46,7 +46,13 @@ namespace Khela.Game.Services.Pass
         /// Parse the text form. Returns null and sets <paramref name="error"/> on the FIRST bad token — the caller
         /// shows it as-is, so the message has to name the token.
         /// </summary>
-        public static List<RewardGrant> Parse(string text, out string error)
+        /// <summary>
+        /// Parse a reward-line string. <paramref name="sellable"/> picks the CHANNEL the currencies are checked against
+        /// (docs/VIP_SPEC.md §1): a pass track, a chest or a daily reward may only GRANT, while a store product may also
+        /// SELL — VIP Points being the case that matters, since they are the record of money spent and nothing may hand
+        /// them out for free. Default false, so every existing editor keeps the stricter list.
+        /// </summary>
+        public static List<RewardGrant> Parse(string text, out string error, bool sellable = false)
         {
             error = null;
             var lines = new List<RewardGrant>();
@@ -109,11 +115,11 @@ namespace Khela.Game.Services.Pass
                 // Chips 1000 · Kash 5 — a currency NAME, never a number (so "3" can't become Tokens).
                 if (!RewardCurrencies.TryParse(head, out var currency))
                 { error = $"'{token}' — '{head}' isn't a reward kind or currency (use {RewardCurrencies.GrantableList}, XP, Chest, Item, Cosmetic)."; return null; }
-                if (!RewardCurrencies.IsGrantable(currency))
+                if (!(sellable ? RewardCurrencies.IsSellable(currency) : RewardCurrencies.IsGrantable(currency)))
                 {
                     error = RewardCurrencies.IsForbidden(currency)
                         ? $"'{token}' — '{currency}' can never be a reward (tradeable token)."
-                        : $"'{token}' — '{currency}' is not a permitted reward currency (allowed: {RewardCurrencies.GrantableList}).";
+                        : $"'{token}' — '{currency}' is not permitted here (allowed: {(sellable ? RewardCurrencies.SellableList : RewardCurrencies.GrantableList)}).";
                     return null;
                 }
                 if (!TryAmount(parts[1], out var amount) || amount <= 0)

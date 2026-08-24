@@ -56,6 +56,27 @@ builder.Services.AddScoped<Khela.Game.Services.Pass.IPassService, Khela.Game.Ser
 // Config:BackupDir at the same path when they share a box.
 builder.Services.AddSingleton<Khela.Game.Services.Config.IConfigBackupService, Khela.Game.Services.Config.ConfigBackupService>();
 
+// Object storage — the admin is what UPLOADS, so it needs the same store the game reads keys against. Same rule:
+// R2 when its credentials are complete, local disk otherwise. This app and the game must be pointed at the SAME
+// bucket, or the admin would upload somewhere the players never look.
+builder.Services.Configure<Khela.Game.Services.Storage.StorageOptions>(
+    builder.Configuration.GetSection(Khela.Game.Services.Storage.StorageOptions.Section));
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<Khela.Game.Services.Storage.IObjectStorage>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Khela.Game.Services.Storage.StorageOptions>>();
+    var configured = options.Value?.Provider;
+    bool useR2 = string.Equals(configured, "R2", StringComparison.OrdinalIgnoreCase)
+              || (string.IsNullOrWhiteSpace(configured) && options.Value?.R2?.IsConfigured == true);
+    if (useR2 && options.Value?.R2?.IsConfigured == true)
+        return ActivatorUtilities.CreateInstance<Khela.Game.Services.Storage.R2ObjectStorage>(sp);
+    if (useR2)
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger("Storage")
+          .LogWarning("Storage:Provider is R2 but its credentials are incomplete — the admin will upload to local disk.");
+    return ActivatorUtilities.CreateInstance<Khela.Game.Services.Storage.LocalObjectStorage>(sp);
+});
+
+
 // --- Shared Redis: same instance as the game backend (leaderboards, presence, idempotency keys). ---
 var redisString = builder.Environment.IsDevelopment()
     ? builder.Configuration.GetConnectionString("RedisConnectionDevelopment")

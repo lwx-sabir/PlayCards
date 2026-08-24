@@ -129,6 +129,12 @@ namespace Khela.Game.Services.Store
     public sealed class StoreCatalogConfig
     {
         public int Version { get; set; } = 1;
+        /// <summary>
+        /// Bumped ONLY when a product's image urls change. Clients cache art on disk across sessions, so something has to
+        /// tell them it is stale — and it cannot be <see cref="Version"/>, which moves on every price tweak and would throw
+        /// away every cached image on every device for an edit that touched no art.
+        /// </summary>
+        public int ImagesVersion { get; set; } = 1;
         /// <summary>Catalog-level switch (the runtime kill switch is <c>Store:Enabled</c> on the settings overlay; this is the authored one).</summary>
         public bool Enabled { get; set; } = true;
         public List<StoreSectionDef> Sections { get; set; } = new List<StoreSectionDef>();
@@ -477,6 +483,25 @@ namespace Khela.Game.Services.Store
         public static decimal BestChipsPerUsd(StoreCatalogConfig cfg)
             => cfg?.Products == null ? 0m : cfg.Products.Where(p => p != null && p.Enabled).Select(p => p.ChipsPerUsd()).DefaultIfEmpty(0m).Max();
 
+        /// <summary>
+        /// The chips-per-USD of the CHEAPEST chip pack — the entry rung of the ladder, and what a piggy offer is judged
+        /// against.
+        ///
+        /// Not the best rate in the catalog: that belongs to the biggest pack, and volume pricing means a $2 product can
+        /// never match a $100 one per dollar. Measuring the piggy against it made every rung look bad and could only be
+        /// "fixed" by making the cheapest piggy better value than the whale pack. The piggy is meant to beat the pack a
+        /// player would otherwise buy at that price, which is the entry one.
+        /// </summary>
+        public static decimal EntryChipsPerUsd(StoreCatalogConfig cfg)
+        {
+            if (cfg?.Products == null) return 0m;
+            var packs = cfg.Products
+                .Where(p => p != null && p.Enabled && p.UsdReference > 0m && p.ChipsPerUsd() > 0m)
+                .OrderBy(p => p.UsdReference)
+                .ToList();
+            return packs.Count == 0 ? 0m : packs[0].ChipsPerUsd();
+        }
+
         /// <summary>Piggy tier a PiggyBreak product belongs to (from <c>Params["tier"]</c>); 0 when absent/invalid.</summary>
         public static int PiggyTierOf(StoreProductDef product)
         {
@@ -684,20 +709,20 @@ namespace Khela.Game.Services.Store
             return result;
         }
 
-        /// <summary>Value guard (PIGGY_BANK_SPEC §6): a piggy offer whose chips-per-USD is WORSE than the best chip pack is a warning
-        /// — the bank is meant to be the best offer in the game because it is earned. Returns the offending offers' ids.</summary>
+        /// <summary>Value guard (PIGGY_BANK_SPEC §6): a piggy offer worth LESS per dollar than the ENTRY chip pack is a
+        /// warning — the bank is earned, so it should beat the pack a player would otherwise buy at that price.</summary>
         public static List<string> PiggyValueWarnings(StoreCatalogConfig cfg, IEnumerable<(string ProductId, decimal Chips)> piggyOffers)
         {
             var result = new List<string>();
             if (cfg == null || piggyOffers == null) return result;
-            var best = BestChipsPerUsd(cfg);
+            var entry = EntryChipsPerUsd(cfg);
             foreach (var (productId, chips) in piggyOffers)
             {
                 var p = cfg.Find(productId);
                 if (p == null || p.UsdReference <= 0m || chips <= 0m) continue;
                 var perUsd = chips / p.UsdReference;
-                if (perUsd < best)
-                    result.Add($"{productId}: {perUsd:N0} chips/$ is worse than the best chip pack ({best:N0} chips/$)");
+                if (perUsd < entry)
+                    result.Add($"{productId}: {perUsd:N0} chips/$ is worse than the entry chip pack ({entry:N0} chips/$)");
             }
             return result;
         }

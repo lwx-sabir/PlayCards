@@ -43,7 +43,7 @@ namespace Khela.Game.Tests
             var db = _fx.NewContext();
             var wallet = new WalletService(db, NullLogger<WalletService>.Instance);
             var grants = new RewardGrantService(new IRewardGranter[] { new CurrencyGranter(wallet, NullLogger<CurrencyGranter>.Instance) }, NullLogger<RewardGrantService>.Instance);
-            var catalog = new StoreCatalogService(db, new NoRedis(), null, NullLogger<StoreCatalogService>.Instance);
+            var catalog = new StoreCatalogService(db, new NoRedis(), null, NullLogger<StoreCatalogService>.Instance, new TestObjectStorage());
             var registry = new StoreVerifierRegistry(new IStoreReceiptVerifier[] { new FakeStoreReceiptVerifier(true) });
             var purchases = new StorePurchaseService(db, catalog, registry, Array.Empty<IStoreGrantHandler>(), wallet, grants,
                 null, null, null, null, new NoRedis(), null, new StaticOptionsMonitor<StoreOptions>(new StoreOptions()), NullLogger<StorePurchaseService>.Instance);

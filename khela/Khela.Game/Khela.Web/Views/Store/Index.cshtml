@@ -125,18 +125,28 @@
 </div>
 
 @* ---------------------------------------------------------------- catalog ---------------------------------------------------------------- *@
-<div class="panel">
+<div class="panel" id="catalogPanel">
     <div class="panel-head">
         <h3>Catalog</h3>
         <span class="dim" style="font-size:12.5px">@Model.Config.Products.Count product(s) · best chip pack @Num(Model.BestChipsPerUsd) chips/$ · @(Model.Config.Enabled ? "" : "CATALOG GLOBALLY OFF")</span>
     </div>
     <table class="data-table">
-        <thead><tr><th>Id</th><th>Section</th><th>Type</th><th>Pays</th><th>Effect</th><th>Ref $</th><th>chips/$</th><th>Play</th><th>App Store</th><th>Limits</th><th>State</th><th></th></tr></thead>
+        <thead><tr><th style="width:52px"></th><th>Id</th><th>Section</th><th>Type</th><th>Pays</th><th>Effect</th><th>Ref $</th><th>chips/$</th><th>Play</th><th>App Store</th><th>Limits</th><th>State</th><th></th></tr></thead>
         <tbody>
             @foreach (var p in Model.Config.Products.OrderBy(p => sections.IndexOf(p.Section ?? "")).ThenBy(p => p.SortOrder))
             {
                 <tr>
-                    <td><b>@p.Id</b>@if (!string.IsNullOrWhiteSpace(p.Badge)) { <span class="dim" style="font-size:11px"> · @p.Badge</span> }@if (!string.IsNullOrWhiteSpace(p.Badge2)) { <span class="dim" style="font-size:11px"> · @p.Badge2</span> }</td>
+                    <td>
+                        @{ var thumb = Model.ImageUrl(p.Images != null && p.Images.Count > 0 ? p.Images[0] : null); }
+                        @if (thumb != null)
+                        {
+                            <img src="@thumb" alt="" style="width:44px; height:44px; object-fit:contain; border-radius:6px; background:rgba(255,255,255,.04)" loading="lazy" />
+                        }
+                    </td>
+                    <td>
+                        <div><b>@p.Id</b>@if (!string.IsNullOrWhiteSpace(p.Badge)) { <span class="dim" style="font-size:11px"> · @p.Badge</span> }@if (!string.IsNullOrWhiteSpace(p.Badge2)) { <span class="dim" style="font-size:11px"> · @p.Badge2</span> }</div>
+                        @if (!string.IsNullOrWhiteSpace(p.Title)) { <div class="dim" style="font-size:12px">@p.Title</div> }
+                    </td>
                     <td>@p.Section</td>
                     <td class="dim" style="font-size:12px">@p.ProductType</td>
                     <td class="dim" style="font-size:12.5px">@LinesOf(p)@(p.BonusPercent > 0 ? $" (+{p.BonusPercent}%)" : "")</td>
@@ -249,7 +259,7 @@
             </tbody>
         </table>
         <div style="display:flex; gap:10px; align-items:center; padding:14px 16px; flex-wrap:wrap; border-top:1px solid var(--border,#2a3344)">
-            <form asp-action="CreatePiggyProducts" method="post" style="display:inline">
+            <form asp-action="CreatePiggyProducts" method="post" data-no-ajax style="display:inline">
                 <button type="submit" class="btn @(Model.PiggyMissing > 0 ? "btn-primary" : "btn-outline")">
                     Create missing products@(Model.PiggyMissing > 0 ? $" ({Model.PiggyMissing})" : "")
                 </button>
@@ -272,7 +282,7 @@
                     <td class="dim" style="font-size:12.5px">@($"{b.Bytes / 1024.0:0.0} KB")</td>
                     <td style="text-align:right; white-space:nowrap">
                         <a class="btn btn-outline" asp-action="Download" asp-route-file="@b.FileName">Download</a>
-                        <form asp-action="Restore" method="post" style="display:inline">
+                        <form asp-action="Restore" method="post" data-no-ajax style="display:inline">
                             <input type="hidden" name="file" value="@b.FileName" />
                             <button class="btn btn-outline" type="submit">Load into editor</button>
                         </form>
@@ -288,7 +298,7 @@
 </div>
 
 @* ---------------------------------------------------------------- sales ---------------------------------------------------------------- *@
-<div class="panel">
+<div class="panel" id="salesPanel">
     <div class="panel-head">
         <h3>Sales</h3>
         <span class="dim" style="font-size:12.5px">time-limited · set on a product in its editor (Sale box) · UTC</span>
@@ -354,7 +364,7 @@
         <h3>Sections</h3>
         <span class="dim" style="font-size:12.5px">the shop's tabs · a product's section must be one of these</span>
     </div>
-    <form asp-action="SaveSections" method="post">
+    <form asp-action="SaveSections" method="post" data-no-ajax>
         <table class="data-table">
             <thead><tr><th style="width:26%">Key</th><th style="width:44%">Title</th><th style="width:18%">Sort</th><th></th></tr></thead>
             <tbody>
@@ -387,14 +397,14 @@
 
 <div class="panel">
     <div class="panel-head"><h3>Raw JSON</h3><span class="dim" style="font-size:12.5px">bulk edits and restores — the exact document the game reads</span></div>
-    <form asp-action="SaveJson" method="post">
+    <form asp-action="SaveJson" method="post" data-no-ajax>
         <textarea name="json" rows="18" class="json-editor" spellcheck="false">@Model.Json</textarea>
         <div style="display:flex; gap:10px; margin-top:12px; align-items:center; flex-wrap:wrap">
             <button type="submit" class="btn btn-primary">Save JSON</button>
             <span class="dim" style="font-size:12px">Validated as the game would; a saved document is live within ~15 s.</span>
         </div>
     </form>
-    <form asp-action="Reset" method="post" onsubmit="return confirm('Reset to the built-in catalog? The current one is backed up first.');" style="margin-top:10px">
+    <form asp-action="Reset" method="post" data-no-ajax onsubmit="return confirm('Reset to the built-in catalog? The current one is backed up first.');" style="margin-top:10px">
         <button type="submit" class="btn btn-outline">Reset to defaults</button>
     </form>
 </div>
@@ -447,7 +457,15 @@
                     <label>Max per player (0 = ∞) <input name="MaxPerUser" id="f_maxuser" type="number" min="0" class="vip-select" /></label>
                     <label>Max per player per day (0 = ∞) <input name="MaxPerUserPerDay" id="f_maxday" type="number" min="0" class="vip-select" /></label>
                     <label>Min level <input name="MinLevel" id="f_minlevel" type="number" min="0" class="vip-select" /></label>
-                    <label class="span2">Images (one url per line, back→front, max 3) <textarea name="Images" id="f_images" rows="2" class="vip-select"></textarea></label>
+                    <label class="span2">Images (one KEY per line, back→front, max 3)
+                        <textarea name="Images" id="f_images" rows="2" class="vip-select"></textarea>
+                        <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap">
+                            <input type="file" id="f_imgfile" accept="image/*" class="vip-select" style="width:auto" />
+                            <button type="button" class="btn btn-outline" id="f_imgupload">Upload</button>
+                            <span class="dim" style="font-size:11.5px">stored in <b>@Model.StorageProvider</b> under <code>shop-images/</code> — the key is added above</span>
+                        </div>
+                        <div id="f_imgpreview" style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap"></div>
+                    </label>
                 </div>
                 <fieldset style="margin-top:14px; border:1px solid var(--border,#2a3344); border-radius:8px; padding:10px 12px 12px">
                     <legend class="dim" style="font-size:12px; padding:0 6px">Sale (time-limited)</legend>
@@ -521,12 +539,15 @@
             setVal('f_salekind', d.salekind || 'none'); setVal('f_salepct', d.salepct); setVal('f_salefrom', d.salefrom); setVal('f_saleto', d.saleto);
             setVal('f_salelabel', d.salelabel); setVal('f_salesku', d.salesku); setVal('f_saleskuof', d.saleskuof); saleKindChanged();
             document.getElementById('editModal').classList.add('open');
+            document.dispatchEvent(new Event('shop:editopened'));
         }
         function saleKindChanged() {
             var kind = document.getElementById('f_salekind').value;
             var wrap = document.getElementById('f_salesku_wrap');
             if (wrap) wrap.style.opacity = kind === 'PriceOff' ? '1' : '.45';
         }
+        window.__storageBase = '@Model.StorageBaseUrl';
+
         function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
         // Open the editor from anywhere that only knows the id (the piggy table) — the catalog row carries the data.
         function openEditById(id) {
@@ -541,5 +562,189 @@
             var btn = document.querySelector('button[data-id="' + openId.replace(/"/g, '') + '"]');
             if (btn) openEdit(btn);
         })();
+
+        // ------------------------------------------------------------------ CRUD without leaving the page
+        //
+        // Every action on this page posts to a controller that answers ok/error as JSON when asked over fetch, so a save
+        // no longer costs a full navigation: the catalog panel is re-rendered from the server (still ONE renderer, no
+        // duplicate row markup in JS) and dropped back in place, leaving scroll position, open panels and the modal's
+        // own state exactly where they were.
+        (function () {
+            // Both panels are re-rendered: ending a sale changes the catalog row too, and saving a product changes the sales list.
+            var panelIds = ['catalogPanel', 'salesPanel'];
+
+            // A button that is working says so. The label is kept and dimmed rather than replaced, so the row does not
+            // reflow mid-save and the player of this page can still read what they pressed.
+            (function ensureSpinnerCss() {
+                if (document.getElementById('ajaxSpinCss')) return;
+                var css = document.createElement('style');
+                css.id = 'ajaxSpinCss';
+                css.textContent =
+                    '.is-busy{position:relative;pointer-events:none}' +
+                    '.is-busy>*{opacity:.35}' +
+                    '.is-busy::after{content:"";position:absolute;top:50%;left:50%;width:14px;height:14px;margin:-7px 0 0 -7px;' +
+                    'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ajaxSpin .6s linear infinite}' +
+                    '@@keyframes ajaxSpin{to{transform:rotate(360deg)}}';
+                document.head.appendChild(css);
+            })();
+
+            function busy(button, on) {
+                if (!button) return;
+                button.disabled = on;
+                button.classList.toggle('is-busy', on);
+                // ::after needs a child to dim; a bare text button has none, so wrap the label once.
+                if (on && button.children.length === 0) button.innerHTML = '<span>' + button.innerHTML + '</span>';
+            }
+
+            function flash(message, bad) {
+                var el = document.getElementById('ajaxFlash');
+                if (!el) {
+                    el = document.createElement('div');
+                    el.id = 'ajaxFlash';
+                    el.style.cssText = 'position:fixed; left:50%; transform:translateX(-50%); bottom:24px; z-index:9999;' +
+                        'padding:10px 16px; border-radius:8px; font-size:13px; max-width:70vw; box-shadow:0 6px 24px rgba(0,0,0,.35)';
+                    document.body.appendChild(el);
+                }
+                el.textContent = message || '';
+                el.style.background = bad ? '#4b1d1d' : '#173a24';
+                el.style.color = bad ? '#fca5a5' : '#86efac';
+                el.style.display = message ? 'block' : 'none';
+                clearTimeout(el._t);
+                // An error stays put long enough to read; a success gets out of the way.
+                el._t = setTimeout(function () { el.style.display = 'none'; }, bad ? 9000 : 3000);
+            }
+
+            // Re-render the catalog from the server rather than patching the row here: the row shows derived values
+            // (chips/$, the effect summary, availability) that only the server knows how to compute.
+            function refreshCatalog() {
+                return fetch(window.location.pathname, { credentials: 'same-origin' })
+                    .then(function (r) { return r.text(); })
+                    .then(function (html) {
+                        var doc = new DOMParser().parseFromString(html, 'text/html');
+                        panelIds.forEach(function (id) {
+                            var fresh = doc.getElementById(id);
+                            var current = document.getElementById(id);
+                            if (fresh && current) current.replaceWith(fresh);
+                        });
+                    })
+                    .catch(function () { /* the save already succeeded; a stale table is not worth an error */ });
+            }
+
+            function post(form) {
+                return fetch(form.action, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'X-Requested-With': 'fetch' },
+                    body: new FormData(form)
+                }).then(function (r) { return r.json(); });
+            }
+
+            // Delegated, so it keeps working on the rows that refreshCatalog just replaced.
+            document.addEventListener('submit', function (e) {
+                var form = e.target;
+                if (!(form instanceof HTMLFormElement)) return;
+                if (form.hasAttribute('data-no-ajax')) return;
+                // Only this controller's own posts — never a search box or a form that navigates somewhere else.
+                if (!/\/Store\//i.test(form.getAttribute('action') || '')) return;
+
+                e.preventDefault();
+                var buttons = form.querySelectorAll('button[type="submit"], button:not([type])');
+                var pressed = e.submitter || buttons[0];
+                buttons.forEach(function (b) { b.disabled = true; });
+                busy(pressed, true);
+
+                post(form).then(function (res) {
+                    if (res && res.ok) {
+                        flash(res.message || 'Saved.', false);
+                        if (typeof closeEdit === 'function') closeEdit();
+                        return refreshCatalog();
+                    }
+                    // Refused by the server's own validation — say why and leave the form as it is so it can be fixed.
+                    flash((res && res.error) || 'Save failed.', true);
+                }).catch(function () {
+                    flash('Could not reach the server.', true);
+                }).then(function () {
+                    busy(pressed, false);
+                    buttons.forEach(function (b) { b.disabled = false; });
+                });
+            });
+        })();
+
+
+        // ------------------------------------------------------------------ image upload
+        //
+        // A product stores KEYS, not urls — the url is derived when the catalog is served, so the bucket or CDN domain
+        // can change without touching a product. The picker therefore uploads, then writes the key the server returns
+        // into the Images box, and previews it from the url the same reply carries.
+        (function () {
+            var fileInput = document.getElementById('f_imgfile');
+            var button = document.getElementById('f_imgupload');
+            var box = document.getElementById('f_images');
+            var preview = document.getElementById('f_imgpreview');
+            if (!fileInput || !button || !box) return;
+
+            // The keys in the box, previewed. Built from the SERVER's url rule rather than guessed here, so a key that
+            // does not resolve shows as a broken tile instead of silently looking fine.
+            function renderPreview() {
+                if (!preview) return;
+                preview.innerHTML = '';
+                box.value.split('\n').map(function (k) { return k.trim(); }).filter(Boolean).forEach(function (key) {
+                    var wrap = document.createElement('div');
+                    wrap.style.cssText = 'position:relative';
+                    var img = document.createElement('img');
+                    img.src = (window.__storageBase || '') + '/' + key.replace(/^\/+/, '');
+                    if (/^https?:\/\//i.test(key)) img.src = key;      // a legacy absolute url still previews
+                    img.style.cssText = 'width:64px;height:64px;object-fit:contain;border-radius:6px;background:rgba(255,255,255,.05)';
+                    img.title = key;
+                    var del = document.createElement('button');
+                    del.type = 'button';
+                    del.textContent = '×';
+                    del.title = 'Remove this key';
+                    del.style.cssText = 'position:absolute;top:-6px;right:-6px;width:20px;height:20px;line-height:18px;' +
+                        'border-radius:50%;border:1px solid var(--border,#2a3344);background:#1b2333;color:#fca5a5;cursor:pointer';
+                    del.onclick = function () {
+                        box.value = box.value.split('\n').map(function (x) { return x.trim(); })
+                            .filter(function (x) { return x && x !== key; }).join('\n');
+                        renderPreview();
+                    };
+                    wrap.appendChild(img);
+                    wrap.appendChild(del);
+                    preview.appendChild(wrap);
+                });
+            }
+
+            box.addEventListener('input', renderPreview);
+            document.addEventListener('shop:editopened', renderPreview);
+
+            button.addEventListener('click', function () {
+                var file = fileInput.files && fileInput.files[0];
+                if (!file) { alert('Pick an image first.'); return; }
+
+                var form = new FormData();
+                form.append('file', file);
+                // The antiforgery token belongs to the page's own form; borrow it rather than rendering a second one.
+                var token = document.querySelector('input[name="__RequestVerificationToken"]');
+                if (token) form.append('__RequestVerificationToken', token.value);
+
+                button.disabled = true;
+                var label = button.textContent;
+                button.textContent = 'Uploading…';
+
+                fetch('/Store/UploadImage', { method: 'POST', credentials: 'same-origin', body: form })
+                    .then(function (r) { return r.json(); })
+                    .then(function (res) {
+                        if (!res || !res.ok) { alert((res && res.error) || 'Upload failed.'); return; }
+                        // Appended, not replaced: a card can carry a back and a front layer.
+                        var keys = box.value.split('\n').map(function (k) { return k.trim(); }).filter(Boolean);
+                        if (keys.indexOf(res.key) < 0) keys.push(res.key);
+                        box.value = keys.join('\n');
+                        fileInput.value = '';
+                        renderPreview();
+                    })
+                    .catch(function () { alert('Could not reach the server.'); })
+                    .then(function () { button.disabled = false; button.textContent = label; });
+            });
+        })();
+
     </script>
 }

@@ -145,6 +145,8 @@ namespace Khela.Common.Store
         /// <summary>This platform is on (kill switch + credentials loaded server-side).</summary>
         public bool PlatformEnabled { get; set; }
         public int Version { get; set; }
+        /// <summary>Moves only when product ARTWORK changed — the signal for a client to drop its on-disk image cache.</summary>
+        public int ImagesVersion { get; set; }
         public List<StoreSectionDto> Sections { get; set; }
         public List<StoreProductDto> Products { get; set; }
         public DateTime ServerTimeUtc { get; set; }
