@@ -158,8 +158,37 @@ namespace PlayCard.Store
             return product.Lines.Where(l => l != null && l.Kind == (int)Khela.Common.Rewards.RewardKind.Currency && string.Equals(l.Id, currency, StringComparison.OrdinalIgnoreCase)).Sum(l => l.Amount);
         }
 
+        /// <summary>Where the last catalog's <c>ImagesVersion</c> is remembered between sessions.</summary>
+        private const string ImagesVersionKey = "store.imagesVersion";
+
+        /// <summary>
+        /// Art is cached on disk across sessions, so the SERVER says when it is stale: the catalog carries an images
+        /// version that moves only when a product's image urls change, and a move drops the cache.
+        ///
+        /// The first catalog a device ever sees is not a change — there is nothing cached to throw away — so it only
+        /// records the number. Otherwise every fresh install would clear an empty cache and re-download on the spot.
+        /// </summary>
+        private static void HonourImagesVersion(StoreCatalogDto dto)
+        {
+            if (dto == null) return;
+            bool known = PlayerPrefs.HasKey(ImagesVersionKey);
+            int last = PlayerPrefs.GetInt(ImagesVersionKey, 0);
+            if (known && last != dto.ImagesVersion)
+            {
+                PlayCard.Core.RemoteImage.ClearDisk();
+                Debug.Log($"[StoreCatalog] images version {last} → {dto.ImagesVersion}: cached art dropped.");
+            }
+            if (!known || last != dto.ImagesVersion)
+            {
+                PlayerPrefs.SetInt(ImagesVersionKey, dto.ImagesVersion);
+                PlayerPrefs.Save();
+            }
+        }
+
         private void Apply(StoreCatalogDto dto)
         {
+            // Before Changed fires, so the binders that repaint on it fetch the NEW art rather than the dropped copy.
+            HonourImagesVersion(dto);
             Current = dto;
             _fetchedAtUtc = DateTime.UtcNow;
             try { File.WriteAllText(CachePath, JsonSerializer.Serialize(dto, JsonOpts)); }
