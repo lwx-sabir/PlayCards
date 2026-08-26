@@ -68,6 +68,10 @@ namespace PlayCard.Store
             public string message = string.Empty;
             /// <summary>The server's answer for Success / Rejected / Pending — grants, balances, piggy/pass payloads.</summary>
             public StoreRedeemResultData redeem;
+
+            /// <summary>The PLAYER backed out of the store sheet. Not a failure: nothing broke, and treating it as one
+            /// means an error sound (or an error dialog) aimed at someone who simply changed their mind.</summary>
+            public bool Cancelled => failureReason == PurchaseFailureReason.UserCancelled;
         }
 
         public static IapService Instance { get; private set; }
@@ -119,6 +123,19 @@ namespace PlayCard.Store
         public event Action<InitializationState, string> OnInitializationStateChanged;
         public event Action OnCatalogUpdated;
         public event Action<string, bool> OnProcessingStateChanged;
+        /// <summary>
+        /// The store has TAKEN THE MONEY and the receipt is now with our server — the point a purchase stops being a
+        /// request and becomes an order we owe the player.
+        ///
+        /// Distinct from <see cref="OnProcessingStateChanged"/>, which goes true the instant Buy is pressed and so still
+        /// covers the store's own sheet. That one belongs to the card that was tapped; this one belongs to whatever
+        /// shows the outcome.
+        ///
+        /// Only ever raised for a purchase THIS session started. A pending order re-driven at start-up or pulled back by
+        /// a restore redeems down the same path in silence — nobody pressed anything, and a celebration in front of
+        /// someone who is at a table is not a celebration.
+        /// </summary>
+        public event Action<string> OnRedeemStarted;
         public event Action<PurchaseResult> OnPurchaseCompleted;
 
         public InitializationState State => initializationState;
@@ -675,6 +692,10 @@ namespace PlayCard.Store
                     try { request.Jws = order.Info != null && order.Info.Apple != null ? order.Info.Apple.jwsRepresentation : null; }
                     catch (Exception ex) { Debug.LogWarning($"[IapService] jwsRepresentation unavailable: {ex.Message}"); }
 #endif
+
+                    // Announced here, not when Buy was pressed: everything before this point could still have been
+                    // cancelled at the store's own sheet, and money that was never taken has no outcome to show.
+                    if (processingProductIds.Contains(productId)) OnRedeemStarted?.Invoke(productId);
 
                     var redeem = await RedeemWithRetriesAsync(request);
                     if (this == null) return;

@@ -66,6 +66,9 @@ namespace PlayCard.Store
         /// <summary>Reused by the corner reads: SelectFromScroll runs on every scroll frame, per section.</summary>
         private readonly Vector3[] corners = new Vector3[4];
 
+        /// <summary>Raised when a TAP picks a tab — the sound of choosing, not of the strip following a scroll.</summary>
+        public event System.Action<int> TabTapped;
+
         private void Awake()
         {
             if (scrollRect == null) scrollRect = GetComponent<ScrollRect>();
@@ -151,6 +154,7 @@ namespace PlayCard.Store
             var tab = tabs[index];
             if (tab?.section == null || content == null || viewport == null) return;
 
+            TabTapped?.Invoke(index);
             Select(index);
             pinned = index;
 
