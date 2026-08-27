@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1261719825806850297}
   - component: {fileID: 246991722977092369}
+  - component: {fileID: 6557393407522914797}
   m_Layer: 5
   m_Name: Btn_Purchase
   m_TagString: Untagged
@@ -86,6 +87,20 @@ MonoBehaviour:
   m_OnClick:
     m_PersistentCalls:
       m_Calls: []
+--- !u!114 &6557393407522914797
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 199504983565876449}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8138535ffc4d3ea468d1ce381b7fac71, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Audio.ButtonSound
+  click: {fileID: 11400000, guid: dcc1c275b80824c4b8f1e56495c696cf, type: 2}
+  denied: {fileID: 11400000, guid: bf7383b28ec971a4fbd39e0705b36934, type: 2}
 --- !u!1 &899985022212016086
 GameObject:
   m_ObjectHideFlags: 0
@@ -21982,6 +21997,7 @@ GameObject:
   - component: {fileID: 4921881264901582933}
   - component: {fileID: 2673515116669329212}
   - component: {fileID: 6524347502272506144}
+  - component: {fileID: 64879031213646345}
   m_Layer: 5
   m_Name: Starter_Kit
   m_TagString: Untagged
@@ -22158,6 +22174,20 @@ MonoBehaviour:
   amountCurrency: Chips
   amountFormat: N0
   bonusFormat: Bonus +{0}%
+--- !u!114 &64879031213646345
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7687916756930873839}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8138535ffc4d3ea468d1ce381b7fac71, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Audio.ButtonSound
+  click: {fileID: 11400000, guid: dcc1c275b80824c4b8f1e56495c696cf, type: 2}
+  denied: {fileID: 11400000, guid: bf7383b28ec971a4fbd39e0705b36934, type: 2}
 --- !u!1 &7853846402841933634
 GameObject:
   m_ObjectHideFlags: 0

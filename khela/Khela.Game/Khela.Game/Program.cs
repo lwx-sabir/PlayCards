@@ -208,6 +208,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SettlementReconcil
 builder.Services.AddSingleton<IRedisService , RedisService>();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<Khela.Game.Services.Auth.IFirebaseTokenVerifier, Khela.Game.Services.Auth.FirebaseTokenVerifier>();   // Firebase-brokered social sign-in (Google/Facebook/Apple/guest)
+builder.Services.AddHttpClient();   // used by GoogleOAuthService's token + userinfo calls
+builder.Services.AddScoped<Khela.Game.Services.Auth.IGoogleOAuthService, Khela.Game.Services.Auth.GoogleOAuthService>();   // exchanges a GPGS email-scope auth code → verified Google email (LinkedEmail)
 // Object storage (docs: shop art first, then every other admin-named asset). R2 when it has credentials, local disk
 // otherwise — so a clone with no secrets still serves a shop instead of a wall of broken images.
 builder.Services.Configure<Khela.Game.Services.Storage.StorageOptions>(
@@ -235,9 +237,11 @@ builder.Services.AddScoped<IPlayerStatsService, PlayerStatsService>();
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.CurrencyGranter>();
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.XpGranter>();
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.ChestGranter>();
+builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGranter, Khela.Game.Services.Rewards.ItemGranter>();   // owned items (tournament tickets); flips CanGrant(Item) on
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardGrantService, Khela.Game.Services.Rewards.RewardGrantService>();
 builder.Services.AddScoped<Khela.Game.Services.Rewards.IRewardService, Khela.Game.Services.Rewards.RewardService>();   // claimable reward inbox (level-up enqueues here; paid out on claim)
 builder.Services.AddScoped<Khela.Game.Services.Chests.IChestService, Khela.Game.Services.Chests.ChestService>();   // chest system (CK_Chest etc.; opened by the daily-mission bundle)
+builder.Services.AddScoped<Khela.Game.Services.Items.IItemService, Khela.Game.Services.Items.ItemService>();   // owned-item ledger: grant/count/consume (docs/TOURNAMENT_SPEC.md §4.2)
 builder.Services.AddScoped<Khela.Game.Services.Missions.IMissionService, Khela.Game.Services.Missions.MissionService>();   // daily missions (server-authoritative; progress at settle, reward on claim)
 builder.Services.AddScoped<Khela.Game.Services.Pass.IPassService, Khela.Game.Services.Pass.PassService>();   // monthly pass: free daily ladder + Golden subscription (docs/PASS_SPEC.md)
 
@@ -293,6 +297,9 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IReportsService, ReportsService>();
 builder.Services.AddScoped<Khela.Game.Services.Cosmetics.ICosmeticsService, Khela.Game.Services.Cosmetics.CosmeticsService>();   // cosmetics shop: catalog/purchases/entitlement gate (docs/AVATAR_SHOP_SPEC.md)
 builder.Services.AddScoped<Khela.Game.Services.Store.IStoreCatalogService, Khela.Game.Services.Store.StoreCatalogService>();   // store catalog (Redis khela:store doc + defaults; per-platform, per-user availability) — docs/IAP_SPEC.md §3
+// Which shop host greets a player: an object-storage listing under shop-images/girls/, filtered by the `-shop` name
+// marker and split by level. SINGLETON because it caches that listing in process — it changes on upload, not per request.
+builder.Services.AddSingleton<Khela.Game.Services.Store.ShopGirlDirectory>();
 builder.Services.AddScoped<Khela.Game.Services.Exchange.IExchangeService, Khela.Game.Services.Exchange.ExchangeService>();   // currency exchange A→B (Redis khela:exchange doc + defaults; idempotent debit/credit) — docs/EXCHANGE_SPEC.md
 builder.Services.Configure<Khela.Game.Services.Store.StoreOptions>(builder.Configuration.GetSection(Khela.Game.Services.Store.StoreOptions.Section));
 // Store verifiers — one per platform, registered only where this host can run them (docs/IAP_SPEC.md §6):

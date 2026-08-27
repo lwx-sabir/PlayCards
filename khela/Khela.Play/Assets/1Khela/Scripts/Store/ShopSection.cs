@@ -90,6 +90,10 @@ namespace PlayCard.Store
         [SerializeField] private List<TMP_Text> titleTexts = new List<TMP_Text>();
         [Tooltip("Shown when the lane has NOTHING to show — its section and every fill section came back empty.")]
         [SerializeField] private GameObject emptyRoot;
+        [Tooltip("Shop_Row_Empty — SPAWNED into this lane when it has nothing to sell, and hidden again when it does. " +
+                 "Prefer this over Empty Root: one prefab covers every lane, so a section added later gets the empty " +
+                 "state for free instead of needing its own authored copy. Both can be set; both are honoured.")]
+        [SerializeField] private RectTransform emptyPrefab;
         [SerializeField] private bool refreshOnEnable = true;
 
         /// <summary>One card the lane will show: the product, and the shape it gets.</summary>
@@ -109,6 +113,8 @@ namespace PlayCard.Store
         private bool warnedNoCard;
         /// <summary>Re-entrancy guard for <see cref="ClaimedProductIds"/> — two lanes referencing each other.</summary>
         private bool planning;
+
+        private RectTransform spawnedEmpty;
 
         private bool RowMode => rowPrefab != null && cardPrefab != null;
 
@@ -151,8 +157,10 @@ namespace PlayCard.Store
             if (RowMode)
             {
                 var plan = Plan();
-                if (emptyRoot != null) emptyRoot.SetActive(plan.Count == 0);
                 BuildRows(plan);
+                // AFTER BuildRows: it instantiates rows into the same parent, and the empty state has to end up
+                // below them rather than wherever the sibling order happened to leave it.
+                ShowEmpty(plan.Count == 0);
                 for (int i = 0; i < spawnedCards.Count; i++)
                     Bind(spawnedCards[i], i < plan.Count ? plan[i].ProductId : null, i < plan.Count);
                 return;
@@ -161,7 +169,7 @@ namespace PlayCard.Store
             var takenAbove = ClaimedByLanesAbove();
             var products = ProductsIn(sectionKey).Where(p => !takenAbove.Contains(p.Id)).ToList();
             if (maxCards > 0 && products.Count > maxCards) products = products.Take(maxCards).ToList();
-            if (emptyRoot != null) emptyRoot.SetActive(products.Count == 0);
+            ShowEmpty(products.Count == 0);
             EnsureAuthoredCards(products.Count);
 
             int n = 0;
@@ -297,6 +305,80 @@ namespace PlayCard.Store
         /// leave a gap — is a decision you make once in the row prefab, not something that moves with the number of
         /// products the admin happens to have enabled.
         /// </summary>
+        /// <summary>
+        /// The "nothing here yet" state for this lane.
+        ///
+        /// Kept alive once spawned rather than destroyed and rebuilt: a lane empties and fills as the admin enables
+        /// products and as sales start and end, and that is a repaint, not a reason to churn a GameObject.
+        /// </summary>
+        private void ShowEmpty(bool empty)
+        {
+            if (emptyRoot != null) emptyRoot.SetActive(empty);
+            if (emptyPrefab == null) return;
+
+            if (!empty)
+            {
+                if (spawnedEmpty != null) spawnedEmpty.gameObject.SetActive(false);
+                return;
+            }
+
+            if (spawnedEmpty == null)
+            {
+                var parent = rowsParent != null ? rowsParent
+                           : clonesParent != null ? clonesParent
+                           : (RectTransform)transform;
+                try
+                {
+                    spawnedEmpty = Instantiate(emptyPrefab, parent, false);
+                    spawnedEmpty.localScale = emptyPrefab.localScale;   // Instantiate rewrites scale under a scaled parent
+                    spawnedEmpty.name = emptyPrefab.name;
+                    Strip(spawnedEmpty);
+                }
+                catch (System.Exception ex)
+                {
+                    // A bad empty prefab must not take the lane down with it — and, because every lane hears the same
+                    // catalog event, an exception escaping here stops the lanes AFTER this one from refreshing at all.
+                    // One broken placeholder would empty the whole shop.
+                    Debug.LogException(ex, this);
+                    if (spawnedEmpty != null) Destroy(spawnedEmpty.gameObject);
+                    spawnedEmpty = null;
+                    return;
+                }
+            }
+            spawnedEmpty.gameObject.SetActive(true);
+            spawnedEmpty.SetAsLastSibling();
+        }
+
+        /// <summary>
+        /// Make a spawned empty state INERT.
+        ///
+        /// These prefabs get made by duplicating a card and stripping it back, and a StorePurchaseButton left behind
+        /// binds itself to whatever product id came with it — so the "nothing here" row comes up wearing a real pack's
+        /// title. Disabling the component is too late: Instantiate runs Awake and OnEnable immediately, so the text has
+        /// already been overwritten by the time anything here could run. It is destroyed, and the authored text is put
+        /// back from the prefab itself.
+        /// </summary>
+        private void Strip(RectTransform instance)
+        {
+            var strays = instance.GetComponentsInChildren<StorePurchaseButton>(includeInactive: true);
+            if (strays.Length == 0) return;
+
+            foreach (var stray in strays)
+            {
+                if (stray == null) continue;
+                Debug.LogWarning($"{name}: '{emptyPrefab.name}' still contains a StorePurchaseButton ('{stray.name}') — " +
+                                 "it overwrote the placeholder's own text with a product's. Removed at runtime; take " +
+                                 "the component off the prefab.", this);
+                Destroy(stray);
+            }
+
+            // Same hierarchy, same order, so the prefab's own labels map one-to-one onto the clone's.
+            var authored = emptyPrefab.GetComponentsInChildren<TMP_Text>(includeInactive: true);
+            var live = instance.GetComponentsInChildren<TMP_Text>(includeInactive: true);
+            for (int i = 0; i < live.Length && i < authored.Length; i++)
+                if (live[i] != null && authored[i] != null) live[i].text = authored[i].text;
+        }
+
         private void BuildRows(List<Planned> plan)
         {
             var parent = rowsParent != null ? rowsParent : (RectTransform)transform;

@@ -32,10 +32,33 @@ namespace Khela.Game.Controllers
         private readonly IStorePurchaseService _purchases;
         private readonly IRedisService _redis;
         private readonly AppDbContext _db;
+        private readonly ShopGirlDirectory _girls;
 
-        public StoreController(IStoreCatalogService catalog, IStorePurchaseService purchases, IRedisService redis, AppDbContext db)
+        public StoreController(IStoreCatalogService catalog, IStorePurchaseService purchases, IRedisService redis, AppDbContext db, ShopGirlDirectory girls)
         {
-            _catalog = catalog; _purchases = purchases; _redis = redis; _db = db;
+            _catalog = catalog; _purchases = purchases; _redis = redis; _db = db; _girls = girls;
+        }
+
+        /// <summary>
+        /// The shop hosts this player may be greeted by. The client picks one from the set and rotates it daily.
+        ///
+        /// The LEVEL is read here, never accepted from the caller: the client is handed a set, not a filter to apply.
+        /// Which picture greets someone is cosmetic, but letting a client declare its own level is a habit that ends up
+        /// load-bearing somewhere it is not.
+        /// </summary>
+        [HttpGet("shop-girls")]
+        public async Task<IActionResult> ShopGirls(CancellationToken ct)
+        {
+            var me = CallerId();
+            if (me == null) return Unauthorized();
+
+            var level = await _db.UserProfiles.AsNoTracking()
+                                 .Where(u => u.UserId == me.Value)
+                                 .Select(u => (int?)u.Level)
+                                 .FirstOrDefaultAsync(ct) ?? 1;
+
+            var images = await _girls.ForLevelAsync(level, ct);
+            return Ok(new { Ok = true, Level = level, Images = images });
         }
 
         /// <summary>The catalog as THIS platform sees it: store-product ids to buy, what each pays (display), per-user availability.</summary>

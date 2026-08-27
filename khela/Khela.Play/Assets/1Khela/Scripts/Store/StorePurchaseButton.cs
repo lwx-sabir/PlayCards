@@ -84,6 +84,13 @@ namespace PlayCard.Store
         [SerializeField] private string loadingPriceText = "...";
         [SerializeField] private string unavailablePriceText = "--";
         [SerializeField] private string ownedPriceText = "OWNED";
+
+        [Header("Blocked look")]
+        [Tooltip("Fade the WHOLE card when it cannot be bought. Unity's own disabled tint only touches the button's " +
+                 "target graphic, so a blocked card otherwise still looks like a live offer with a live price.")]
+        [SerializeField] private bool dimWhenBlocked = true;
+        [Tooltip("How faded a blocked card is. Low enough to read as off, high enough to still read at all.")]
+        [SerializeField, Range(0.2f, 1f)] private float blockedAlpha = 0.45f;
         [Tooltip("Which currency line to show as the amount: Chips or Kash. Empty = the first currency line.")]
         [SerializeField] private string amountCurrency = "";
         [SerializeField] private string amountFormat = "N0";
@@ -183,6 +190,8 @@ namespace PlayCard.Store
 
         /// <summary>The SKU of the purchase this card started and has not yet seen complete; null otherwise.</summary>
         private string buyingId;
+        /// <summary>The last refusal logged, so a repaint every catalog refresh does not repeat it.</summary>
+        private string lastBlockedLog;
 
         private void ApplyCatalogTexts()
         {
@@ -271,8 +280,39 @@ namespace PlayCard.Store
             string reason = iap != null ? iap.IneligibilityReason(activeId) : null;
             bool canInteract = iap != null && iap.IsReady && !isOwned && !isProcessing && !isUnavailable && reason == null;
 
+            // Say WHY, once, whenever the answer changes. The server sends a plain-English reason for every blocked
+            // card ("Already purchased.", "This offer has ended.", "Unlocks at level N.", "The store is closed right
+            // now."), and without unavailableRoot / reasonTexts wired on a prefab all of those collapse into the same
+            // silent grey card — which is impossible to diagnose from the outside.
+            string blocked = !canInteract && iap != null
+                ? (isOwned ? "owned" : isProcessing ? null : isUnavailable ? "the store has no such product / it is not purchasable"
+                   : reason ?? (!iap.IsReady ? "the store is not ready yet" : null))
+                : null;
+            if (blocked != lastBlockedLog)
+            {
+                lastBlockedLog = blocked;
+                if (blocked != null) Debug.Log($"[Store] '{productId}' is not buyable: {blocked}", this);
+            }
+
             if (root != null) root.SetActive(!(hideRootWhenOwned && isOwned));
             foreach (var b in purchaseButtons) if (b != null) b.interactable = canInteract;
+
+            // Fade and deaden the WHOLE card, not just its button. A CanvasGroup is what reaches every graphic and
+            // every Selectable inside — including ones a card type adds later — where Button.interactable only tints
+            // its own target graphic. Added rather than authored, so no card prefab has to remember it.
+            //
+            // blocksRaycasts stays TRUE on purpose: the tap still has to land so ButtonSound can answer with the
+            // denied sound. Silence is the one response a blocked card must not give.
+            if (dimWhenBlocked)
+            {
+                var dimTarget = root != null ? root : gameObject;
+                if (!dimTarget.TryGetComponent<CanvasGroup>(out var group))
+                    group = dimTarget.AddComponent<CanvasGroup>();
+                bool blockedLook = !canInteract && !isProcessing;   // processing has its own loading overlay
+                group.alpha = blockedLook ? Mathf.Clamp(blockedAlpha, 0.2f, 1f) : 1f;
+                group.interactable = !blockedLook;
+                group.blocksRaycasts = true;
+            }
             // The card is BUSY for three reasons, and they look the same to a player: a purchase is in flight, its art is
             // still coming down, or the catalog has not resolved this id yet (the store is still loading, or an admin
             // renamed the product). All three mean "nothing here to act on yet".
@@ -290,6 +330,10 @@ namespace PlayCard.Store
             string priceText = lastResolvedPriceText;
             if (isProcessing) priceText = loadingPriceText;
             else if (isOwned) priceText = ownedPriceText;
+            // A card that CANNOT be bought must not advertise a price. This case used to fall through to the store's
+            // localised price, so a one-per-user pack the player had already bought went on quoting $0.01 next to a
+            // dead button — which reads as a broken card rather than a spent offer.
+            else if (isUnavailable || reason != null) priceText = unavailablePriceText;
             else if (iap != null)
             {
                 var resolved = iap.GetLocalizedPriceString(activeId, string.Empty);

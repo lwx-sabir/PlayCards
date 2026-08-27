@@ -43,6 +43,15 @@ namespace PlayCard.UI.RewardFly
                  "twice for every chip.")]
         [SerializeField] private Sonity.SoundEvent impactSound;
 
+        [Header("Impact FX (optional)")]
+        [Tooltip("Particles under this counter that fire when something LANDS on it — a glow, a shine, a star burst. " +
+                 "Leave them INACTIVE in the prefab: they are switched on by the first piece and off again once the " +
+                 "last one has faded, so a counter sitting idle is not quietly running particles.")]
+        [SerializeField] private List<ParticleSystem> impactFx = new List<ParticleSystem>();
+        [Tooltip("How long after the LAST piece lands before they stop emitting. What is already in the air finishes " +
+                 "its own life, so the effect fades rather than being cut.")]
+        [SerializeField] private float fxHoldSeconds = 0.4f;
+
         [Tooltip("How many impacts may ring at once. Sonity treats (event, OWNER) as ONE voice and re-triggering it " +
                  "STOPS the playing instance — so without a rotating owner per hit a stream of chips silences itself " +
                  "into a single stuttering tick. Around the number of pieces in a burst.")]
@@ -154,11 +163,16 @@ namespace PlayCard.UI.RewardFly
             BurstEnded?.Invoke(key);
         }
 
+        private Coroutine _fxStop;
+
         public string RewardId => rewardId;
         public RectTransform Landing => landingPoint != null ? landingPoint : (RectTransform)transform;
 
         private void OnEnable()
         {
+            // A counter switched off mid-effect keeps its particles active but frozen with it; without this they would
+            // be mid-burst the next time it appears.
+            HideFx();
             if (string.IsNullOrWhiteSpace(rewardId)) return;
             var key = rewardId.Trim();
 
@@ -169,6 +183,8 @@ namespace PlayCard.UI.RewardFly
 
         private void OnDisable()
         {
+            if (_fxStop != null) { StopCoroutine(_fxStop); _fxStop = null; }
+            HideFx();
 
             if (string.IsNullOrWhiteSpace(rewardId)) return;
             if (Registry.TryGetValue(rewardId.Trim(), out var list)) list.Remove(this);
@@ -214,6 +230,7 @@ namespace PlayCard.UI.RewardFly
             // Its own gate, deliberately not the punch's: whether the counter kicks and whether it makes a noise are
             // separate decisions, and a screen that wants one without the other should not have to give up both.
             if (target != null) target.PlayImpact();
+            if (target != null) target.PlayImpactFx();
 
             // Published even with no target instance left alive (a HUD torn down mid-flight): a listener holding a
             // number still has to be told, or it waits out its timeout showing a stale figure.
@@ -244,6 +261,66 @@ namespace PlayCard.UI.RewardFly
         /// it is being *caught*. The base scale is remembered from the first punch so repeated kicks can never drift
         /// the counter's size.
         /// </summary>
+        /// <summary>
+        /// Light up the counter's own effects as something lands on it.
+        ///
+        /// Started by the FIRST piece and kept alive by each one after it — restarting a burst per piece would strobe,
+        /// because a dozen chips arrive over a fraction of a second. Once they stop coming, emission stops and whatever
+        /// is already in the air lives out its own lifetime, which is what makes it FADE rather than cut.
+        ///
+        /// Inert with an empty list, so every counter that does not want this is unaffected.
+        /// </summary>
+        public void PlayImpactFx()
+        {
+            if (impactFx == null || impactFx.Count == 0 || !isActiveAndEnabled) return;
+
+            foreach (var fx in impactFx)
+            {
+                if (fx == null) continue;
+                if (!fx.gameObject.activeSelf) fx.gameObject.SetActive(true);
+                if (!fx.isEmitting) fx.Play(withChildren: true);
+            }
+
+            // Push the stop back on every landing: the effect should outlive the LAST piece, not the first.
+            if (_fxStop != null) StopCoroutine(_fxStop);
+            _fxStop = StartCoroutine(StopFxWhenSpent());
+        }
+
+        private System.Collections.IEnumerator StopFxWhenSpent()
+        {
+            yield return new WaitForSecondsRealtime(Mathf.Max(0f, fxHoldSeconds));
+
+            // StopEmitting, never Clear — clearing deletes the particles mid-air and the effect vanishes instead of
+            // fading. They are switched off only once nothing is left alive.
+            foreach (var fx in impactFx)
+                if (fx != null) fx.Stop(withChildren: true, ParticleSystemStopBehavior.StopEmitting);
+
+            bool alive = true;
+            float deadline = Time.unscaledTime + 5f;   // a looping system would otherwise never report itself done
+            while (alive && Time.unscaledTime < deadline)
+            {
+                alive = false;
+                foreach (var fx in impactFx)
+                    if (fx != null && fx.IsAlive(withChildren: true)) { alive = true; break; }
+                if (alive) yield return null;
+            }
+
+            HideFx();
+            _fxStop = null;
+        }
+
+        /// <summary>Put the effects back to sleep — nothing running, nothing active, ready for the next landing.</summary>
+        private void HideFx()
+        {
+            if (impactFx == null) return;
+            foreach (var fx in impactFx)
+            {
+                if (fx == null) continue;
+                fx.Stop(withChildren: true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                if (fx.gameObject.activeSelf) fx.gameObject.SetActive(false);
+            }
+        }
+
         public void Punch()
         {
             if (punchScale <= 0f || punchDuration <= 0f) return;
@@ -288,7 +365,20 @@ namespace PlayCard.UI.RewardFly
             _voice = (_voice + 1) % _voices.Length;
             var voice = _voices[_voice] != null ? _voices[_voice] : transform;
 
-            if (_listener == null) _listener = FindAnyObjectByType<AudioListener>();
+            // Parked on the listener: this lives on a Canvas whose world coordinates run to hundreds of units, and a
+            // 3D SoundContainer played out there attenuates to nothing while logging a cheerful "Play".
+            //
+            // It must be the ENABLED listener, re-validated every play. FindAnyObjectByType also returns DISABLED
+            // components on active objects - and Home carries a second, disabled listener on the avatar StageCamera -
+            // so a blind first-hit cached for the session sometimes parked every chink at the stage instead of the
+            // ear: attenuated to silence while Sonity logged "Play". Which listener won the find was luck, which is
+            // why that bug came and went between runs.
+            if (_listener == null || !_listener.isActiveAndEnabled)
+            {
+                _listener = null;
+                foreach (var l in FindObjectsByType<AudioListener>(FindObjectsSortMode.None))
+                    if (l.isActiveAndEnabled) { _listener = l; break; }
+            }
             if (_listener != null) voice.position = _listener.transform.position;
 
             impactSound.Play(voice);

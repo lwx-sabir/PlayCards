@@ -182,6 +182,33 @@ namespace PlayCard.Store
         /// <summary>True while a purchase is being shown — one ceremony at a time.</summary>
         public static bool Handling { get; private set; }
 
+        // The beats of the ceremony, announced rather than sounded. This view stays display-only and ShopAudio stays
+        // the single owner of the shop's sound — the same split the table and the pass use. A listener is optional;
+        // nothing here waits on one.
+
+        /// <summary>The receipt went to the server and the verifying state is up.</summary>
+        public event Action Verifying;
+        /// <summary>The server GRANTED and the celebration has started — the fanfare belongs here, not on the
+        /// purchase result, which lands before the minimum-verify delay has even elapsed.</summary>
+        public event Action CeremonyStarted;
+        /// <summary>The item hit its mark. The impact — the loudest thing in the sequence.</summary>
+        public event Action Stamped;
+        /// <summary>A granted card leaving the item, by row index.</summary>
+        public event Action<int> CardLaunched;
+        /// <summary>A granted card stamping into its slot, by row index.</summary>
+        public event Action<int> CardLanded;
+        /// <summary>Pending or rejected — the state that needs saying, not celebrating.</summary>
+        public event Action Problem;
+
+        /// <summary>
+        /// What the server granted, announced at the START of the celebration — well before any of it flies.
+        ///
+        /// The timing is the point. A RewardFlyTarget registers itself in OnEnable, so a counter that is switched off
+        /// is not in the registry and the flight skips it with a warning. Anything that has to REVEAL a counter before
+        /// rewards can land on it needs telling now, not when the burst begins.
+        /// </summary>
+        public event Action<IReadOnlyList<string>> RewardsIncoming;
+
         private CanvasGroup group;
         private readonly List<BundleRewardView> spawnedRows = new List<BundleRewardView>();
         /// <summary>The grants that got a row, in row order. Pairs 1:1 with <see cref="spawnedRows"/>.</summary>
@@ -333,6 +360,7 @@ namespace PlayCard.Store
             group.alpha = 0f;
             group.blocksRaycasts = true;
             juice = DOTween.Sequence().SetUpdate(true).Append(group.DOFade(1f, fadeSeconds).SetEase(Ease.OutQuad));
+            Verifying?.Invoke();
         }
 
         private void ShowComplete(IapService.PurchaseResult result)
@@ -347,8 +375,17 @@ namespace PlayCard.Store
             // The celebration is a flourish over a payout that already happened, so it is never allowed to take the
             // screen down with it. If it throws, the rows still stand where the layout put them, Continue still works,
             // and the failure is LOUD rather than swallowed.
+            if (RewardsIncoming != null)
+            {
+                var ids = new List<string>(shownGrants.Count);
+                foreach (var g in shownGrants)
+                    if (g != null) ids.Add(string.IsNullOrEmpty(g.Id) ? "Xp" : g.Id);
+                RewardsIncoming(ids);
+            }
+
             try
             {
+                CeremonyStarted?.Invoke();
                 PlayCelebration();
             }
             catch (Exception ex)
@@ -389,6 +426,7 @@ namespace PlayCard.Store
             // Continue lives in the complete set, and it is the only way out of this state.
             foreach (var b in continueButtons) if (b != null) b.gameObject.SetActive(true);
             ClearRows();
+            Problem?.Invoke();
         }
 
         /// <summary>
@@ -495,7 +533,7 @@ namespace PlayCard.Store
             if (stampShakeTarget != null && stampShakeStrength > 0f && stampShakeSeconds > 0f)
                 seq.Insert(stampEnd, stampShakeTarget
                     .DOShakeAnchorPos(stampShakeSeconds, stampShakeStrength, vibrato: 12, randomness: 60f, fadeOut: true));
-            seq.InsertCallback(stampEnd, PlayStampParticles);
+            seq.InsertCallback(stampEnd, () => { PlayStampParticles(); Stamped?.Invoke(); });
 
             // 4 — the cards, out of the middle of the item.
             float lastEnd = stampEnd + Mathf.Max(0f, itemPunchSeconds);
@@ -517,6 +555,10 @@ namespace PlayCard.Store
                 float at = stampEnd + Mathf.Max(0f, cardsDelayAfterStamp) + i * Mathf.Max(0f, cardStagger);
                 float landed = at + cardFlySeconds;
                 float cardSquash = Mathf.Max(0f, cardPunchScale);
+
+                int index = i;
+                seq.InsertCallback(at, () => CardLaunched?.Invoke(index));
+                seq.InsertCallback(landed, () => CardLanded?.Invoke(index));
 
                 seq.Insert(at, rt.DOMove(homes[i], cardFlySeconds).SetEase(cardEase));
                 seq.Insert(at, cg.DOFade(1f, cardFlySeconds * 0.5f).SetEase(Ease.OutQuad));

@@ -27,8 +27,14 @@ namespace PlayCard.UI
         [SerializeField] private string levelFormat = "Lvl. {0}";
 
         [Header("XP bar")]
-        [Tooltip("The fill Image (Image Type = Filled). Driven 0..1 from XP into the current level.")]
+        [Tooltip("The fill Image, driven 0..1 from XP into the current level. Its Image Type MUST be Filled — on a " +
+                 "Sliced or Simple image Unity ignores fillAmount and the bar can never move. If the bar is built as " +
+                 "a Slider, leave this empty and use Xp Slider instead.")]
         [SerializeField] private Image xpFill;
+        [Tooltip("A Slider for the bar, when the bar is built as one. A Slider positions its own Fill Rect from its " +
+                 "VALUE, so writing fillAmount on that fill graphic does nothing — this is the field to use instead. " +
+                 "Set both and both are driven; set neither and there is simply no bar.")]
+        [SerializeField] private Slider xpSlider;
         [Tooltip("Optional \"1,200 / 5,000\" style label.")]
         [SerializeField] private TMP_Text xpText;
         [SerializeField] private string xpFormat = "{0:#,0} / {1:#,0}";
@@ -121,16 +127,38 @@ namespace PlayCard.UI
             SetBar(target);
         }
 
+        /// <summary>
+        /// Write the bar wherever it actually lives — a Filled Image, a Slider, or both.
+        ///
+        /// The two are not interchangeable. A Slider positions its own Fill Rect from its VALUE, so writing
+        /// fillAmount on that fill graphic does nothing at all; and fillAmount itself is ignored by Unity unless the
+        /// Image's type is Filled. A bar wired one way and driven the other simply never moves.
+        /// </summary>
+        private void PaintBar(float value01)
+        {
+            if (xpFill != null) xpFill.fillAmount = value01;
+            // normalizedValue, not value: it honours whatever Min/Max the slider was authored with rather than
+            // assuming 0..1.
+            if (xpSlider != null) xpSlider.normalizedValue = value01;
+        }
+
+        private float CurrentBar()
+        {
+            if (xpFill != null) return xpFill.fillAmount;
+            if (xpSlider != null) return xpSlider.normalizedValue;
+            return 0f;
+        }
+
         private void SetBar(float target)
         {
-            if (xpFill == null) return;
+            if (xpFill == null && xpSlider == null) return;
 
             // Snap when it can't animate (disabled object, no tween time) or when the bar is being set for the first
             // time — sliding up from 0 on every scene load would read as if XP had just been earned.
             if (xpTweenSeconds <= 0f || !isActiveAndEnabled || _shownFill <= 0f)
             {
                 _shownFill = target;
-                xpFill.fillAmount = target;
+                PaintBar(target);
                 return;
             }
 
@@ -140,16 +168,16 @@ namespace PlayCard.UI
 
         private System.Collections.IEnumerator BarRoutine(float target)
         {
-            float from = xpFill.fillAmount;
+            float from = CurrentBar();
             float t = 0f;
             while (t < xpTweenSeconds)
             {
                 t += Time.unscaledDeltaTime;
                 float u = Mathf.Clamp01(t / xpTweenSeconds);
-                xpFill.fillAmount = Mathf.Lerp(from, target, 1f - (1f - u) * (1f - u));   // ease-out
+                PaintBar(Mathf.Lerp(from, target, 1f - (1f - u) * (1f - u)));   // ease-out
                 yield return null;
             }
-            xpFill.fillAmount = target;
+            PaintBar(target);
             _shownFill = target;
             _barTween = null;
         }

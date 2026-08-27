@@ -215,6 +215,7 @@ namespace Khela.Game.Services.Store
                     new StoreSectionDef { Key = "piggy", Title = "Piggy", SortOrder = 50 },
                     new StoreSectionDef { Key = "pass",  Title = "Pass",  SortOrder = 60 },
                     new StoreSectionDef { Key = "vip",   Title = "VIP",   SortOrder = 70 },
+                    new StoreSectionDef { Key = "bundle", Title = "Bundle", SortOrder = 80 },
                 },
             };
 
@@ -234,6 +235,17 @@ namespace Khela.Game.Services.Store
             cfg.Products.Add(Kash("kash_04", 40, 1_300m, 19.99m, 29, "POPULAR",    "Kash Chest"));
             cfg.Products.Add(Kash("kash_05", 50, 3_500m, 49.99m, 39, "",           "Kash Vault"));
             cfg.Products.Add(Kash("kash_06", 60, 7_500m, 99.99m, 49, "BEST VALUE", "Kash Treasury"));
+
+            // Bundles — the same money as a chips pack, but paying in MORE THAN ONE currency, which is the whole
+            // reason the section exists: a player who already has chips has a reason to spend again. Priced on the
+            // existing ladder's rungs so the comparison a player makes is like-for-like.
+            //
+            // ⚠ The amounts here are a STARTING POINT, not a decided offer. Tune them in the admin against the entry
+            // chips pack (StoreCatalog.EntryChipsPerUsd) before any of this is sold for real money.
+            cfg.Products.Add(Bundle("bundle_01", 10,   7_500_000m,   150m,   0m,  4.99m, 0,  "",           "Starter Bundle"));
+            cfg.Products.Add(Bundle("bundle_02", 20,  20_000_000m,   400m, 300m,  9.99m, 15, "POPULAR",    "Player Bundle"));
+            cfg.Products.Add(Bundle("bundle_03", 30,  50_000_000m, 1_000m, 750m, 19.99m, 25, "",           "High Roller Bundle"));
+            cfg.Products.Add(Bundle("bundle_04", 40, 150_000_000m, 3_000m, 2000m, 49.99m, 35, "BEST VALUE", "Whale Bundle"));
 
             // Starter pack — a template, shipped DISABLED until the offer is decided (one per player, real money).
             cfg.Products.Add(new StoreProductDef
@@ -298,6 +310,24 @@ namespace Khela.Game.Services.Store
             Id = id, Section = "kash", SortOrder = sort, Title = title, Badge = badge, BonusPercent = bonus,
             StoreIds = BothStores(id), UsdReference = usd, Lines = { RewardGrant.Currency("Kash", kash) },
         };
+
+        /// <summary>
+        /// A multi-currency bundle. VIP-P is optional (0 = none) so the cheap rungs can stay out of the VIP ladder —
+        /// the door into VIP is the starter pack by design (docs/VIP_SPEC.md §4), and a $4.99 bundle should not
+        /// quietly undercut it.
+        /// </summary>
+        private static StoreProductDef Bundle(string id, int sort, decimal chips, decimal kash, decimal vipPoints,
+                                              decimal usd, int bonus, string badge, string title)
+        {
+            var def = new StoreProductDef
+            {
+                Id = id, Section = "bundle", SortOrder = sort, Title = title, Badge = badge, BonusPercent = bonus,
+                Description = "Chips + Kash", StoreIds = BothStores(id), UsdReference = usd,
+                Lines = { RewardGrant.Currency("Chips", chips), RewardGrant.Currency("Kash", kash) },
+            };
+            if (vipPoints > 0m) def.Lines.Add(RewardGrant.Currency("VipPoints", vipPoints));
+            return def;
+        }
 
         private static StoreProductDef VipPoints(string id, int sort, decimal points, decimal chips, decimal usd, int bonus, string badge, string title) => new StoreProductDef
         {

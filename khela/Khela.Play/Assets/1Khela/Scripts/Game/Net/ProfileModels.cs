@@ -223,4 +223,20 @@ namespace PlayCard.Game.Net
         public int VipLevel { get; set; }
         public DateTime? MaintainedThrough { get; set; }
     }
+
+    /// <summary>
+    /// Client mirror of GET /api/store/shop-girls — the shop hosts this player may be greeted by.
+    ///
+    /// Deliberately a CLIENT-side model rather than a shared DTO: Khela.Common ships to Unity as a prebuilt DLL, so
+    /// adding a type there means rebuilding and copying it before the client can even compile. Nothing here is shared
+    /// with the money path, so it is not worth that.
+    /// </summary>
+    public sealed class ShopGirlsDto
+    {
+        public bool Ok { get; set; }
+        /// <summary>The level the SERVER read for this player. Informational — the set is already filtered.</summary>
+        public int Level { get; set; }
+        /// <summary>Full urls, in ladder order. Empty when nothing is uploaded.</summary>
+        public List<string> Images { get; set; }
+    }
 }

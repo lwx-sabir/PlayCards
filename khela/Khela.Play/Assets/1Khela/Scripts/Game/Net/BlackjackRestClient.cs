@@ -213,6 +213,13 @@ namespace PlayCard.Game.Net
         public Task<ApiResult<StoreCatalogDto>> GetStoreCatalogAsync(StorePlatform platform)
             => SendAsync<StoreCatalogDto>(HttpMethod.Get, $"/api/store/catalog?platform={(int)platform}");
 
+        /// <summary>
+        /// The shop hosts this player may be greeted by. The SERVER decides the set from the player's level; the client
+        /// only picks one out of it and rotates daily.
+        /// </summary>
+        public Task<ApiResult<ShopGirlsDto>> GetShopGirlsAsync()
+            => SendAsync<ShopGirlsDto>(HttpMethod.Get, "/api/store/shop-girls");
+
         /// <summary>"May I buy this now?" — asked BEFORE the store sheet opens, so limits are enforced where a refusal costs nothing.</summary>
         public Task<ApiResult<StoreIntentResultDto>> StoreIntentAsync(string productId, StorePlatform platform)
             => SendAsync<StoreIntentResultDto>(HttpMethod.Post, "/api/store/intent", new StoreIntentRequest { ProductId = productId, Platform = platform });

@@ -80,11 +80,21 @@ namespace PlayCard.Store
         private bool fetching;
         private bool everAnswered;
 
+        /// <summary>How long the open tween runs, so anything timing itself against the panel can lead or trail it.</summary>
+        public float OpenDuration => openSeconds;
+
         /// <summary>Raised as the shop opens, before the fetch — what a screen-open sound and any intro tween hang off.</summary>
         public event System.Action Opened;
         /// <summary>Raised as the shop closes, BEFORE it deactivates, so a close sound plays over the exit rather than
         /// after the object is already gone and nothing on it can run.</summary>
         public event System.Action Closing;
+
+        /// <summary>
+        /// The panel has finished ANIMATING open — not merely started. Raised from the open tween's completion, a
+        /// frame or more after <see cref="Opened"/>, so anything that should arrive ON TOP of a settled shop waits
+        /// for this instead. Always fires once per open, including when there is nothing to animate.
+        /// </summary>
+        public event System.Action OpenFinished;
 
         private void Awake()
         {
@@ -213,7 +223,9 @@ namespace PlayCard.Store
             openRoutine = null;
 
             var b = Body();
-            if (b == null) yield break;
+            // Still "finished opening" — there was simply nothing to animate. Anything waiting on this must not be
+            // stranded because the panel had no body to tween.
+            if (b == null) { OpenFinished?.Invoke(); yield break; }
 
             var group = Fade();
             var seq = DOTween.Sequence().SetUpdate(true);
@@ -226,6 +238,7 @@ namespace PlayCard.Store
                 if (this == null) return;
                 var g = Fade();
                 if (g != null) { g.interactable = true; g.blocksRaycasts = true; }
+                OpenFinished?.Invoke();
             });
             tween = seq;
         }

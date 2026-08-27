@@ -1250,6 +1250,7 @@ GameObject:
   m_Component:
   - component: {fileID: 6063352793483416925}
   - component: {fileID: 2417794851625693892}
+  - component: {fileID: 2918566068252609906}
   m_Layer: 5
   m_Name: Btn_Purchase
   m_TagString: Untagged
@@ -1326,6 +1327,20 @@ MonoBehaviour:
   m_OnClick:
     m_PersistentCalls:
       m_Calls: []
+--- !u!114 &2918566068252609906
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5282284007729104243}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8138535ffc4d3ea468d1ce381b7fac71, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Audio.ButtonSound
+  click: {fileID: 11400000, guid: dcc1c275b80824c4b8f1e56495c696cf, type: 2}
+  denied: {fileID: 11400000, guid: bf7383b28ec971a4fbd39e0705b36934, type: 2}
 --- !u!1 &5422774908932438819
 GameObject:
   m_ObjectHideFlags: 0
@@ -1852,6 +1867,7 @@ GameObject:
   - component: {fileID: 7073485444718163848}
   - component: {fileID: 2365393358725683299}
   - component: {fileID: 503674353544110151}
+  - component: {fileID: 2638398430428505828}
   m_Layer: 5
   m_Name: Kash_Item
   m_TagString: Untagged
@@ -2028,6 +2044,20 @@ MonoBehaviour:
   amountCurrency: Kash
   amountFormat: N0
   bonusFormat: Bonus +{0}%
+--- !u!114 &2638398430428505828
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7552758098239039381}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8138535ffc4d3ea468d1ce381b7fac71, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayCard.Audio.ButtonSound
+  click: {fileID: 11400000, guid: dcc1c275b80824c4b8f1e56495c696cf, type: 2}
+  denied: {fileID: 11400000, guid: bf7383b28ec971a4fbd39e0705b36934, type: 2}
 --- !u!1 &7593867516198702987
 GameObject:
   m_ObjectHideFlags: 0
@@ -2367,7 +2397,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 21300000, guid: 455c41ebd43a2574e8022bed2a1990b1, type: 3}
+  m_Sprite: {fileID: 21300000, guid: 3072bb544ce3aa84e91d0e489b0fd641, type: 3}
   m_Type: 0
   m_PreserveAspect: 1
   m_FillCenter: 1
