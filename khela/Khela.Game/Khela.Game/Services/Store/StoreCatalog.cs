@@ -271,7 +271,7 @@ namespace Khela.Game.Services.Store
             {
                 Id = "golden_pass", ProductType = StoreProductType.Subscription, Section = "pass", SortOrder = 10,
                 Title = "Golden Pass", Description = "Monthly — unlocks the golden track", StoreIds = BothStores("golden_pass"),
-                UsdReference = 4.99m, Effect = new StoreEffectDef { Type = EffectGoldenPass, Arg = "monthly" },
+                UsdReference = 3.99m, Effect = new StoreEffectDef { Type = EffectGoldenPass, Arg = "monthly" },
             });
 
             // VIP boosters (docs/VIP_SPEC.md §4) — TIME extends the hold on the level you already stand at; LEVEL UP

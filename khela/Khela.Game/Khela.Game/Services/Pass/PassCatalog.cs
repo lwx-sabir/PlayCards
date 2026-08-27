@@ -259,7 +259,7 @@ namespace Khela.Game.Services.Pass
             MaxAdCatchUpsPerCycle = 5,
             GoldenProductIdApple = "khela.pass.golden.monthly",
             GoldenProductIdGoogle = "khela.pass.golden.monthly",
-            GoldenPriceUsd = 4.99m,
+            GoldenPriceUsd = 3.99m,
             Nodes = DefaultLadder(),
         };
 
